@@ -1,3 +1,4 @@
+import React from "react";
 import { Switch, Route, useLocation, Redirect } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
@@ -8,39 +9,12 @@ import { AppSidebar } from "@/components/app-sidebar";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { SkipLink } from "@/components/ui/skip-link";
 import Home from "@/pages/home";
-import Dashboard from "@/pages/dashboard";
-import Claims from "@/pages/claims";
-import ClaimDetail from "@/pages/claim-detail";
-import Providers from "@/pages/providers";
-import Patients from "@/pages/patients";
-import Reconciliation from "@/pages/reconciliation";
-import Coding from "@/pages/coding";
+
+import IntelligenceDashboard from "@/pages/intelligence/dashboard";
+import BusinessDashboard from "@/pages/business/dashboard";
+import MembersDashboard from "@/pages/members/dashboard";
+
 import NotFound from "@/pages/not-found";
-import { PreAuthLayout } from "@/components/pre-auth/pre-auth-layout";
-import PreAuthDashboard from "@/pages/pre-auth/dashboard";
-import PreAuthClaims from "@/pages/pre-auth/claims";
-import PreAuthClaimDetail from "@/pages/pre-auth/claim-detail";
-import PreAuthPending from "@/pages/pre-auth/pending";
-import PreAuthNewClaim from "@/pages/pre-auth/new-claim";
-import PreAuthAnalytics from "@/pages/pre-auth/analytics";
-import PreAuthBatchUpload from "@/pages/pre-auth/batch-upload";
-import PreAuthRlhf from "@/pages/pre-auth/rlhf";
-import PreAuthSettings from "@/pages/pre-auth/settings";
-import PreAuthKnowledgeBase from "@/pages/pre-auth/knowledge-base";
-import PreAuthPolicyRules from "@/pages/pre-auth/policy-rules";
-import PreAuthAgentConfig from "@/pages/pre-auth/agent-config";
-import PreAuthWorkflowPhase from "@/pages/pre-auth/workflow-phase";
-import { ClaimsGovernanceLayout } from "@/components/claims-governance/claims-governance-layout";
-import ClaimsGovernanceDashboard from "@/pages/claims-governance/dashboard";
-import ClaimsGovernanceClaims from "@/pages/claims-governance/claims";
-import ClaimsGovernancePending from "@/pages/claims-governance/pending";
-import ClaimsGovernanceRuleStudio from "@/pages/claims-governance/rule-studio";
-import ClaimsGovernanceQAValidation from "@/pages/claims-governance/qa-validation";
-import ClaimsGovernanceWorkflowPhase from "@/pages/claims-governance/workflow-phase";
-import ClaimsGovernanceKnowledgeBase from "@/pages/claims-governance/knowledge-base";
-import ClaimsGovernanceAgentConfig from "@/pages/claims-governance/agent-config";
-import ClaimsGovernancePolicyRules from "@/pages/claims-governance/policy-rules";
-import ClaimsGovernanceSettings from "@/pages/claims-governance/settings";
 import { FWALayout } from "@/components/fwa/fwa-layout";
 import FWADashboard from "@/pages/fwa/dashboard";
 import FWAKPIDashboard from "@/pages/fwa/kpi-dashboard";
@@ -77,39 +51,15 @@ import FWAProviderProfile from "@/pages/fwa/provider-profile";
 import FWAMLAnalysis from "@/pages/fwa/ml-analysis";
 import GraphAnalysisPage from "@/pages/graph-analysis/graph-analysis";
 import SimulationLabPage from "@/pages/simulation/simulation-lab";
-import { ProviderRelationsLayout } from "@/components/provider-relations/provider-relations-layout";
-import ProviderRelationsDashboard from "@/pages/provider-relations/dashboard";
-import ProviderRelationsProviders from "@/pages/provider-relations/providers";
-import ProviderRelationsReconciliation from "@/pages/provider-relations/reconciliation";
-import ProviderRelationsContracts from "@/pages/provider-relations/contracts";
-import ProviderRelationsCommunications from "@/pages/provider-relations/communications";
-import ProviderRelationsBenchmarking from "@/pages/provider-relations/benchmarking";
-import ProviderRelationsCPM from "@/pages/provider-relations/cpm";
-import ProviderRelationsSettlement from "@/pages/provider-relations/settlement";
-import ProviderRelationsSettings from "@/pages/provider-relations/settings";
-import ProviderRelationsDreamReport from "@/pages/provider-relations/dream-report";
-import ProviderRelationsEvidencePacks from "@/pages/provider-relations/evidence-packs";
-import ProviderRelationsSessions from "@/pages/provider-relations/sessions";
-import ProviderRelationsDataImport from "@/pages/provider-relations/data-import";
-import ProviderRelationsKpiBuilder from "@/pages/provider-relations/kpi-builder";
-import ProviderRelationsKpiDashboard from "@/pages/provider-relations/kpi-dashboard";
-import ClaimsUploadDemo from "@/pages/demo/claims-upload";
-import Patient360Page from "@/pages/context/patient-360";
-import Provider360Page from "@/pages/context/provider-360";
-import Doctor360Page from "@/pages/context/doctor-360";
-import ViewAllClaimsPage from "@/pages/findings/view-all-claims";
+
 import FWAClaimView from "@/pages/fwa/claim-view";
 
 function MainAppRouter() {
   return (
     <Switch>
-      <Route path="/audit-fwa" component={Dashboard} />
-      <Route path="/dashboard" component={Dashboard} />
-      <Route path="/claims" component={Claims} />
-      <Route path="/claims/:id" component={ClaimDetail} />
-      <Route path="/providers" component={Providers} />
-      <Route path="/patients" component={Patients} />
-      <Route path="/reconciliation/:hospitalId" component={Reconciliation} />
+      <Route path="/intelligence" component={IntelligenceDashboard} />
+      <Route path="/business" component={BusinessDashboard} />
+      <Route path="/members" component={MembersDashboard} />
       <Route component={NotFound} />
     </Switch>
   );
@@ -132,7 +82,7 @@ function MainAppLayout() {
             <div className="flex items-center gap-4">
               <SidebarTrigger data-testid="button-sidebar-toggle" />
               <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-                <span>Audit & FWA Unit</span>
+                <span>Daman Intelligence Engine</span>
               </div>
             </div>
           </header>
@@ -144,52 +94,6 @@ function MainAppLayout() {
         </div>
       </div>
     </SidebarProvider>
-  );
-}
-
-function PreAuthRouter() {
-  return (
-    <PreAuthLayout>
-      <Switch>
-        <Route path="/pre-auth" component={PreAuthDashboard} />
-        <Route path="/pre-auth/dashboard" component={PreAuthDashboard} />
-        <Route path="/pre-auth/claims" component={PreAuthClaims} />
-        <Route path="/pre-auth/claims/new" component={PreAuthNewClaim} />
-        <Route path="/pre-auth/claims/:id" component={PreAuthClaimDetail} />
-        <Route path="/pre-auth/pending" component={PreAuthPending} />
-        <Route path="/pre-auth/analytics" component={PreAuthAnalytics} />
-        <Route path="/pre-auth/batch-upload" component={PreAuthBatchUpload} />
-        <Route path="/pre-auth/rlhf" component={PreAuthRlhf} />
-        <Route path="/pre-auth/settings" component={PreAuthSettings} />
-        <Route path="/pre-auth/knowledge-base" component={PreAuthKnowledgeBase} />
-        <Route path="/pre-auth/knowledge-base/:type" component={PreAuthKnowledgeBase} />
-        <Route path="/pre-auth/config/rules" component={PreAuthPolicyRules} />
-        <Route path="/pre-auth/config/agents" component={PreAuthAgentConfig} />
-        <Route path="/pre-auth/workflow/:phase" component={PreAuthWorkflowPhase} />
-        <Route component={NotFound} />
-      </Switch>
-    </PreAuthLayout>
-  );
-}
-
-function ClaimsGovernanceRouter() {
-  return (
-    <ClaimsGovernanceLayout>
-      <Switch>
-        <Route path="/claims-governance" component={ClaimsGovernanceDashboard} />
-        <Route path="/claims-governance/dashboard" component={ClaimsGovernanceDashboard} />
-        <Route path="/claims-governance/claims" component={ClaimsGovernanceClaims} />
-        <Route path="/claims-governance/pending" component={ClaimsGovernancePending} />
-        <Route path="/claims-governance/workflow/:phase" component={ClaimsGovernanceWorkflowPhase} />
-        <Route path="/claims-governance/knowledge-base/:type" component={ClaimsGovernanceKnowledgeBase} />
-        <Route path="/claims-governance/rule-studio" component={ClaimsGovernanceRuleStudio} />
-        <Route path="/claims-governance/qa-validation" component={ClaimsGovernanceQAValidation} />
-        <Route path="/claims-governance/config/agents" component={ClaimsGovernanceAgentConfig} />
-        <Route path="/claims-governance/config/rules" component={ClaimsGovernancePolicyRules} />
-        <Route path="/claims-governance/settings" component={ClaimsGovernanceSettings} />
-        <Route component={NotFound} />
-      </Switch>
-    </ClaimsGovernanceLayout>
   );
 }
 
@@ -241,107 +145,27 @@ function FWARouter() {
   );
 }
 
-function ProviderRelationsRouter() {
-  return (
-    <ProviderRelationsLayout>
-      <Switch>
-        <Route path="/provider-relations" component={ProviderRelationsDashboard} />
-        <Route path="/provider-relations/dashboard" component={ProviderRelationsDashboard} />
-        <Route path="/provider-relations/providers" component={ProviderRelationsProviders} />
-        <Route path="/provider-relations/reconciliation" component={ProviderRelationsReconciliation} />
-        <Route path="/provider-relations/evidence-packs" component={ProviderRelationsEvidencePacks} />
-        <Route path="/provider-relations/sessions" component={ProviderRelationsSessions} />
-        <Route path="/provider-relations/contracts" component={ProviderRelationsContracts} />
-        <Route path="/provider-relations/communications" component={ProviderRelationsCommunications} />
-        <Route path="/provider-relations/benchmarking" component={ProviderRelationsBenchmarking} />
-        <Route path="/provider-relations/cpm" component={ProviderRelationsCPM} />
-        <Route path="/provider-relations/settlement" component={ProviderRelationsSettlement} />
-        <Route path="/provider-relations/settings" component={ProviderRelationsSettings} />
-        <Route path="/provider-relations/dream-report" component={ProviderRelationsDreamReport} />
-        <Route path="/provider-relations/dream-report/:providerId" component={ProviderRelationsDreamReport} />
-        <Route path="/provider-relations/data-import" component={ProviderRelationsDataImport} />
-        <Route path="/provider-relations/kpi-builder" component={ProviderRelationsKpiBuilder} />
-        <Route path="/provider-relations/kpi-dashboard" component={ProviderRelationsKpiDashboard} />
-        <Route component={NotFound} />
-      </Switch>
-    </ProviderRelationsLayout>
-  );
-}
-
 function AppRouter() {
   const [location] = useLocation();
-  
-  const isPreAuthPage = location.startsWith("/pre-auth");
-  const isClaimsGovernancePage = location.startsWith("/claims-governance");
-  const isFWAPage = location.startsWith("/fwa");
-  const isProviderRelationsPage = location.startsWith("/provider-relations");
-  const isContextPage = location.startsWith("/context");
-  const isFindingsPage = location.startsWith("/findings");
-  
-  const isDemoPage = location.startsWith("/demo");
-  const isStandalonePage = 
-    location === "/" || 
-    location === "/coding" ||
-    location === "/analytics";
 
-  if (isDemoPage) {
+  const isFWAPage = location.startsWith("/fwa");
+  const isStandalonePage = location === "/";
+
+  if (isStandalonePage) {
     return (
       <Switch>
-        <Route path="/demo/claims-upload" component={ClaimsUploadDemo} />
+        <Route path="/" component={Home} />
+
         <Route component={NotFound} />
       </Switch>
     );
-  }
-
-  if (isPreAuthPage) {
-    return <PreAuthRouter />;
-  }
-
-  if (isClaimsGovernancePage) {
-    return <ClaimsGovernanceRouter />;
   }
 
   if (isFWAPage) {
     return <FWARouter />;
   }
 
-  if (isProviderRelationsPage) {
-    return <ProviderRelationsRouter />;
-  }
-
-  if (isContextPage) {
-    return (
-      <Switch>
-        <Route path="/context/patient-360/:patientId" component={Patient360Page} />
-        <Route path="/context/provider-360/:providerId" component={Provider360Page} />
-        <Route path="/context/doctor-360/:doctorId" component={Doctor360Page} />
-        <Route path="/context/doctor-360">{() => <Redirect to="/fwa/high-risk-entities?tab=doctors" />}</Route>
-        <Route path="/context/patient-360">{() => <Redirect to="/fwa/high-risk-entities?tab=patients" />}</Route>
-        <Route path="/context/provider-360">{() => <Redirect to="/fwa/high-risk-entities?tab=providers" />}</Route>
-        <Route component={NotFound} />
-      </Switch>
-    );
-  }
-
-  if (isFindingsPage) {
-    return (
-      <Switch>
-        <Route path="/findings/:findingId/claims" component={ViewAllClaimsPage} />
-        <Route component={NotFound} />
-      </Switch>
-    );
-  }
-
-  if (isStandalonePage) {
-    return (
-      <Switch>
-        <Route path="/" component={Home} />
-        <Route path="/coding" component={Coding} />
-        <Route component={NotFound} />
-      </Switch>
-    );
-  }
-
+  // Covers /intelligence, /business, /members
   return <MainAppLayout />;
 }
 

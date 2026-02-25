@@ -1,9 +1,9 @@
 import { useLocation } from "wouter";
 import { Card, CardContent } from "@/components/ui/card";
-import { 
-  FileCheck, 
-  Shield, 
-  Code, 
+import {
+  FileCheck,
+  Shield,
+  Code,
   BarChart3,
   ArrowRight,
   Brain,
@@ -11,67 +11,58 @@ import {
 } from "lucide-react";
 import tachyHealthLogo from "@assets/logo.svg";
 
-const platformModules = [
-  {
-    id: "pre-authorization",
-    title: "Pre-Authorization",
-    description: "AI-powered 6-phase agentic claims adjudication system with RAG-enhanced knowledge base and RLHF feedback",
-    icon: Brain,
-    path: "/pre-auth",
-    color: "bg-[#8b5cf6]/10 text-[#8b5cf6]",
-    borderColor: "hover:border-[#8b5cf6]/50",
-    features: ["6-Phase Workflow", "Knowledge Base", "Agent Config", "RLHF"],
-  },
-  {
-    id: "claims-governance",
-    title: "Claims Management & Clinical Governance",
-    description: "Rule management, quality assurance, and clinical guidelines for claims processing optimization",
-    icon: FileCheck,
-    path: "/claims-governance",
-    color: "bg-primary/10 text-primary",
-    borderColor: "hover:border-primary/50",
-    features: ["Rule Management Studio", "QA Validation", "Claims Adjudication"],
-  },
+interface PlatformModule {
+  id: string;
+  title: string;
+  description: string;
+  icon: React.ElementType;
+  path: string;
+  color: string;
+  borderColor: string;
+  features: string[];
+  comingSoon?: boolean;
+}
+
+const platformModules: PlatformModule[] = [
   {
     id: "audit-fwa",
-    title: "Inappropriate Care Unit",
-    description: "AI-powered 3-phase detection with sequential agents for analysis, categorization, and corrective actions",
+    title: "Audit & FWA Detection",
+    description: "Core module for claims analysis, scoring FWA probability, and flagging outliers",
     icon: Shield,
     path: "/fwa",
     color: "bg-[#d946ef]/10 text-[#d946ef]",
     borderColor: "hover:border-[#d946ef]/50",
-    features: ["3-Phase Agents", "Knowledge Bases", "Corrective Actions"],
+    features: ["Risk Scoring", "Outlier Analysis", "Correction Workflows"],
   },
   {
-    id: "provider-relations",
-    title: "Provider Relations",
-    description: "Provider directory, reconciliation, contracts, benchmarking, CPM analytics, and settlement management",
+    id: "daman-intelligence",
+    title: "Daman Intelligence",
+    description: "Provider-facing intelligence including benchmarking and self-audit capabilities",
+    icon: Brain,
+    path: "/intelligence",
+    color: "bg-[#8b5cf6]/10 text-[#8b5cf6]",
+    borderColor: "hover:border-[#8b5cf6]/50",
+    features: ["Provider Scorecards", "Rejection Decoder", "Self-Audit"],
+  },
+  {
+    id: "daman-business",
+    title: "Daman Business",
+    description: "Employer and payer-facing dashboards for profiling and policy simulation",
+    icon: BarChart3,
+    path: "/business",
+    color: "bg-primary/10 text-primary",
+    borderColor: "hover:border-primary/50",
+    features: ["Employer Profiling", "AI Policy Tool", "Digital Broker"],
+  },
+  {
+    id: "daman-members",
+    title: "Daman Members",
+    description: "Patient-facing portal for simple interaction, feedback, and education",
     icon: Users,
-    path: "/provider-relations",
-    color: "bg-[#6366f1]/10 text-[#6366f1]",
-    borderColor: "hover:border-[#6366f1]/50",
-    features: ["Provider Directory", "Reconciliation", "Benchmarking", "CPM Analytics"],
-  },
-  {
-    id: "coding",
-    title: "Coding",
-    description: "Service mapping, code validation, and provider contract negotiations",
-    icon: Code,
-    path: "/coding",
+    path: "/members",
     color: "bg-[#0d9488]/10 text-[#0d9488]",
     borderColor: "hover:border-[#0d9488]/50",
-    features: ["Service Mapping", "Provider Negotiations"],
-  },
-  {
-    id: "analytics",
-    title: "Analytics & Reporting",
-    description: "Advanced analytics, dashboards, and executive reporting across all modules",
-    icon: BarChart3,
-    path: "/analytics",
-    color: "bg-accent/10 text-accent",
-    borderColor: "hover:border-accent/50",
-    features: ["Executive Dashboards", "Trend Analysis", "Custom Reports"],
-    comingSoon: true,
+    features: ["Patient Education", "Fraud Reporting", "Feedback Chatbot"],
   },
 ];
 
@@ -81,33 +72,33 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-background flex flex-col">
       <div className="relative overflow-hidden">
-        <div 
+        <div
           className="absolute inset-0"
           style={{
             background: "linear-gradient(135deg, #d946ef 0%, #28AAE2 50%, #0d9488 100%)",
           }}
         />
         <div className="absolute inset-0 bg-black/10" />
-        
+
         <div className="relative z-10 container mx-auto px-6 py-16 md:py-24">
           <div className="flex flex-col md:flex-row items-center gap-8 md:gap-16">
             <div className="flex-1 text-white">
               <div className="mb-6">
-                <img 
-                  src={tachyHealthLogo} 
-                  alt="TachyHealth Logo" 
+                <img
+                  src={tachyHealthLogo}
+                  alt="TachyHealth Logo"
                   className="h-12 brightness-0 invert"
                   data-testid="img-tachyhealth-logo"
                 />
               </div>
-              <h1 
+              <h1
                 className="text-4xl md:text-5xl font-bold mb-4 tracking-tight"
                 data-testid="text-hero-title"
               >
                 Welcome to our platform!
               </h1>
               <p className="text-lg md:text-xl text-white/90 max-w-xl">
-                We thrive to support your transformation and automation journey by creating 
+                We thrive to support your transformation and automation journey by creating
                 value-based healthcare solutions powered by artificial intelligence and data science.
               </p>
             </div>
