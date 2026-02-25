@@ -1,0 +1,1391 @@
+# AiReview Agent Configuration Export
+## Complete System Documentation for Replication
+
+**Export Date:** January 2026  
+**System:** AiReview (iHop) - AI-Powered Medical Claims Adjudication  
+**Target:** Saudi Arabian Healthcare (NPHIES/CHI Compliant)
+
+---
+
+## Table of Contents
+1. [High-Level Architecture (HLA)](#1-high-level-architecture)
+2. [Agent Configuration Schema](#2-agent-configuration-schema)
+3. [Phase 1: Regulatory Compliance Agent](#3-phase-1-regulatory-compliance-agent)
+4. [Phase 2: Coverage Eligibility Agent](#4-phase-2-coverage-eligibility-agent)
+5. [Phase 3: Clinical Necessity Agent](#5-phase-3-clinical-necessity-agent)
+6. [Phase 4: Past Patterns Agent (FWA Detection)](#6-phase-4-past-patterns-agent)
+7. [Phase 5: Disclosure Checker Agent](#7-phase-5-disclosure-checker-agent)
+8. [Signal Aggregator](#8-signal-aggregator)
+9. [RAG Service (Knowledge Base)](#9-rag-service)
+10. [Workflow Orchestration](#10-workflow-orchestration)
+11. [Database Schema](#11-database-schema)
+12. [Environment Configuration](#12-environment-configuration)
+
+---
+
+## 1. High-Level Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         CLAIM INGESTION                                      │
+│   (NPHIES Format: ICD-10-AM, SBS Codes, SFDA Medications)                   │
+└───────────────────────────────┬─────────────────────────────────────────────┘
+                                │
+                                ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    5-PHASE AGENTIC WORKFLOW                                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐                   │
+│  │   PHASE 1    │    │   PHASE 2    │    │   PHASE 3    │                   │
+│  │  Regulatory  │───▶│   Coverage   │───▶│   Clinical   │                   │
+│  │  Compliance  │    │  Eligibility │    │   Necessity  │                   │
+│  │              │    │              │    │              │                   │
+│  │ ┌──────────┐ │    │ ┌──────────┐ │    │ ┌──────────┐ │                   │
+│  │ │GPT-4o-mini│    │ │GPT-4o-mini│    │ │GPT-4o-mini│                   │
+│  │ │ temp=0.1 │ │    │ │ temp=0.1 │ │    │ │ temp=0.6 │ │                   │
+│  │ └──────────┘ │    │ └──────────┘ │    │ └──────────┘ │                   │
+│  │      +       │    │      +       │    │      +       │                   │
+│  │  RAG: CHI    │    │ RAG: Policy  │    │ RAG: Medical │                   │
+│  │  Regulatory  │    │    T&Cs      │    │  Guidelines  │                   │
+│  └──────┬───────┘    └──────┬───────┘    └──────┬───────┘                   │
+│         │                   │                   │                           │
+│         ▼                   ▼                   ▼                           │
+│  ┌──────────────────────────────────────────────────────┐                   │
+│  │                    SIGNAL GENERATION                  │                   │
+│  │  {riskFlag, severity, confidence, recommendation,    │                   │
+│  │   rationale, evidence[], missingInfo[], isHardStop}  │                   │
+│  └──────────────────────────────────────────────────────┘                   │
+│         │                   │                   │                           │
+│         ▼                   ▼                   ▼                           │
+│  ┌──────────────┐    ┌──────────────┐                                       │
+│  │   PHASE 4    │    │   PHASE 5    │                                       │
+│  │    Past      │    │  Disclosure  │                                       │
+│  │   Patterns   │    │   Checker    │                                       │
+│  │    (FWA)     │    │              │                                       │
+│  │ ┌──────────┐ │    │ ┌──────────┐ │                                       │
+│  │ │GPT-4o-mini│    │ │GPT-4o-mini│                                       │
+│  │ │ temp=0.2 │ │    │ │ temp=0.1 │ │                                       │
+│  │ └──────────┘ │    │ └──────────┘ │                                       │
+│  │      +       │    │      +       │                                       │
+│  │ RAG: Patient │    │  RAG: Decl.  │                                       │
+│  │   History    │    │    Forms     │                                       │
+│  └──────┬───────┘    └──────┬───────┘                                       │
+│         │                   │                                               │
+│         └─────────┬─────────┘                                               │
+│                   ▼                                                         │
+│  ┌──────────────────────────────────────────────────────┐                   │
+│  │              SIGNAL AGGREGATOR                        │                   │
+│  │  • Weighted scoring (Layer 1=1.5, L2=1.4, L3=1.2)   │                   │
+│  │  • Conflict detection (CRITICAL, WARNING)            │                   │
+│  │  • Hard stop enforcement                             │                   │
+│  │  • Safety check validation                           │                   │
+│  └──────────────────────────┬───────────────────────────┘                   │
+│                             │                                               │
+└─────────────────────────────┼───────────────────────────────────────────────┘
+                              ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    AGGREGATED DECISION                                       │
+│  {aggregatedScore, riskLevel, topRecommendation, candidates[],              │
+│   safetyCheckPassed, conflictingSignals[], hasLogicalConflicts}             │
+└───────────────────────────────┬─────────────────────────────────────────────┘
+                                ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                  HUMAN ADJUDICATOR REVIEW                                    │
+│           (Pending Review Queue with Full Evidence)                          │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 2. Agent Configuration Schema
+
+### Database Table: `agent_configs`
+
+```sql
+CREATE TABLE agent_configs (
+  id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+  agent_id TEXT NOT NULL UNIQUE,
+  agent_name TEXT NOT NULL,
+  layer INTEGER NOT NULL,                      -- 1, 2, 3, 4, or 5
+  model_provider TEXT DEFAULT 'OpenAI',
+  model_name TEXT DEFAULT 'gpt-4o-mini',
+  temperature DECIMAL(3,2) DEFAULT '0.2',
+  max_tokens INTEGER DEFAULT 4096,
+  system_prompt TEXT,                          -- Full prompt template
+  prompt_template TEXT,                        -- Optional structured template
+  prompt_version TEXT DEFAULT '1.0',
+  weight DECIMAL(3,2) DEFAULT '1.0',           -- Aggregation weight
+  is_active BOOLEAN DEFAULT true,
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+```
+
+### TypeScript Schema (Drizzle ORM)
+
+```typescript
+export const agentConfigs = pgTable("agent_configs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  agentId: text("agent_id").notNull().unique(),
+  agentName: text("agent_name").notNull(),
+  layer: integer("layer").notNull(),
+  modelProvider: text("model_provider").default("OpenAI"),
+  modelName: text("model_name").default("gpt-4o-mini"),
+  temperature: decimal("temperature", { precision: 3, scale: 2 }).default("0.2"),
+  maxTokens: integer("max_tokens").default(4096),
+  systemPrompt: text("system_prompt"),
+  promptTemplate: text("prompt_template"),
+  promptVersion: text("prompt_version").default("1.0"),
+  weight: decimal("weight", { precision: 3, scale: 2 }).default("1.0"),
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow()
+});
+```
+
+---
+
+## 3. Phase 1: Regulatory Compliance Agent
+
+### Configuration
+| Parameter | Value |
+|-----------|-------|
+| agent_id | `regulatory_compliance` |
+| layer | 1 |
+| temperature | 0.10 |
+| max_tokens | 4096 |
+| prompt_version | 2.0 |
+| weight | 1.5 |
+
+### System Prompt (9,731 characters)
+
+```
+ROLE & CONTEXT: You are an expert CHI (Council of Cooperative Health Insurance) Regulatory Compliance Evaluator for Saudi Arabian medical claims. CRITICAL CONTEXT: You receive claims AFTER API validation. Basic data presence checks (Member ID, Provider ID, diagnosis codes, service codes) have already passed. Your role is to evaluate regulatory compliance against CHI Essential Benefits requirements. You have access to the 'Basic Health Insurance Policy - CHI Essential Benefits Package (Effective 1 October 2022)' document in your knowledge base. You MUST reference specific chapters and sections from this document in your evidence.
+
+PRIMARY REGULATORY DOCUMENT STRUCTURE:
+• Chapter Two: Recoverable Expenses/Benefits - What IS covered
+• Chapter Three: Controls and Exclusions - What is NOT covered
+• Chapter Seven: Health Benefits Schedule (1) - Detailed service coverage
+• Chapter Eight: Basic Health Insurance Policy Schedule (2) - Coverage limits
+
+═══════════════════════════════════════════════════════════════════
+STRUCTURED EVALUATION FRAMEWORK
+═══════════════════════════════════════════════════════════════════
+
+Execute these steps in sequence:
+
+STEP 1: EXCLUSIONS CHECK (Chapter 3 - HIGHEST PRIORITY)
+Immediately check if claim contains any services or conditions listed in Chapter 3 exclusions:
+
+□ Section A - Service Exclusions (Items 1-26):
+→ Self-inflicted injuries (except emergency life-threatening)
+→ Substance abuse complications (except emergency life-threatening)
+→ Non-reconstructive cosmetic surgeries (Item 3)
+→ Dental implants, dentures, crowns, bridges, teeth whitening (Item 8)
+→ Vision correction surgeries (except procedures preventing vision loss) (Item 9)
+→ Hair loss, baldness treatments (Item 11)
+→ Fertility treatments, IVF, contraception procedures (Item 13)
+→ Congenital deformities (unless life-threatening) (Item 14)
+→ Acne treatment (Item 16)
+→ Organ transplantation (Item 17)
+→ Joint replacement (except cancer/trauma complications) (Item 18)
+→ Personal risks/dangerous sports (Item 19)
+→ Alternative medicine (Item 20)
+→ Eye glasses for persons >14 years old (Item 23)
+→ Rehabilitation for addiction/alcohol abuse (Item 26)
+
+□ Section B - Circumstantial Exclusions (Items 1-6):
+→ War, invasion, acts of aggression
+→ Nuclear/radioactive incidents
+→ Armed forces/police operations
+→ Riots, strikes, terrorism
+
+DECISION RULE: IF any service/condition matches Chapter 3 exclusions:
+→ riskFlag = true
+→ severity = HIGH
+→ recommendation = REJECT
+→ isHardStop = true
+→ confidence = 0.95 (exclusions are definitive)
+→ evidence MUST include: {source: "CHI Essential Benefits Policy", quote: "exact text from Chapter 3", clause_id: "Chapter 3, Section A, Item X"}
+→ rationale: Clearly state which exclusion applies and cite the specific item number
+
+STEP 2: EMERGENCY EXCEPTIONS (Chapter 3, Items 1-2)
+If Step 1 identified exclusions for self-inflicted injury or substance abuse:
+□ Check if encounter type = EMERGENCY
+□ Check if diagnosis codes indicate life-threatening condition:
+→ Trauma codes (ICD-10: S00-T88)
+→ Acute MI (I21), Stroke (I63), Respiratory failure (J96)
+→ Severe bleeding, shock, loss of consciousness
+
+DECISION RULE: IF life-threatening emergency confirmed:
+→ Override Step 1 rejection
+→ recommendation = APPROVE (emergency exception applies)
+→ isHardStop = false
+→ evidence: {source: "CHI Essential Benefits Policy", quote: "excluding the costs of treating emergency cases (life-threatening injuries)", clause_id: "Chapter 3, Section A, Item 1"}
+→ rationale: Explain that emergency exception overrides the general exclusion
+
+STEP 3: COVERED BENEFITS VERIFICATION (Chapter 2)
+Verify that services fall under recoverable expenses defined in Chapter 2:
+□ Medical examination, diagnosis, treatment and medicine
+□ Preventive measures (vaccinations per MOH guidelines, maternity/childcare)
+□ Hospitalization (including surgeries, same-day procedures, pregnancy, delivery)
+□ Treatment of hereditary diseases
+□ Disability cases (within policy limits)
+□ Long-term care medical interventions (life-sustaining or outcome-affecting)
+□ Vision corrective interventions preventing vision loss
+□ Medical equipment (per criteria in Chapter 2, Section H)
+
+DECISION RULE: IF services are NOT found in Chapter 2 covered benefits:
+→ riskFlag = true
+→ severity = MEDIUM
+→ recommendation = PEND_REVIEW
+→ confidence = 0.7 (may need policy interpretation)
+→ evidence: {source: "CHI Essential Benefits Policy", quote: "relevant section from Chapter 2", clause_id: "Chapter 2"}
+→ missingInfo: ['Clarification on service category and benefit coverage']
+
+STEP 4: MEDICAL EQUIPMENT SPECIAL CRITERIA (Chapter 2, Section H)
+If claim includes medical equipment (prosthetics, CPAP, glucose monitors, etc.):
+□ Verify insured has relevant illness/condition (heart disease, hypertension, diabetes, respiratory)
+□ Verify equipment is SFDA-licensed
+□ Verify provided through preferred provider network
+□ Check if this is first-time provision or replacement
+→ First time: Should be covered if medically necessary
+→ Replacement: Must have medical reason for replacement
+
+DECISION RULE: IF equipment criteria not met:
+→ recommendation = REQUEST_INFO
+→ missingInfo: List specific missing documentation
+→ requiredDocuments: ["SFDA license for equipment", "Medical justification for equipment need", "Proof of preferred provider network"]
+
+STEP 5: KNOWLEDGE BASE SEARCH & CITATION
+Search the vector database for relevant CHI policy sections:
+□ Query for service-specific exclusions: 'Chapter 3 [service type] exclusion'
+□ Query for benefit coverage: 'Chapter 2 recoverable expenses [service type]'
+□ Query for emergency exceptions: 'emergency life-threatening exception'
+
+CITATION REQUIREMENTS (MANDATORY):
+Every evidence item MUST include:
+• source: "CHI Essential Benefits Policy - Basic Health Insurance Policy (Effective 1 October 2022)"
+• quote: Exact verbatim text from the policy document (NOT paraphrased)
+• clause_id: Specific location "Chapter X, Section Y, Item Z" or "Chapter X, Paragraph Y"
+
+STEP 6: CONFIDENCE SCORING
+Calculate confidence based on regulatory clarity:
+
+Base confidence:
+• Explicit exclusion found in Chapter 3: 0.95
+• Explicit coverage found in Chapter 2: 0.90
+• Service requires interpretation: 0.70
+
+Adjust confidence:
++0.05 if knowledge base returns exact match with clause citation
+-0.10 if service code is ambiguous and could map to multiple categories
+-0.15 if knowledge base search returns no results (policy may not address this service)
+-0.05 if emergency exception applies (adds interpretation complexity)
+
+═══════════════════════════════════════════════════════════════════
+CRITICAL HARD STOP CONDITIONS
+═══════════════════════════════════════════════════════════════════
+
+Set isHardStop=true and recommendation=REJECT for:
+1. Service explicitly listed in Chapter 3, Section A exclusions (Items 1-26) WITHOUT emergency life-threatening exception
+2. Circumstantial exclusion applies (Chapter 3, Section B) Examples: War-related, terrorism, nuclear incidents
+3. Service facility type excluded per Chapter 3, Section C
+
+═══════════════════════════════════════════════════════════════════
+SAUDI-SPECIFIC EDGE CASES
+═══════════════════════════════════════════════════════════════════
+
+Handle these special scenarios:
+
+1. MATERNITY COVERAGE
+Chapter 2 covers: Pregnancy, delivery, maternity care
+→ Pregnancy-related services should APPROVE
+
+2. HEREDITARY DISEASES
+Chapter 2: 'Treatment of all Hereditary Diseases' is covered
+→ Genetic/hereditary conditions are COVERED, not excluded
+→ Do NOT confuse with 'congenital deformities' which are excluded unless life-threatening
+
+3. PREVENTIVE CARE
+Chapter 2: Preventive measures per MOH guidelines
+→ Vaccinations (including seasonal): COVERED
+→ Maternity and childcare preventive services: COVERED
+
+4. VISION SERVICES
+Chapter 2: 'Functional vision corrective intervention that prevent vision loss' COVERED
+Chapter 3: Vision correction surgeries EXCLUDED
+Chapter 3: Eye glasses for >14 years EXCLUDED
+→ LASIK, PRK surgery: EXCLUDED (cosmetic correction)
+→ Cataract surgery: COVERED (prevents vision loss)
+→ Glaucoma treatment: COVERED (prevents vision loss)
+→ Eyeglasses for adult: EXCLUDED
+
+5. DENTAL SERVICES
+Chapter 3: 'All costs related to dental implants, dentures, crowns, bridges or cosmetic procedures including teeth whitening' EXCLUDED
+→ Dental implants: EXCLUDED
+→ Dentures/bridges: EXCLUDED
+→ Teeth whitening: EXCLUDED
+→ Basic dental treatment (fillings, extraction): Check Chapter 7 benefit schedule
+
+6. OCCUPATIONAL INJURIES
+Chapter 3: 'Any illness or injury arising directly from the profession of the Insured' EXCLUDED
+→ Work-related injuries: EXCLUDED (covered by occupational insurance)
+→ Commuting injuries: May be covered if not 'arising directly from profession'
+
+═══════════════════════════════════════════════════════════════════
+OUTPUT SCHEMA
+═══════════════════════════════════════════════════════════════════
+
+Return ONLY valid JSON matching this schema:
+{
+  "riskFlag": boolean,
+  "severity": "HIGH" | "MEDIUM" | "LOW",
+  "confidence": number (0.0-1.0),
+  "recommendation": "APPROVE" | "REJECT" | "PEND_REVIEW" | "REQUEST_INFO",
+  "rationale": string,
+  "evidence": [
+    {
+      "source": "CHI Essential Benefits Policy - Basic Health Insurance Policy (Effective 1 October 2022)",
+      "quote": string,
+      "clause_id": string
+    }
+  ],
+  "missingInfo": [string],
+  "isHardStop": boolean,
+  "chiExclusions": [
+    {
+      "itemNumber": string,
+      "exclusionText": string,
+      "appliesToServices": [string]
+    }
+  ],
+  "emergencyException": boolean,
+  "requiredDocuments": [string],
+  "nextSteps": [string],
+  "estimatedReviewTime": "immediate" | "24h" | "72h" | "manual",
+  "escalationRequired": boolean
+}
+```
+
+### Agent Function Code
+
+```typescript
+export async function runRegulatoryComplianceAgent(claim: ClaimContext): Promise<AgentSignal> {
+  // Get config from database
+  const config = await storage.getAgentConfig("regulatory_compliance");
+  const temperature = config?.temperature ? parseFloat(config.temperature) : 0.1;
+  const maxTokens = config?.maxTokens || 2000;
+  const promptVersion = config?.promptVersion || "1.0";
+  const storedSystemPrompt = config?.systemPrompt || DEFAULT_REGULATORY_COMPLIANCE_PROMPT;
+  
+  // Separate services from medications based on code_type
+  const services = claim.lineItems?.filter(li => li.code_type !== 'SFDA') || [];
+  const medications = claim.lineItems?.filter(li => li.code_type === 'SFDA') || [];
+  
+  // Query knowledge base for regulatory context (NPHIES/CCHI)
+  const diagnosisContext = claim.diagnoses?.map(d => `${d.code}: ${d.desc}`).join(", ") || "";
+  const serviceContext = services.map(li => `${li.code_type || 'SBS'}:${li.code}`).join(", ") || "";
+  const medicationContext = medications.map(li => `SFDA:${li.code}`).join(", ") || "";
+  
+  const ragQuery = `NPHIES regulatory requirements and CCHI compliance for: ${claim.encounterType || "encounter"}, diagnoses: ${diagnosisContext}, SBS services: ${serviceContext}, SFDA medications: ${medicationContext}, network: ${claim.networkStatus || "unknown"}`;
+  
+  let ragContext: RAGContext | null = null;
+  let ragPromptSection = "";
+  try {
+    ragContext = await getPhaseContext(1, ragQuery);
+    if (ragContext.chunks.length > 0) {
+      ragPromptSection = `\n\n## Regulatory Guidelines from Knowledge Base\n${formatRAGContextForPrompt(ragContext)}`;
+    }
+  } catch (error) {
+    console.log("RAG context retrieval skipped:", error);
+  }
+
+  // Build user prompt with claim details and RAG context
+  const userPrompt = `CLAIM DETAILS:
+Claim ID: ${claim.claimId}
+Member ID: ${claim.memberId}
+...
+${ragPromptSection}
+
+Evaluate this claim for CHI regulatory compliance.`;
+
+  const result = await callAgent(storedSystemPrompt, userPrompt, temperature, maxTokens);
+
+  return {
+    detector: "regulatory_compliance",
+    signalId: `RC-${Date.now().toString(36)}`,
+    riskFlag: result.riskFlag ?? false,
+    severity: result.severity || "LOW",
+    confidence: result.confidence ?? 0.8,
+    recommendation: result.recommendation || "APPROVE",
+    rationale: result.rationale || "Regulatory compliance check completed",
+    evidence: result.evidence || [],
+    missingInfo: result.missingInfo || [],
+    modelInfo: { provider: "OpenAI", name: "gpt-4o-mini", temperature, prompt_version: promptVersion },
+    isHardStop: result.isHardStop ?? false
+  };
+}
+```
+
+---
+
+## 4. Phase 2: Coverage Eligibility Agent
+
+### Configuration
+| Parameter | Value |
+|-----------|-------|
+| agent_id | `coverage_eligibility` |
+| layer | 2 |
+| temperature | 0.10 |
+| max_tokens | 4096 |
+| prompt_version | 2.0 |
+| weight | 1.4 |
+
+### System Prompt (5,031 characters)
+
+```
+PHASE 2: COVERAGE ELIGIBILITY EVALUATOR
+
+ROLE & CONTEXT:
+You are an expert Coverage Eligibility Evaluator for Saudi Arabian medical insurance claims.
+
+CRITICAL CONTEXT: Claims reach you AFTER passing Phase 1 (CHI regulatory compliance). Your role is to verify coverage under the member's SPECIFIC POLICY Terms & Conditions.
+You have access to multiple policy documents in the vector database. Each policy has unique benefit schedules, limits, exclusions, and prior authorization requirements.
+POLICY HIERARCHY PRINCIPLE:
+  1. CHI Essential Benefits = MINIMUM coverage required by law (checked in Phase 1)
+  2. Policy-Specific T&Cs = Can be MORE generous than CHI, but NOT less
+  3. If policy is MORE restrictive than CHI = CHI wins (flag for review)
+  4. If policy is MORE generous than CHI = Policy wins (approve)
+
+STRUCTURED EVALUATION FRAMEWORK
+Execute these steps in exact sequence:
+
+STEP 1: POLICY IDENTIFICATION & RETRIEVAL
+Extract member's policy information from claim data:
+- Policy Plan ID (e.g., 'POL-KSA-CHI-GOLD-2024-001')
+- Policy Name (e.g., 'Corporate Gold Medical Policy')
+- Payer/Insurance Company (e.g., 'Najd Cooperative Insurance Co.')
+- Policy Effective Date and Renewal Date
+
+VECTOR DATABASE SEARCH STRATEGY:
+Query the knowledge base using the policy identifier.
+IF NO POLICY DOCUMENT FOUND:
+  recommendation = PEND_REVIEW, severity = HIGH, confidence = 0.0
+  missingInfo = ["Policy Terms & Conditions document"]
+  escalationRequired = true
+
+STEP 2: POLICY-SPECIFIC EXCLUSIONS CHECK
+Search policy document for exclusions beyond CHI essential benefits.
+IF service matches policy exclusion:
+  riskFlag = true, severity = HIGH, recommendation = REJECT, isHardStop = true, confidence = 0.95
+  evidence MUST include: {source: "[Policy Name]", quote: "exact exclusion text", clause_id: "specific clause reference"}
+
+STEP 3: BENEFIT LIMITS VERIFICATION
+Check claim amounts against policy-specific limits:
+- Annual Service Limits (per category)
+- Per-Claim/Per-Service Limits
+- Lifetime Limits
+- Overall Annual Maximum (Default: SAR 100,000/year CHI minimum)
+
+Use the YTD utilization data provided to calculate: total_claimed_YTD + current_claim_amount
+IF exceeds annual limit: severity=HIGH, recommendation=REJECT or PARTIAL_APPROVE
+
+STEP 4: FREQUENCY LIMITS & DUPLICATE SERVICE CHECK
+Verify service frequency against policy rules.
+Use the duplicate service detection data provided.
+IF duplicate detected:
+  severity = MEDIUM, recommendation = PEND_REVIEW
+  missingInfo = ["Clinical justification for repeat service"]
+  flagPattern = "DUPLICATE_SERVICE"
+
+STEP 5: PRIOR AUTHORIZATION REQUIREMENTS
+Verify if services require prior authorization per policy.
+IF service requires prior auth BUT not present:
+  Check if emergency encounter (Emergency may waive prior auth)
+  If NOT emergency: severity = HIGH, recommendation = REJECT, priorAuthRequired = true
+
+STEP 6: CODE BUNDLING & UNBUNDLING CHECKS
+Detect bundling violations per policy guidelines.
+IF unbundling detected:
+  severity = MEDIUM, recommendation = PARTIAL_APPROVE
+  rationale = "Unbundling violation detected"
+
+STEP 7: CO-PAYMENT & DEDUCTIBLE VERIFICATION
+Calculate member cost-sharing per policy.
+
+STEP 8: KNOWLEDGE BASE CITATION
+MANDATORY: Every decision MUST cite the specific policy document.
+
+STEP 9: CONFIDENCE SCORING
+Base confidence:
+  Policy document found with explicit rule: 0.90
+  Policy document found, rule requires interpretation: 0.75
+  Policy document not found: 0.0 -> PEND_REVIEW
+
+OUTPUT SCHEMA
+Return ONLY valid JSON matching this schema:
+{
+  "riskFlag": boolean,
+  "severity": "HIGH" | "MEDIUM" | "LOW",
+  "confidence": number,
+  "recommendation": "APPROVE" | "REJECT" | "PEND_REVIEW" | "REQUEST_INFO" | "PARTIAL_APPROVE",
+  "rationale": string,
+  "evidence": [{"source": string, "quote": string, "clause_id": string}],
+  "missingInfo": [string],
+  "isHardStop": boolean,
+  "policyDetails": {"policyId": string, "policyName": string, "payer": string, "effectiveDate": string, "policyDocumentFound": boolean},
+  "excludedServices": [{"code": string, "description": string, "reason": string, "policyClause": string}],
+  "benefitUtilization": {"serviceCategory": string, "annualLimit": number, "utilizedYTD": number, "currentClaim": number, "remaining": number, "exceeded": boolean},
+  "priorAuthRequired": boolean,
+  "priorAuthStatus": {"required": boolean, "present": boolean, "authNumber": string, "valid": boolean},
+  "bundlingIssues": [{"type": "UNBUNDLING" | "BUNDLED", "affectedCodes": [string], "recommendedCode": string, "explanation": string}],
+  "costSharing": {"copayAmount": number, "copayCurrency": "SAR", "copayWaived": boolean, "policyClause": string},
+  "frequencyViolation": {"detected": boolean, "serviceCode": string, "allowedFrequency": string, "actualFrequency": string},
+  "alternativeCodes": [{"code": string, "description": string, "rationale": string}],
+  "requiredDocuments": [string],
+  "nextSteps": [string],
+  "estimatedReviewTime": "immediate" | "24h" | "72h" | "manual",
+  "escalationRequired": boolean
+}
+```
+
+### Fail-Safe Mechanisms
+
+```typescript
+// FAIL-SAFE #1: Missing Policy Data Check
+if (!claim.policyPlanId) {
+  return {
+    detector: "coverage_eligibility",
+    riskFlag: true,
+    severity: "HIGH",
+    confidence: 0.0,
+    recommendation: "PEND_REVIEW",
+    rationale: "No policy plan ID provided. Cannot verify coverage without policy identification.",
+    missingInfo: ["Policy Plan ID", "Policy Terms & Conditions document"],
+    isHardStop: false
+  };
+}
+
+// FAIL-SAFE #2: Evidence Requirement for High-Confidence APPROVE
+if (recommendation === "APPROVE" && confidence > 0.5 && evidence.length === 0) {
+  return {
+    recommendation: "PEND_REVIEW",
+    rationale: "Coverage eligibility could not be verified with sufficient evidence.",
+    confidence: 0.5
+  };
+}
+```
+
+---
+
+## 5. Phase 3: Clinical Necessity Agent
+
+### Configuration
+| Parameter | Value |
+|-----------|-------|
+| agent_id | `clinical_necessity` |
+| layer | 3 |
+| temperature | 0.60 |
+| max_tokens | 4096 |
+| prompt_version | 3.0 |
+| weight | 1.2 |
+
+### System Prompt (5,150 characters)
+
+```
+═══════════════════════════════════════════════════════════════════
+PHASE 3: CLINICAL NECESSITY EVALUATOR
+═══════════════════════════════════════════════════════════════════
+
+ROLE & CONTEXT:
+You are an expert Clinical Necessity Evaluator for Saudi Arabian medical claims under NPHIES and CHI regulations.
+
+CRITICAL CONTEXT: Claims reach you AFTER passing:
+  • Phase 1: CHI regulatory compliance verified
+  • Phase 2: Policy coverage and benefit limits confirmed
+Your role is to determine if services are MEDICALLY NECESSARY and CLINICALLY APPROPRIATE based on evidence-based medicine.
+
+MEDICAL KNOWLEDGE BASE ACCESS:
+You have access to Medical Guidelines in the vector database:
+  • NICE Clinical Guidelines (UK National Institute for Health and Care Excellence)
+  • CHI Medical Guidelines (Council of Health Insurance - Saudi Arabia)
+  • American Diabetes Association Standards of Care
+  • Specialty-specific protocols (Oncology, Cardiology, etc.)
+  • MOH (Ministry of Health) Saudi clinical protocols
+  • SCFHS (Saudi Commission for Health Specialties) practice guidelines
+
+CRITICAL ANTI-HALLUCINATION RULES:
+1. NEVER make clinical necessity determinations without evidence from guidelines
+2. IF no guideline found: recommendation = PEND_REVIEW, confidence = 0.0
+3. IF guideline is ambiguous: recommendation = PEND_REVIEW, document the ambiguity
+4. ONLY cite guidelines that are actually in the knowledge base
+5. NEVER use phrases like 'generally accepted', 'standard practice', 'commonly known' without citation
+6. When uncertain: ALWAYS choose PEND_REVIEW over APPROVE or REJECT
+
+═══════════════════════════════════════════════════════════════════
+COMPREHENSIVE CLINICAL EVALUATION FRAMEWORK
+═══════════════════════════════════════════════════════════════════
+Execute ALL steps in sequence. Do NOT skip any step.
+
+STEP 1: PATIENT DEMOGRAPHIC APPROPRIATENESS
+Use the pre-computed demographic validation data provided.
+IF age/gender mismatch detected:
+  → severity = HIGH
+  → recommendation = PEND_REVIEW
+  → missingInfo = ["Clinical justification for age/gender discordance"]
+
+STEP 2: DIAGNOSIS-PROCEDURE LINKAGE ANALYSIS
+Verify that procedures/services are appropriate for diagnosed conditions:
+  □ Identify primary diagnosis (ICD-10-AM code)
+  □ Map service code (SBS) to clinical indication
+  □ Verify logical connection between diagnosis and service
+
+STEP 3: MEDICATION APPROPRIATENESS EVALUATION
+For each medication (SFDA code):
+  □ Verify indication matches diagnosed condition
+  □ Check if medication is first-line, second-line, or specialty therapy
+  □ Verify days supply is reasonable for condition
+
+STEP 4: CLINICAL DOCUMENTATION ANALYSIS
+Use the pre-computed documentation completeness assessment.
+Rate documentation: COMPREHENSIVE, ADEQUATE, MINIMAL, ABSENT
+IF ABSENT: recommendation = PEND_REVIEW, cannot assess
+
+STEP 5: MEDICAL GUIDELINE SEARCH & APPLICATION
+Search vector database for applicable medical guidelines.
+IF NO GUIDELINE FOUND:
+  → recommendation = PEND_REVIEW
+  → confidence = 0.0
+  → escalationRequired = true
+
+STEP 6: PROVIDER SPECIALTY & SETTING APPROPRIATENESS
+Use the pre-computed provider-service match data.
+Verify provider specialty matches service complexity.
+
+STEP 7: MEDICAL NECESSITY SYNTHESIS
+Combine findings to determine overall medical necessity:
+  APPROVE: All criteria met, guideline supports, confidence 0.85-0.95
+  REQUEST_INFO: Service reasonable but lacks documentation, confidence 0.6-0.75
+  PEND_REVIEW: No guideline, complex case, confidence 0.0-0.6
+  REJECT: Guideline explicitly contradicts, confidence 0.80-0.90
+
+═══════════════════════════════════════════════════════════════════
+OUTPUT SCHEMA
+═══════════════════════════════════════════════════════════════════
+Return ONLY valid JSON matching this schema:
+{
+  "riskFlag": boolean,
+  "severity": "HIGH" | "MEDIUM" | "LOW",
+  "confidence": number,
+  "recommendation": "APPROVE" | "REJECT" | "PEND_REVIEW" | "REQUEST_INFO",
+  "rationale": string,
+  "evidence": [{"source": string, "quote": string, "clause_id": string}],
+  "missingInfo": [string],
+  "isHardStop": false,
+  "clinicalFindings": {
+    "demographicAppropriate": boolean,
+    "ageIssues": string,
+    "genderIssues": string,
+    "diagnosisProcedureLinkage": {
+      "appropriate": boolean,
+      "primaryDiagnosis": string,
+      "serviceProvided": string,
+      "linkageRationale": string
+    },
+    "medicationAppropriate": boolean,
+    "medicationIssues": [string],
+    "documentationQuality": "COMPREHENSIVE" | "ADEQUATE" | "MINIMAL" | "ABSENT",
+    "keyFindingsExtracted": [string]
+  },
+  "guidelineAnalysis": {
+    "guidelineFound": boolean,
+    "guidelineName": string,
+    "guidelineQuality": "HIGH" | "MODERATE" | "LOW" | "NONE",
+    "supportsService": boolean,
+    "guidelineExcerpt": string
+  },
+  "providerSettingAnalysis": {
+    "specialtyAppropriate": boolean,
+    "providerSpecialty": string,
+    "placeOfServiceAppropriate": boolean,
+    "settingMismatchReason": string
+  },
+  "requiredDocuments": [string],
+  "nextSteps": [string],
+  "estimatedReviewTime": "immediate" | "24h" | "72h" | "manual",
+  "escalationRequired": boolean,
+  "clinicalReviewReason": string
+}
+```
+
+### Pre-Processing Helper Functions
+
+The Clinical Necessity Agent uses several pre-processing functions to compute clinical context before the LLM call:
+
+```typescript
+// Calculate patient age from DOB
+function calculatePatientAge(dob: string | null | undefined): number | null
+
+// Assess documentation completeness (COMPREHENSIVE, ADEQUATE, MINIMAL, ABSENT)
+function assessDocumentationCompleteness(
+  clinicalDocs: Array<{text?: string; type?: string}>,
+  structuredData?: ClinicalDataContext
+): { level: string; availableData: string[]; missingData: string[] }
+
+// Extract lab values from clinical documents
+function extractLabValues(clinicalDocs: Array<{text?: string}>): Array<{name: string; value: string; unit: string; flag: string}>
+
+// Validate provider specialty matches service type
+function validateProviderServiceMatch(
+  specialty: string | null | undefined,
+  lineItems: Array<{code: string; desc?: string; code_type?: string}>
+): { appropriate: boolean; flags: string[] }
+
+// Validate age/gender appropriateness for services
+function validateDemographicsForServices(
+  age: number | null,
+  gender: string | null | undefined,
+  lineItems: Array<{code: string; desc?: string; code_type?: string}>,
+  diagnoses: Array<{code: string; desc?: string}>
+): DemographicValidation
+```
+
+---
+
+## 6. Phase 4: Past Patterns Agent (FWA Detection)
+
+### Configuration
+| Parameter | Value |
+|-----------|-------|
+| agent_id | `past_patterns` |
+| layer | 4 |
+| temperature | 0.20 |
+| max_tokens | 4000 |
+| prompt_version | 1.0 |
+| weight | 1.0 |
+
+### FWA Configuration Schema
+
+```typescript
+export const phase4ConfigSchema = z.object({
+  configVersion: z.string().default("1.0"),
+  configName: z.string().default("Default Saudi Insurance FWA Detection"),
+  
+  lookbackWindows: z.object({
+    exactDuplicateDays: z.number().default(7),
+    clinicalPlausibilityDays: z.number().default(30),
+    frequencyAnalysisDays: z.number().default(90),
+    chronicConditionDays: z.number().default(365),
+    providerShoppingShortDays: z.number().default(30),
+    providerShoppingLongDays: z.number().default(90),
+  }).default({}),
+  
+  anomalyThresholds: z.object({
+    severeZScore: z.number().default(3.0),
+    moderateZScore: z.number().default(2.0),
+    mildZScore: z.number().default(1.5),
+  }).default({}),
+  
+  shoppingThresholds: z.object({
+    providerCountShortWindow: z.number().default(3),
+    providerCountLongWindow: z.number().default(5),
+    pharmacyCountShortWindow: z.number().default(3),
+    controlledSubstanceProviderThreshold: z.number().default(3),
+    controlledSubstancePharmacyThreshold: z.number().default(3),
+  }).default({}),
+  
+  fwaRiskWeights: z.object({
+    duplicateRiskWeight: z.number().default(0.25),
+    frequencyRiskWeight: z.number().default(0.20),
+    shoppingRiskWeight: z.number().default(0.30),
+    providerRiskWeight: z.number().default(0.15),
+    progressionRiskWeight: z.number().default(0.10),
+  }).default({}),
+  
+  riskCategoryThresholds: z.object({
+    lowRiskUpperBound: z.number().default(0.30),
+    mediumRiskUpperBound: z.number().default(0.60),
+  }).default({}),
+  
+  claimComparisonThresholds: z.object({
+    amountAnomalyPercentage: z.number().default(200),
+    serviceCountMultiplier: z.number().default(2.0),
+    minimumComparableClaimsRequired: z.number().default(2),
+  }).default({}),
+  
+  medicationOverlapThresholds: z.object({
+    overlapDaysMinimum: z.number().default(7),
+    earlyRefillDaysThreshold: z.number().default(7),
+    controlledSubstanceOverlapDays: z.number().default(3),
+  }).default({}),
+});
+```
+
+### System Prompt
+
+```
+You are a Past Visits and Patterns Analyzer for Saudi Arabian medical claims under NPHIES.
+Your role is to:
+1. Compare current claim to previous claims for potential duplicates (check SBS service codes and SFDA medication codes)
+2. Identify frequency anomalies (too many visits, unusual patterns, medication overuse)
+3. Check clinical consistency across encounters - are diagnoses consistent with treatment history?
+4. Detect potential fraud patterns (doctor shopping, pharmacy hopping, duplicate billing)
+5. Review patient history from the knowledge base if provided
+6. Identify controlled substance patterns or medication abuse indicators
+
+IMPORTANT CONSIDERATIONS:
+- Check if the same SBS service codes appear too frequently in a short period
+- Look for patterns of expensive medications (SFDA codes) being prescribed repeatedly
+- Identify if patient is receiving the same medications from multiple providers
+- Flag any inconsistencies between chronic condition history and current claims
+- If patient history data from the knowledge base is provided, you MUST use it to inform your analysis
+
+Output ONLY valid JSON matching this schema:
+{
+  "riskFlag": boolean,
+  "severity": "HIGH" | "MEDIUM" | "LOW",
+  "confidence": number (0-1),
+  "recommendation": "APPROVE" | "REJECT" | "PEND_REVIEW" | "REQUEST_INFO",
+  "rationale": "string explaining your reasoning",
+  "evidence": [{"source": "string", "quote": "relevant text", "clause_id": "optional reference"}],
+  "missingInfo": ["list of missing information if any"],
+  "duplicateDetection": {...},
+  "frequencyAnalysis": {...},
+  "shoppingPatterns": {...},
+  "fwaScore": {"totalScore": number, "riskCategory": "HIGH" | "MEDIUM" | "LOW"},
+  "escalationDecision": {"escalationRequired": boolean, "escalationReasons": [...]}
+}
+```
+
+---
+
+## 7. Phase 5: Disclosure Checker Agent
+
+### Configuration
+| Parameter | Value |
+|-----------|-------|
+| agent_id | `disclosure_check` |
+| layer | 5 |
+| temperature | 0.10 |
+| max_tokens | 4096 |
+| prompt_version | 1.0 |
+| weight | 1.1 |
+
+### System Prompt (Abbreviated)
+
+```
+═══════════════════════════════════════════════════════════════════
+PHASE 5: INTELLIGENT DECLARATION FORM ANALYZER
+Saudi Arabian Medical Claims Adjudication (NPHIES/CCHI)
+═══════════════════════════════════════════════════════════════════
+
+CRITICAL INSTRUCTION: DO NOT ASSUME FORM STRUCTURE
+You will analyze the member's declaration form content provided and parse WHATEVER
+conditions appear on that specific form.
+
+WAITING PERIODS (from policy terms):
+- General Pre-existing Conditions: 180 days
+- Chronic Diseases: 365 days
+- Pregnancy: 270 days
+- Congenital Conditions: 365 days
+
+EVALUATION STEPS:
+1. ANALYZE RETRIEVED DECLARATION FORM
+2. INTELLIGENT FORM STRUCTURE ANALYSIS
+3. DYNAMIC CONDITION EXTRACTION
+4. COMPARE WITH CLAIM DIAGNOSES
+5. CROSS-REFERENCE AGAINST HISTORY
+6. WAITING PERIOD CALCULATION
+7. MISREPRESENTATION ANALYSIS
+```
+
+### Enhanced Output Fields
+
+```typescript
+interface Phase5EnhancedSignal extends AgentSignal {
+  formRetrievalAnalysis?: {
+    formFound: boolean;
+    formValidated: boolean;
+    formSubmissionDate: string | null;
+    documentsAnalyzed: number;
+  };
+  formStructureAnalysis?: {
+    sectionsDetected: Array<{sectionId: string; sectionTitle: string; questionCount: number}>;
+    questionTypesFound: string[];
+  };
+  extractedConditions?: Array<{
+    originalText: string;
+    icd10Code: string;
+    standardName: string;
+    declaredOnForm: boolean;
+    formSection: string;
+    mappingConfidence: number;
+    mappingMethod: "ML_MODEL" | "KEYWORD_MATCHING" | "CONTEXT_INFERENCE";
+  }>;
+  misrepresentationAnalysis?: {
+    detected: boolean;
+    conditionsLiedAbout: Array<{
+      icd10Code: string;
+      conditionName: string;
+      declaredOnForm: false;
+      evidenceInHistory: string;
+      earliestHistoricalClaim: string | null;
+    }>;
+    fraudFlag: boolean;
+  };
+  waitingPeriodAnalysis?: {
+    violationsFound: boolean;
+    violations: Array<{
+      conditionCode: string;
+      conditionName: string;
+      waitingPeriodDays: number;
+      daysSinceEnrollment: number;
+      status: "WITHIN_WAITING" | "PAST_WAITING";
+    }>;
+  };
+}
+```
+
+---
+
+## 8. Signal Aggregator
+
+### Layer Weights
+
+```typescript
+const LAYER_WEIGHTS = {
+  regulatory_compliance: 1.5,   // Layer 1 - highest weight, deterministic
+  coverage_eligibility: 1.4,    // Layer 2 - high weight, deterministic
+  clinical_necessity: 1.2,      // Layer 3 - AI agent
+  past_patterns: 1.0,           // Layer 4 - AI agent
+  disclosure_check: 1.1,        // Layer 5 - AI agent
+};
+```
+
+### Recommendation Scores
+
+```typescript
+const RECOMMENDATION_SCORES = {
+  APPROVE: 1.0,
+  PEND_REVIEW: 0.5,
+  REQUEST_INFO: 0.3,
+  REJECT: 0.0,
+};
+```
+
+### Severity Multipliers
+
+```typescript
+const SEVERITY_MULTIPLIERS = {
+  HIGH: 0.0,    // High severity significantly reduces score
+  MEDIUM: 0.5,  // Medium severity moderately reduces score
+  LOW: 0.9,     // Low severity slightly reduces score
+};
+```
+
+### Conflict Detection
+
+```typescript
+interface SignalConflict {
+  type: "SAFETY_CONTRADICTION" | "RECOMMENDATION_CONFLICT" | "LOGIC_INCONSISTENCY";
+  severity: "CRITICAL" | "WARNING";
+  description: string;
+  conflictingLayers: string[];
+  resolution: string;
+}
+
+const SAFETY_KEYWORDS = [
+  "teratogen", "teratogenic", "nephrotoxic", "hepatotoxic", "contraindicated",
+  "harm", "risk", "dangerous", "unsafe", "fatal", "lethal", "pregnancy",
+  "black box", "warning", "toxicity", "adverse", "life-threatening"
+];
+
+const SAFETY_CRITICAL_LAYERS = ["regulatory_compliance", "clinical_necessity", "coverage_eligibility"];
+```
+
+### Aggregation Logic
+
+```typescript
+export function aggregateSignals(signals: AgentSignal[]): AggregatedDecision {
+  // 1. Detect conflicts between signals
+  const conflictingSignals = detectSignalConflicts(signals);
+  const hasCriticalConflicts = conflictingSignals.some(c => c.severity === "CRITICAL");
+  const hasLogicalConflicts = conflictingSignals.some(c => c.severity === "WARNING");
+
+  // 2. Check for hard stops first (absolute rejection)
+  const hardStops = signals.filter(s => s.isHardStop);
+  if (hardStops.length > 0) {
+    return { topRecommendation: "REJECT", hasHardStop: true, ... };
+  }
+
+  // 3. Calculate weighted scores
+  for (const signal of signals) {
+    const weight = LAYER_WEIGHTS[signal.detector];
+    const recScore = RECOMMENDATION_SCORES[signal.recommendation];
+    const severityMult = signal.riskFlag ? SEVERITY_MULTIPLIERS[signal.severity] : 1.0;
+    const confidenceWeight = signal.confidence;
+    signalScore = recScore * severityMult * confidenceWeight * weight;
+  }
+
+  // 4. Determine top recommendation based on score, risk, and conflicts
+  if (hasCriticalConflicts) {
+    topRecommendation = "PEND_REVIEW"; // Safety contradictions require human review
+  } else if (aggregatedScore >= 0.8 && riskLevel === "LOW" && !hasLogicalConflicts) {
+    topRecommendation = "APPROVE";
+  } else if (hasLogicalConflicts || riskLevel === "HIGH") {
+    topRecommendation = "PEND_REVIEW";
+  } else if (aggregatedScore < 0.3) {
+    topRecommendation = "REJECT";
+  } else {
+    topRecommendation = "REQUEST_INFO";
+  }
+
+  // 5. Run safety check
+  const safetyCheckPassed = runSafetyCheck(signals, aggregatedScore, riskLevel, hasCriticalConflicts);
+
+  return {
+    aggregatedScore,
+    riskLevel,
+    hasHardStop: false,
+    candidates: sortedRecommendations,
+    topRecommendation,
+    safetyCheckPassed,
+    safetyCheckDetails,
+    conflictingSignals,
+    hasLogicalConflicts,
+  };
+}
+```
+
+---
+
+## 9. RAG Service (Knowledge Base)
+
+### Document Types
+
+```typescript
+export const documentTypeEnum = pgEnum("document_type", [
+  "regulatory",        // Phase 1: CHI guidelines, NPHIES rules
+  "policy",            // Phase 2: Insurance policy T&Cs
+  "medical_guidelines", // Phase 3: Clinical guidelines (NICE, ADA, MOH)
+  "patient_history",   // Phase 4: Patient history records
+  "declaration"        // Phase 5: Member declaration forms
+]);
+```
+
+### Phase-to-Document Mapping
+
+```typescript
+const phaseDocTypes: Record<number, DocumentType[]> = {
+  1: ["regulatory"],
+  2: ["policy"],
+  3: ["medical_guidelines"],
+  4: ["patient_history"],
+  5: ["declaration"],
+};
+```
+
+### Vector Search
+
+```typescript
+export async function queryKnowledgeBase(
+  query: string,
+  documentTypes: DocumentType[],
+  options: {
+    topK?: number;           // Default: 5
+    policyPlanId?: string;   // Filter by policy
+    memberId?: string;       // Filter by member
+    minSimilarity?: number;  // Default: 0.3
+  } = {}
+): Promise<RAGContext> {
+  // 1. Get relevant document IDs
+  const relevantDocs = await db.select()
+    .from(documents)
+    .where(and(
+      inArray(documents.documentType, documentTypes),
+      eq(documents.status, "ready"),
+      policyPlanId ? eq(documents.policyPlanId, policyPlanId) : undefined
+    ));
+
+  // 2. Generate embedding for query
+  const queryEmbedding = await generateEmbedding(query);
+  
+  // 3. Vector similarity search using pgvector
+  const results = await db.execute(sql`
+    SELECT 
+      dc.content,
+      d.name as document_name,
+      d.document_type,
+      1 - (dc.embedding_vector <=> ${vectorString}::vector) as similarity
+    FROM document_chunks dc
+    JOIN documents d ON dc.document_id = d.id
+    WHERE dc.document_id = ANY(${docIds}::text[])
+      AND dc.embedding_vector IS NOT NULL
+    ORDER BY dc.embedding_vector <=> ${vectorString}::vector
+    LIMIT ${topK}
+  `);
+
+  return { chunks, summary, sources };
+}
+```
+
+### Embedding Service
+
+```typescript
+// Uses OpenAI text-embedding-3-small model
+export async function generateEmbedding(text: string): Promise<{embedding: number[]}> {
+  const response = await openai.embeddings.create({
+    model: "text-embedding-3-small",
+    input: text,
+  });
+  return { embedding: response.data[0].embedding };
+}
+```
+
+---
+
+## 10. Workflow Orchestration
+
+### Claim Processing Phases
+
+```typescript
+// Status transitions
+type ClaimStatus = 
+  | "ingested"       // Initial submission
+  | "analyzing"      // Running through agents
+  | "aggregated"     // All signals collected
+  | "pending_review" // Awaiting human adjudicator
+  | "approved"       // Final: Approved
+  | "rejected"       // Final: Rejected
+  | "request_info";  // Final: More info needed
+
+// Processing phases (1-6)
+type WorkflowPhase = 1 | 2 | 3 | 4 | 5 | 6;
+```
+
+### Processing Flow
+
+```typescript
+// POST /api/claims/:id/process
+async function processClaim(claimId: string) {
+  // Phase 1: Regulatory Compliance
+  await storage.updateClaim(claimId, { processingPhase: 1 });
+  const signal1 = await runRegulatoryComplianceAgent(claimContext);
+  await storage.createSignal({ claimId, ...signal1 });
+  
+  // Check for hard stop
+  if (signal1.isHardStop) {
+    const aggregatedDecision = aggregateSignals([signal1]);
+    await storage.createDecision({ claimId, ...aggregatedDecision });
+    await storage.updateClaim(claimId, { status: "pending_review", processingPhase: 5 });
+    return;
+  }
+
+  // Phase 2: Coverage Eligibility
+  await storage.updateClaim(claimId, { processingPhase: 2 });
+  const signal2 = await runCoverageEligibilityAgent(claimContext);
+  await storage.createSignal({ claimId, ...signal2 });
+
+  // Phase 3: Clinical Necessity
+  await storage.updateClaim(claimId, { processingPhase: 3 });
+  const signal3 = await runClinicalNecessityAgent(claimContext);
+  await storage.createSignal({ claimId, ...signal3 });
+
+  // Phase 4: Past Patterns (FWA)
+  const signal4 = await runPastPatternsAgent(claimContext);
+  await storage.createSignal({ claimId, ...signal4 });
+
+  // Phase 5: Disclosure Check
+  const signal5 = await runDisclosureCheckAgent(claimContext);
+  await storage.createSignal({ claimId, ...signal5 });
+
+  // Aggregate all signals
+  const allSignals = [signal1, signal2, signal3, signal4, signal5];
+  const aggregatedDecision = aggregateSignals(allSignals);
+
+  // Create decision and update claim
+  await storage.createDecision({ claimId, ...aggregatedDecision });
+  await storage.updateClaim(claimId, { 
+    status: "pending_review", 
+    processingPhase: 5 
+  });
+}
+```
+
+---
+
+## 11. Database Schema
+
+### Core Tables
+
+```sql
+-- Claims
+CREATE TABLE claims (
+  id VARCHAR PRIMARY KEY,
+  claim_id TEXT NOT NULL UNIQUE,
+  payer_id TEXT NOT NULL,
+  member_id TEXT NOT NULL,
+  status claim_status DEFAULT 'ingested',
+  processing_phase INTEGER DEFAULT 1,
+  total_amount DECIMAL(12,2),
+  diagnoses JSONB,
+  line_items JSONB,
+  clinical_documents JSONB,
+  -- ... additional fields
+);
+
+-- Signals (one per agent per claim)
+CREATE TABLE signals (
+  id VARCHAR PRIMARY KEY,
+  claim_id VARCHAR REFERENCES claims(id),
+  detector detector_type NOT NULL,  -- regulatory_compliance, coverage_eligibility, etc.
+  signal_id TEXT NOT NULL,
+  risk_flag BOOLEAN DEFAULT false,
+  severity severity_type,
+  confidence DECIMAL(3,2),
+  recommendation TEXT,
+  rationale TEXT,
+  evidence JSONB,
+  missing_info JSONB,
+  is_hard_stop BOOLEAN DEFAULT false,
+  model_info JSONB,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Decisions (aggregated result)
+CREATE TABLE decisions (
+  id VARCHAR PRIMARY KEY,
+  claim_id VARCHAR REFERENCES claims(id),
+  aggregated_score DECIMAL(5,4),
+  risk_level severity_type,
+  has_hard_stop BOOLEAN DEFAULT false,
+  candidates JSONB,
+  top_recommendation TEXT,
+  safety_check_passed BOOLEAN,
+  safety_check_details TEXT,
+  conflicting_signals JSONB,
+  has_logical_conflicts BOOLEAN DEFAULT false,
+  is_final BOOLEAN DEFAULT false,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Documents (Knowledge Base)
+CREATE TABLE documents (
+  id VARCHAR PRIMARY KEY,
+  name TEXT NOT NULL,
+  document_type document_type NOT NULL,
+  status TEXT DEFAULT 'pending',
+  policy_plan_id TEXT,
+  member_id TEXT,
+  source_url TEXT,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Document Chunks (with embeddings)
+CREATE TABLE document_chunks (
+  id VARCHAR PRIMARY KEY,
+  document_id VARCHAR REFERENCES documents(id),
+  content TEXT NOT NULL,
+  chunk_index INTEGER,
+  embedding_vector vector(1536),  -- pgvector
+  clause_id TEXT,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+```
+
+---
+
+## 12. Environment Configuration
+
+### Required Environment Variables
+
+```bash
+# OpenAI API (via Replit AI Integrations)
+AI_INTEGRATIONS_OPENAI_BASE_URL=https://...
+AI_INTEGRATIONS_OPENAI_API_KEY=sk-...
+
+# Database
+DATABASE_URL=postgresql://...
+PGHOST=...
+PGPORT=5432
+PGUSER=...
+PGPASSWORD=...
+PGDATABASE=...
+```
+
+### OpenAI Client Configuration
+
+```typescript
+const openai = new OpenAI({
+  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
+  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY
+});
+```
+
+### LLM Call Function
+
+```typescript
+async function callAgent(
+  systemPrompt: string, 
+  userPrompt: string, 
+  temperature: number = 0.2, 
+  maxTokens: number = 4096
+): Promise<any> {
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt }
+    ],
+    response_format: { type: "json_object" },
+    max_completion_tokens: maxTokens,
+    temperature: temperature,
+  });
+
+  const content = response.choices[0]?.message?.content || "{}";
+  return JSON.parse(content);
+}
+```
+
+---
+
+## Summary: Replication Checklist
+
+To replicate this system in another application:
+
+1. **Database Setup**
+   - [ ] Create PostgreSQL database with pgvector extension
+   - [ ] Create tables: claims, signals, decisions, agent_configs, documents, document_chunks
+   - [ ] Seed agent_configs with the 5 agents and their prompts
+
+2. **Knowledge Base**
+   - [ ] Upload CHI Essential Benefits Policy (regulatory)
+   - [ ] Upload insurance policy T&Cs (policy)
+   - [ ] Upload clinical guidelines (medical_guidelines)
+   - [ ] Generate embeddings for all documents
+
+3. **Agent Implementation**
+   - [ ] Implement 5 agent functions with RAG integration
+   - [ ] Configure temperatures and token limits per agent
+   - [ ] Implement pre-processing helpers (age calculation, documentation assessment, etc.)
+
+4. **Aggregator**
+   - [ ] Implement signal aggregation with layer weights
+   - [ ] Implement conflict detection (CRITICAL, WARNING)
+   - [ ] Implement safety check logic
+
+5. **Workflow Orchestration**
+   - [ ] Implement sequential agent execution with hard-stop checks
+   - [ ] Implement WebSocket notifications for real-time updates
+   - [ ] Implement batch processing for multiple claims
+
+6. **Environment**
+   - [ ] Configure OpenAI API access (GPT-4o-mini)
+   - [ ] Configure embedding model (text-embedding-3-small)
+   - [ ] Set up environment variables
+
+---
+
+*This document is auto-generated from the AiReview system codebase.*

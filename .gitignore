@@ -1,0 +1,10 @@
+node_modules
+dist
+.DS_Store
+server/public
+vite.config.ts.*
+*.tar.gz
+attached_assets/claims_data.csv
+attached_assets/FWA_Sample_QA_1769798027376.xlsx
+attached_assets/FWA_Sample_QA_1769816194628.xlsx
+attached_assets/Flow-Adjudicator_1767178075841.zip

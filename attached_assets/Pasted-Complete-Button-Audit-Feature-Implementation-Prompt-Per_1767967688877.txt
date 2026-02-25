@@ -1,0 +1,67 @@
+Complete Button Audit & Feature Implementation Prompt
+"Perform a comprehensive audit of the entire platform to identify and resolve all inactive UI elements:
+Phase 1: Discovery & Mapping
+
+Scan every page, modal, sidebar, and component in the application
+List ALL buttons, links, tabs, menu items, and clickable elements with their:
+
+Exact label/text
+Current location (page/component path)
+Current behavior (does nothing, shows error, placeholder, etc.)
+Intended user context (who would click it and why)
+
+
+
+Phase 2: User Journey Analysis
+For each inactive element, analyze:
+
+Based on the button name and context, what is the logical next step in the user journey?
+What would a user expect to happen when clicking this?
+Which user persona is this feature for (admin, end-user, approver, etc.)?
+What problem does this feature solve?
+How does it fit into the broader workflow?
+
+Phase 3: Feature Brainstorming & Design
+For each inactive button, propose:
+
+Primary Functionality: Core feature description (2-3 sentences)
+User Interface: What should the user see? (form, table, dashboard, modal, new page)
+Required Inputs: What data does the user need to provide?
+Expected Outputs: What result/feedback should the user get?
+Data Requirements: What database tables/fields are needed?
+Business Logic: What validations, calculations, or rules apply?
+Integration Points: What other features/APIs does this connect to?
+Edge Cases: What error scenarios or special cases exist?
+
+Phase 4: Prioritization Matrix
+Rank each inactive button by:
+
+User Impact (High/Medium/Low): How critical is this to user workflows?
+Implementation Complexity (Simple/Medium/Complex)
+Dependencies: Does it require other features to be built first?
+Frequency of Use: How often would users interact with this?
+
+Create a priority score and recommend implementation order.
+Phase 5: Implementation Roadmap
+For the top 10 highest-priority inactive buttons, provide:
+
+Feature Specification: Detailed requirements document
+UI Wireframe Description: Layout and component structure
+API Endpoints Needed: Methods, routes, request/response schemas
+Database Changes: New tables, columns, relationships, migrations
+Code Structure: Which files to create/modify, component hierarchy
+Acceptance Criteria: How to know when it's done correctly
+Estimated Effort: Time estimate in hours/days
+
+Phase 6: Quick Wins
+Identify buttons that could be made functional with minimal effort (< 2 hours each) and provide immediate implementation code for those.
+Deliverables:
+
+Complete inventory spreadsheet of all inactive elements
+User journey flow diagrams showing how each button fits
+Prioritized backlog with effort estimates
+Detailed specs for top 10 features
+Implementation code for quick wins
+Suggested temporary solutions for low-priority buttons (hide, disable with tooltip, or redirect to roadmap page)
+
+Start with Phase 1 and provide the complete inventory before moving to subsequent phases."

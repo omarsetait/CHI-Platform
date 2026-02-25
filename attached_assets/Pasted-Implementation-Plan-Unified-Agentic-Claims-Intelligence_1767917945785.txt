@@ -1,0 +1,88 @@
+Implementation Plan: Unified Agentic Claims Intelligence Platform
+Based on your architecture document, here's a comprehensive implementation plan:
+
+1. System Requirements
+Technical Stack
+Frontend: React 18 + TypeScript + Vite + TailwindCSS + shadcn/ui
+Backend: Node.js + Express + TypeScript
+Database: PostgreSQL (Neon) with Drizzle ORM
+AI/GenAI: OpenAI GPT-4o via existing integration
+State Management: TanStack Query + React Context
+Visualization: Recharts + D3.js (for graph analysis)
+Infrastructure
+Event-driven architecture using async queues
+Separate "Shadow" database schema for simulation
+WebSocket for real-time processing status
+2. Database Design (New Tables)
+-- Phase 0: Simulation Lab
+shadow_knowledge_base (id, type, content, version, status, created_at)
+synthetic_claims (id, template_type, generated_data, parameters, created_at)
+simulation_runs (id, claim_id, run_type, results, impact_analysis, created_at)
+rule_versions (id, rule_id, version, config, environment, effective_date)
+-- Context Enrichment
+patient_360 (id, patient_id, chronic_conditions, visit_history, risk_factors, last_updated)
+provider_360 (id, provider_id, specialty_benchmarks, peer_ranking, flags, last_updated)
+policy_contexts (id, member_id, benefit_plan, limits, exclusions, valid_until)
+-- Graph Analysis
+entity_relationships (id, source_type, source_id, target_type, target_id, relationship_type, strength)
+collusion_alerts (id, network_id, entities, pattern_type, confidence, detected_at)
+peer_groups (id, specialty, region, provider_ids, avg_metrics, updated_at)
+3. UI/UX Wireframes (New Pages)
+Phase 0: Simulation Lab Module
+Page	Purpose	Key Components
+/simulation/knowledge	Rule Management	Version list, Shadow/Prod toggle, Upload PDFs, Threshold sliders
+/simulation/digital-twin	Synthetic Claims	Template picker, AI prompt box, Batch generator, Preview grid
+/simulation/ghost-run	Test Simulation	Claim form, "Run Ghost" button, Processing timeline, Impact dashboard
+/simulation/impact	What-If Analysis	Before/After metrics, Rejection rate charts, Approval delta
+Context Enrichment Views
+Page	Purpose	Key Components
+/context/patient-360/:id	Patient Profile	Timeline, Conditions, Visit history, Risk indicators, Claims heatmap
+/context/provider-360/:id	Provider Profile	Benchmarks, Peer comparison, Flag history, Billing patterns
+FWA Enhancements
+Page	Purpose	Key Components
+/fwa/graph-analysis	Network View	D3 force graph, Relationship explorer, Collusion alerts
+/fwa/peer-groups	Statistical Analysis	Specialty clusters, Outlier table, Deviation charts
+4. API Endpoints
+Phase 0: Simulation Lab
+POST /api/simulation/knowledge/upload      - Upload guidelines to shadow KB
+GET  /api/simulation/knowledge/versions    - List rule versions
+POST /api/simulation/digital-twin/generate - Generate synthetic claims
+POST /api/simulation/ghost-run             - Run claim through shadow pipeline
+GET  /api/simulation/impact/:runId         - Get what-if analysis results
+POST /api/simulation/promote/:ruleId       - Promote shadow rule to production
+Context Enrichment
+GET  /api/context/patient-360/:patientId   - Full patient context
+GET  /api/context/provider-360/:providerId - Full provider context
+POST /api/context/enrich                   - Build rich context object for claim
+Graph & Peer Analysis
+GET  /api/fwa/graph/:entityType/:entityId  - Get relationship network
+GET  /api/fwa/collusion-alerts             - List detected collusion patterns
+GET  /api/fwa/peer-groups/:specialty       - Get peer group benchmarks
+POST /api/fwa/anomaly-score                - Calculate statistical deviation
+5. GenAI Integration
+New AI Agents
+Agent	Phase	Function
+SyntheticClaimGenerator	Phase 0	Generate realistic test claims from prompts
+ImpactAnalyzer	Phase 0	Predict rule deployment outcomes
+Patient360Summarizer	Phase 1	Synthesize longitudinal patient narrative
+Provider360Profiler	Phase 1	Generate provider risk assessment
+CollusionDetector	Phase 2B	Analyze graph patterns for fraud rings
+PeerOutlierExplainer	Phase 2B	Explain statistical deviations
+Prompt Templates
+Digital Twin: "Generate {count} {specialty} claims with {pattern} characteristics"
+Impact Analysis: "Analyze how rule '{rule}' would affect claims matching {criteria}"
+Collusion: "Examine relationships between {entities} for circular referral patterns"
+6. Settings & Configuration
+Admin Settings Pages
+Setting	Controls
+AI Confidence Thresholds	Sliders for each agent type (0-100%)
+Rule Environment	Shadow/Production toggle per rule
+Peer Group Parameters	Specialty definitions, Region boundaries
+Alert Thresholds	Deviation std-dev triggers, Collusion confidence
+Knowledge Base Sources	Manage guideline documents, Version control
+7. Implementation Phases
+Phase 1 (Weeks 1-2): Database schema + Simulation Lab foundation
+Phase 2 (Weeks 3-4): Patient 360 / Provider 360 context views
+Phase 3 (Weeks 5-6): Graph analysis + Peer grouping
+Phase 4 (Week 7): Integration testing + Settings UI
+

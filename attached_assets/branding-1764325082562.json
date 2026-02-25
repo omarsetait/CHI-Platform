@@ -1,0 +1,110 @@
+{
+  "colorScheme": "light",
+  "fonts": [
+    {
+      "family": "Arial",
+      "role": "body"
+    },
+    {
+      "family": "Nunito Sans",
+      "role": "body"
+    }
+  ],
+  "colors": {
+    "primary": "#28AAE2",
+    "accent": "#1863DC",
+    "background": "#F6F6F6",
+    "textPrimary": "#000000",
+    "link": "#1863DC"
+  },
+  "typography": {
+    "fontFamilies": {
+      "primary": "Arial",
+      "heading": "Arial"
+    },
+    "fontStacks": {
+      "heading": [
+        "Nunito Sans",
+        "Arial",
+        "sans-serif"
+      ],
+      "body": [
+        "Nunito Sans",
+        "Arial",
+        "sans-serif"
+      ],
+      "paragraph": [
+        "Nunito Sans",
+        "Arial",
+        "sans-serif"
+      ]
+    },
+    "fontSizes": {
+      "h1": "130px",
+      "h2": "36px",
+      "body": "18px"
+    }
+  },
+  "spacing": {
+    "baseUnit": 4,
+    "borderRadius": "8px"
+  },
+  "components": {
+    "input": {
+      "borderColor": "#CCCCCC",
+      "borderRadius": "8px"
+    },
+    "buttonPrimary": {
+      "background": "#28AAE2",
+      "textColor": "#FFFFFF",
+      "borderColor": "#28AAE2",
+      "borderRadius": "8px",
+      "shadow": "none"
+    },
+    "buttonSecondary": {
+      "background": "#1863DC",
+      "textColor": "#FFFFFF",
+      "borderColor": "#1863DC",
+      "borderRadius": "2px",
+      "shadow": "none"
+    }
+  },
+  "images": {
+    "logo": "File saved at: attached_assets/logo.svg",
+    "favicon": "https://www.tachyhealth.com/assets/images/logos/TachyHealth-itab-logo.webp",
+    "ogImage": "https://www.tachyhealth.com/assets/images/meta-image-tag.png"
+  },
+  "__framework_hints": [],
+  "__llm_logo_reasoning": {
+    "selectedIndex": 0,
+    "reasoning": "Logo #0 is visible in the header and matches the brand name 'TachyHealth', making it the most suitable choice for the brand logo.",
+    "confidence": 0.95
+  },
+  "__llm_button_reasoning": {
+    "primary": {
+      "index": 0,
+      "text": "Subscribe",
+      "reasoning": "Button #0 ('Subscribe') has a vibrant blue background (#28AAE2) and action-oriented text, making it the primary call-to-action."
+    },
+    "secondary": {
+      "index": 1,
+      "text": "Accept All",
+      "reasoning": "Button #1 ('Accept All') has a different vibrant blue background (#1863DC) and is less prominent than the primary button, making it the secondary call-to-action."
+    },
+    "confidence": 0.95
+  },
+  "personality": {
+    "tone": "professional",
+    "energy": "medium",
+    "targetAudience": "healthcare professionals and patients seeking intelligent healthcare solutions."
+  },
+  "designSystem": {
+    "framework": "custom",
+    "componentLibrary": null
+  },
+  "confidence": {
+    "buttons": 0.95,
+    "colors": 0.95,
+    "overall": 0.95
+  }
+}

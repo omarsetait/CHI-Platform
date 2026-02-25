@@ -1,0 +1,26 @@
+{
+  "testSessionId": "E2E-20260113-071048",
+  "testDate": "2026-01-13T07:10:48+00:00",
+  "environment": "development",
+  "overallResult": "PASSED",
+  "steps": {
+    "systemHealth": { "status": "PASSED", "details": "All APIs responding (200)" },
+    "singleClaimAnalysis": { "status": "PASSED", "details": "Composite score: 32.83, Processing time: 5250ms" },
+    "multipleRiskProfiles": { "status": "PASSED", "details": "Low: 22.99, Medium: 19.4, High: 34.93" },
+    "individualMethods": { "status": "PASSED", "details": "Rule: 0, Statistical: 51, Unsupervised: 52, RAG: 49.31" },
+    "detectionRunTracking": { "status": "PASSED", "details": "8+ runs in database" },
+    "engineConfiguration": { "status": "PASSED", "details": "4 methods configured with correct weights" },
+    "traceableRecord": { "status": "PASSED", "details": "Test run record created" }
+  },
+  "capabilities": [
+    "4-Method composite scoring",
+    "30 FWA detection rules",
+    "Real-time claim analysis (~5s)",
+    "Configuration API",
+    "Detection run tracking"
+  ],
+  "testArtifacts": {
+    "logFile": "tests/e2e-reports/fwa_detection_e2e_test_*.log",
+    "summaryFile": "tests/e2e-reports/latest_test_summary.json"
+  }
+}
