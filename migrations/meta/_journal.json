@@ -22,6 +22,13 @@
       "when": 1768312516128,
       "tag": "0002_handy_gargoyle",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1772073007256,
+      "tag": "0003_odd_sunfire",
+      "breakpoints": true
     }
   ]
 }
