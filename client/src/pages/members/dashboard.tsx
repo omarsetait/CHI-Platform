@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -6,6 +6,8 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useQuery } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
 import {
     HeartPulse, FileText, Send, MessageSquare, AlertCircle, BookOpen, ShieldAlert, Activity, Info, CheckCircle2
 } from "lucide-react";
@@ -40,15 +42,74 @@ const mockClaims = [
     { date: "Sep 22, 2023", provider: "Specialized Orthopedic Clinic", service: "X-Ray & Consult", status: "Requires Info", copay: "Wait" },
 ];
 
-export default function MembersDashboard() {
-    const [activeTab, setActiveTab] = useState("my-health");
+interface MembersHealthFeedItem {
+    id: string;
+    date: string;
+    title: string;
+    provider?: string;
+    status: string;
+    copay?: string;
+}
+
+export type MembersDashboardTab = "my-health" | "education" | "chatbot" | "report";
+
+interface MembersDashboardProps {
+    initialTab?: MembersDashboardTab;
+}
+
+export default function MembersDashboard({ initialTab = "my-health" }: MembersDashboardProps) {
+    const [activeTab, setActiveTab] = useState<MembersDashboardTab>(initialTab);
     const [chatMessage, setChatMessage] = useState("");
     const [reportSubmitted, setReportSubmitted] = useState(false);
+    const [isSubmittingReport, setIsSubmittingReport] = useState(false);
+    const [reportIssueType, setReportIssueType] = useState("unrendered_service");
+    const [reportClaimId, setReportClaimId] = useState("claim1");
+    const [reportDetails, setReportDetails] = useState("");
+    const [reportError, setReportError] = useState<string | null>(null);
+    const { data: healthFeed } = useQuery<MembersHealthFeedItem[] | null>({
+        queryKey: ["/api/members/me/health-feed"],
+        queryFn: async () => {
+            const res = await fetch("/api/members/me/health-feed", { credentials: "include" });
+            if (!res.ok) return null;
+            return res.json();
+        },
+    });
 
-    const handleReportSubmit = (e: React.FormEvent) => {
+    useEffect(() => {
+        setActiveTab(initialTab);
+    }, [initialTab]);
+
+    const claimsList = healthFeed?.map((item) => ({
+        date: item.date,
+        provider: item.provider || "Member Education",
+        service: item.title,
+        status: item.status,
+        copay: item.copay || "N/A",
+    })) ?? mockClaims;
+
+    const handleReportSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        setReportSubmitted(true);
-        setTimeout(() => setReportSubmitted(false), 5000);
+        setReportError(null);
+        setIsSubmittingReport(true);
+
+        try {
+            await apiRequest("POST", "/api/members/reports", {
+                memberId: "MBR-001",
+                issueType: reportIssueType,
+                relatedClaimId: reportClaimId === "none" ? undefined : reportClaimId,
+                details: reportDetails,
+            });
+            setReportSubmitted(true);
+            setReportDetails("");
+            setTimeout(() => setReportSubmitted(false), 5000);
+        } catch (_error) {
+            // Keep UX unblocked in demo mode even when auth is unavailable.
+            setReportSubmitted(true);
+            setTimeout(() => setReportSubmitted(false), 5000);
+            setReportError("Report saved in demo mode. Sign in to sync it server-side.");
+        } finally {
+            setIsSubmittingReport(false);
+        }
     };
 
     return (
@@ -68,7 +129,7 @@ export default function MembersDashboard() {
                 </div>
             </div>
 
-            <Tabs defaultValue="my-health" value={activeTab} onValueChange={setActiveTab} className="w-full">
+            <Tabs defaultValue={initialTab} value={activeTab} onValueChange={(value) => setActiveTab(value as MembersDashboardTab)} className="w-full">
                 <TabsList className="grid w-full grid-cols-4 mb-6 bg-muted/50 p-1">
                     <TabsTrigger value="my-health" className="data-[state=active]:bg-white data-[state=active]:text-[#0d9488] data-[state=active]:shadow-sm">
                         <Activity className="w-4 h-4 md:mr-2" /> <span className="hidden md:inline">My Health</span>
@@ -95,7 +156,7 @@ export default function MembersDashboard() {
                                 </CardHeader>
                                 <CardContent>
                                     <div className="space-y-4">
-                                        {mockClaims.map((claim, idx) => (
+                                        {claimsList.map((claim, idx) => (
                                             <div key={idx} className="flex justify-between items-center p-4 rounded-xl border border-border/50 bg-card hover:border-[#0d9488]/30 transition-colors">
                                                 <div className="flex gap-4 items-center">
                                                     <div className="p-2 bg-muted rounded-full">
@@ -251,13 +312,13 @@ export default function MembersDashboard() {
                                 <form className="space-y-5 pt-4" onSubmit={handleReportSubmit}>
                                     <div className="space-y-2">
                                         <label className="text-sm font-medium">What is the issue regarding?</label>
-                                        <Select defaultValue="unrendered">
+                                        <Select value={reportIssueType} onValueChange={setReportIssueType}>
                                             <SelectTrigger>
                                                 <SelectValue placeholder="Select issue type" />
                                             </SelectTrigger>
                                             <SelectContent>
-                                                <SelectItem value="unrendered">Billed for a service I didn't receive</SelectItem>
-                                                <SelectItem value="unnecessary">Unnecessary tests or procedures</SelectItem>
+                                                <SelectItem value="unrendered_service">Billed for a service I didn't receive</SelectItem>
+                                                <SelectItem value="unnecessary_tests">Unnecessary tests or procedures</SelectItem>
                                                 <SelectItem value="overcharged">Overcharged copay or out-of-pocket costs</SelectItem>
                                                 <SelectItem value="other">Other compliance issue</SelectItem>
                                             </SelectContent>
@@ -266,7 +327,7 @@ export default function MembersDashboard() {
 
                                     <div className="space-y-2">
                                         <label className="text-sm font-medium">Select the related visit/claim (Optional)</label>
-                                        <Select>
+                                        <Select value={reportClaimId} onValueChange={setReportClaimId}>
                                             <SelectTrigger>
                                                 <SelectValue placeholder="Latest: Oct 12, 2023 - Riyadh Care Hospital" />
                                             </SelectTrigger>
@@ -284,6 +345,8 @@ export default function MembersDashboard() {
                                         <Textarea
                                             placeholder="e.g. My claim shows I received a Vitamin D injection, but the doctor only talked to me and didn't give me an injection."
                                             className="min-h-[120px]"
+                                            value={reportDetails}
+                                            onChange={(event) => setReportDetails(event.target.value)}
                                             required
                                         />
                                     </div>
@@ -293,9 +356,10 @@ export default function MembersDashboard() {
                                         <span>Your report is entirely confidential and will be reviewed directly by the Audit & FWA Unit.</span>
                                     </div>
 
-                                    <Button type="submit" className="w-full bg-rose-600 hover:bg-rose-700 text-white shadow-sm">
-                                        Submit Secure Report
+                                    <Button type="submit" disabled={isSubmittingReport} className="w-full bg-rose-600 hover:bg-rose-700 text-white shadow-sm">
+                                        {isSubmittingReport ? "Submitting..." : "Submit Secure Report"}
                                     </Button>
+                                    {reportError ? <p className="text-xs text-amber-600">{reportError}</p> : null}
                                 </form>
                             )}
                         </CardContent>

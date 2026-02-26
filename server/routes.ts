@@ -4,6 +4,7 @@ import { storage } from "./storage";
 import { z } from "zod";
 import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
+import createMemoryStore from "memorystore";
 
 import { registerPreAuthRoutes } from "./routes/preauth-routes";
 import { registerFwaRoutes } from "./routes/fwa-routes";
@@ -15,6 +16,7 @@ import { registerSimulationRoutes } from "./routes/simulation-routes";
 import { registerFindingsRoutes } from "./routes/findings-routes";
 import { registerETLRoutes } from "./routes/etl-routes";
 import { registerSemanticRoutes } from "./routes/semantic-routes";
+import { registerPillarRoutes } from "./routes/pillar-routes";
 import authRoutes from "./routes/auth-routes";
 import { registerPipelineRoutes } from "./routes/pipeline-routes";
 import { loadUserFromSession, requireAuth } from "./middleware/auth";
@@ -82,13 +84,20 @@ function handleRouteError(
 
 export async function registerRoutes(app: Express): Promise<Server> {
   const PgStore = connectPgSimple(session);
+  const MemoryStore = createMemoryStore(session);
+  const useMemorySessionStore = process.env.SESSION_STORE === "memory";
+  const sessionStore = useMemorySessionStore
+    ? new MemoryStore({
+        checkPeriod: 24 * 60 * 60 * 1000,
+      })
+    : new PgStore({
+        conString: process.env.DATABASE_URL,
+        tableName: "user_sessions",
+        createTableIfMissing: true,
+      });
   
   app.use(session({
-    store: new PgStore({
-      conString: process.env.DATABASE_URL,
-      tableName: 'user_sessions',
-      createTableIfMissing: true,
-    }),
+    store: sessionStore,
     secret: process.env.SESSION_SECRET || 'fallback-secret-change-in-production',
     resave: false,
     saveUninitialized: false,
@@ -211,6 +220,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   registerFindingsRoutes(app, storage, handleRouteError);
   registerETLRoutes(app);
   registerSemanticRoutes(app, handleRouteError);
+  registerPillarRoutes(app, handleRouteError);
 
   const httpServer = createServer(app);
 

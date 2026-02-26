@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
     BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, Legend, Cell
 } from "recharts";
@@ -7,6 +7,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import { useQuery } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
 import {
     Brain, FileText, CheckCircle2, AlertTriangle, UploadCloud, FileSearch, Shield, TrendingUp, Activity, BarChart3, ChevronRight, Download, User
 } from "lucide-react";
@@ -20,14 +22,98 @@ const benchmarkData = [
     { subject: 'FWA Safety Score', A: 95, B: 85, fullMark: 100 },
 ];
 
-const rejectionData = [
+const fallbackRejectionData = [
     { id: "CLM-2023-8821", date: "2023-11-20", code: "E11.9", amount: "1,250 SAR", reason: "Medical Necessity Not Met", aiDecoder: "Missing supporting labs for HbA1c > 8.0", action: "Attach lab results" },
     { id: "CLM-2023-8845", date: "2023-11-21", code: "J01.90", amount: "450 SAR", reason: "Unbundling detected", aiDecoder: "Consultation billed separately from minor procedure on same day", action: "Bundle codes" },
     { id: "CLM-2023-8910", date: "2023-11-22", code: "M54.5", amount: "3,200 SAR", reason: "Experimental Treatment", aiDecoder: "Therapy code 97039 not recognized for primary diagnosis without prior authorization", action: "Request pre-auth retrospectively" },
 ];
 
-export default function IntelligenceDashboard() {
-    const [activeTab, setActiveTab] = useState("benchmarking");
+interface IntelligenceSummary {
+    overallPerformance: number;
+    peerRankPercentile: number;
+    fwaSafetyScore: number;
+    rejectionRate: number;
+    trendDelta: number;
+}
+
+interface IntelligenceRejection {
+    id: string;
+    date: string;
+    code: string;
+    amount: number;
+    reason: string;
+    aiDecoder: string;
+    recommendedAction: string;
+}
+
+export type IntelligenceDashboardTab = "benchmarking" | "decoder" | "self-audit";
+
+interface IntelligenceDashboardProps {
+    initialTab?: IntelligenceDashboardTab;
+}
+
+export default function IntelligenceDashboard({ initialTab = "benchmarking" }: IntelligenceDashboardProps) {
+    const [activeTab, setActiveTab] = useState<IntelligenceDashboardTab>(initialTab);
+    const [isRunningSimulation, setIsRunningSimulation] = useState(false);
+    const [simulationMessage, setSimulationMessage] = useState<string | null>(null);
+    const { data: summaryData } = useQuery<IntelligenceSummary | null>({
+        queryKey: ["/api/intelligence/scorecards/summary"],
+        queryFn: async () => {
+            const res = await fetch("/api/intelligence/scorecards/summary", { credentials: "include" });
+            if (!res.ok) return null;
+            return res.json();
+        },
+    });
+    const { data: rejectionApiData } = useQuery<IntelligenceRejection[] | null>({
+        queryKey: ["/api/intelligence/rejections"],
+        queryFn: async () => {
+            const res = await fetch("/api/intelligence/rejections", { credentials: "include" });
+            if (!res.ok) return null;
+            return res.json();
+        },
+    });
+
+    useEffect(() => {
+        setActiveTab(initialTab);
+    }, [initialTab]);
+
+    const summary = summaryData ?? {
+        overallPerformance: 87.6,
+        peerRankPercentile: 85,
+        fwaSafetyScore: 95,
+        rejectionRate: 4.2,
+        trendDelta: 2.4,
+    };
+
+    const rejectionData = rejectionApiData?.map((row) => ({
+        id: row.id,
+        date: row.date,
+        code: row.code,
+        amount: `${row.amount.toLocaleString()} SAR`,
+        reason: row.reason,
+        aiDecoder: row.aiDecoder,
+        action: row.recommendedAction,
+    })) ?? fallbackRejectionData;
+
+    const runSelfAuditSimulation = async () => {
+        setIsRunningSimulation(true);
+        setSimulationMessage(null);
+
+        try {
+            await apiRequest("POST", "/api/intelligence/self-audit/simulations", {
+                providerId: "PRV-001",
+                providerName: "Riyadh Care Hospital",
+                claimCount: 342,
+                source: "manual_upload",
+            });
+            setSimulationMessage("Simulation submitted successfully.");
+        } catch (_error) {
+            // Keep the demo journey usable if auth is unavailable.
+            setSimulationMessage("Simulation captured in demo mode. Sign in to persist server-side.");
+        } finally {
+            setIsRunningSimulation(false);
+        }
+    };
 
     return (
         <div className="space-y-6">
@@ -55,9 +141,9 @@ export default function IntelligenceDashboard() {
                         <CardTitle className="text-sm font-medium text-muted-foreground">Overall Performance</CardTitle>
                     </CardHeader>
                     <CardContent>
-                        <div className="text-2xl font-bold">87.6%</div>
+                        <div className="text-2xl font-bold">{summary.overallPerformance.toFixed(1)}%</div>
                         <p className="text-xs text-emerald-500 flex items-center mt-1">
-                            <TrendingUp className="h-3 w-3 mr-1" /> +2.4% from last month
+                            <TrendingUp className="h-3 w-3 mr-1" /> +{summary.trendDelta.toFixed(1)}% from last month
                         </p>
                     </CardContent>
                 </Card>
@@ -67,7 +153,7 @@ export default function IntelligenceDashboard() {
                         <CardTitle className="text-sm font-medium text-muted-foreground">Peer Rank</CardTitle>
                     </CardHeader>
                     <CardContent>
-                        <div className="text-2xl font-bold">Top 15%</div>
+                        <div className="text-2xl font-bold">Top {Math.max(1, 100 - Math.round(summary.peerRankPercentile))}%</div>
                         <p className="text-xs text-muted-foreground mt-1">
                             Out of 450 regional facilities
                         </p>
@@ -79,7 +165,7 @@ export default function IntelligenceDashboard() {
                         <CardTitle className="text-sm font-medium text-muted-foreground">FWA Safety Score</CardTitle>
                     </CardHeader>
                     <CardContent>
-                        <div className="text-2xl font-bold text-[#8b5cf6]">95/100</div>
+                        <div className="text-2xl font-bold text-[#8b5cf6]">{summary.fwaSafetyScore}/100</div>
                         <p className="text-xs text-[#8b5cf6] flex items-center mt-1">
                             <Shield className="h-3 w-3 mr-1" /> Low Risk
                         </p>
@@ -91,7 +177,7 @@ export default function IntelligenceDashboard() {
                         <CardTitle className="text-sm font-medium text-muted-foreground">Claim Rejection Rate</CardTitle>
                     </CardHeader>
                     <CardContent>
-                        <div className="text-2xl font-bold">4.2%</div>
+                        <div className="text-2xl font-bold">{summary.rejectionRate.toFixed(1)}%</div>
                         <p className="text-xs text-rose-500 flex items-center mt-1">
                             <Activity className="h-3 w-3 mr-1" /> -0.8% from last month
                         </p>
@@ -99,7 +185,7 @@ export default function IntelligenceDashboard() {
                 </Card>
             </div>
 
-            <Tabs defaultValue="benchmarking" value={activeTab} onValueChange={setActiveTab} className="w-full">
+            <Tabs defaultValue={initialTab} value={activeTab} onValueChange={(value) => setActiveTab(value as IntelligenceDashboardTab)} className="w-full">
                 <TabsList className="grid w-full grid-cols-3 mb-6 bg-muted/50 p-1">
                     <TabsTrigger value="benchmarking" className="data-[state=active]:bg-white data-[state=active]:text-[#8b5cf6] data-[state=active]:shadow-sm">
                         <BarChart3 className="w-4 h-4 mr-2" /> Benchmark Analysis
@@ -252,9 +338,14 @@ export default function IntelligenceDashboard() {
                                     <p className="text-sm text-muted-foreground max-w-sm mb-6">
                                         Supports HL7, XML, or standard CSV/Excel formats. Maximum 5,000 claims per simulation batch.
                                     </p>
-                                    <Button className="bg-[#8b5cf6] hover:bg-[#7c3aed] text-white shadow-md">
-                                        Browse Files
+                                    <Button
+                                        className="bg-[#8b5cf6] hover:bg-[#7c3aed] text-white shadow-md"
+                                        onClick={runSelfAuditSimulation}
+                                        disabled={isRunningSimulation}
+                                    >
+                                        {isRunningSimulation ? "Submitting..." : "Browse Files"}
                                     </Button>
+                                    {simulationMessage ? <p className="mt-3 text-xs text-muted-foreground">{simulationMessage}</p> : null}
                                 </div>
                             </CardContent>
                         </Card>

@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "client/src/lib/telemetry.ts",
+    "client/src/pillars/**/*",
+    "client/src/components/fwa/fwa-layout.tsx",
+    "client/src/pages/intelligence/**/*",
+    "client/src/pages/business/**/*",
+    "client/src/pages/members/**/*"
+  ],
+  "exclude": ["node_modules", "build", "dist"]
+}

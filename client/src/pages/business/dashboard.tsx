@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
     AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Legend, PieChart, Pie, Cell
 } from "recharts";
@@ -8,6 +8,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Slider } from "@/components/ui/slider";
+import { useQuery } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
 import {
     Building2, TrendingUp, TrendingDown, Users, Wallet, Activity, ShieldAlert, LineChart, PieChart as PieChartIcon, Settings2
 } from "lucide-react";
@@ -38,8 +40,40 @@ const categoryData = [
 ];
 const COLORS = ["#0284c7", "#38bdf8", "#7dd3fc", "#e0f2fe"];
 
-export default function BusinessDashboard() {
-    const [activeTab, setActiveTab] = useState("overview");
+interface EmployerProfile {
+    employerId: string;
+    employerName: string;
+    activeEmployees: number;
+    ytdHealthcareSpend: number;
+    riskFactor: string;
+    potentialFwaLeakage: number;
+}
+
+export type BusinessDashboardTab = "overview" | "simulator";
+
+interface BusinessDashboardProps {
+    initialTab?: BusinessDashboardTab;
+}
+
+export default function BusinessDashboard({ initialTab = "overview" }: BusinessDashboardProps) {
+    const [activeTab, setActiveTab] = useState<BusinessDashboardTab>(initialTab);
+    const [selectedEmployer, setSelectedEmployer] = useState("acme");
+    const [isSubmittingSimulation, setIsSubmittingSimulation] = useState(false);
+    const [simulationStatus, setSimulationStatus] = useState<string | null>(null);
+    const [apiSimulationResult, setApiSimulationResult] = useState<{ simulatedAnnualSpend: number } | null>(null);
+
+    useEffect(() => {
+        setActiveTab(initialTab);
+    }, [initialTab]);
+
+    const { data: employerProfile } = useQuery<EmployerProfile | null>({
+        queryKey: ["/api/business/employers", selectedEmployer, "profile"],
+        queryFn: async () => {
+            const res = await fetch(`/api/business/employers/${selectedEmployer}/profile`, { credentials: "include" });
+            if (!res.ok) return null;
+            return res.json();
+        },
+    });
 
     // Simulator State
     const [copayPercent, setCopayPercent] = useState([20]);
@@ -49,8 +83,31 @@ export default function BusinessDashboard() {
     const baseSpend = 16800000; // Annual projected
     const copaySavings = (copayPercent[0] - 20) * 0.005 * baseSpend;
     const pharmacySavings = (5000 - pharmacyLimit[0]) * 100;
-    const totalSimulatedSpend = baseSpend - copaySavings - pharmacySavings;
+    const localSimulatedSpend = baseSpend - copaySavings - pharmacySavings;
+    const totalSimulatedSpend = apiSimulationResult?.simulatedAnnualSpend ?? localSimulatedSpend;
     const savingsAmount = baseSpend - totalSimulatedSpend;
+
+    const runPolicySimulation = async () => {
+        setIsSubmittingSimulation(true);
+        setSimulationStatus(null);
+
+        try {
+            const response = await apiRequest("POST", "/api/business/policy-simulations", {
+                employerId: selectedEmployer,
+                copayPercent: copayPercent[0],
+                pharmacyLimit: pharmacyLimit[0],
+                baselineAnnualSpend: baseSpend,
+            });
+            const data = await response.json();
+            setApiSimulationResult({ simulatedAnnualSpend: data.simulatedAnnualSpend });
+            setSimulationStatus("Policy simulation synced to contract API.");
+        } catch (_error) {
+            setApiSimulationResult(null);
+            setSimulationStatus("Simulation kept in local demo mode. Sign in to sync server-side.");
+        } finally {
+            setIsSubmittingSimulation(false);
+        }
+    };
 
     return (
         <div className="space-y-6 max-w-7xl mx-auto">
@@ -64,7 +121,7 @@ export default function BusinessDashboard() {
                 </div>
                 <div className="flex gap-2 items-center">
                     <span className="text-sm font-medium mr-2">Viewing Enterprise:</span>
-                    <Select defaultValue="acme">
+                    <Select value={selectedEmployer} onValueChange={setSelectedEmployer}>
                         <SelectTrigger className="w-[180px]">
                             <SelectValue placeholder="Select Company" />
                         </SelectTrigger>
@@ -84,7 +141,7 @@ export default function BusinessDashboard() {
                         <Wallet className="w-4 h-4 text-sky-500" />
                     </CardHeader>
                     <CardContent>
-                        <div className="text-2xl font-bold">8.4M SAR</div>
+                        <div className="text-2xl font-bold">{((employerProfile?.ytdHealthcareSpend ?? 8400000) / 1000000).toFixed(1)}M SAR</div>
                         <p className="text-xs text-rose-500 flex items-center mt-1 font-medium">
                             <TrendingUp className="h-3 w-3 mr-1" /> +12.5% vs Last Year
                         </p>
@@ -97,7 +154,7 @@ export default function BusinessDashboard() {
                         <Users className="w-4 h-4 text-sky-500" />
                     </CardHeader>
                     <CardContent>
-                        <div className="text-2xl font-bold">5,204</div>
+                        <div className="text-2xl font-bold">{(employerProfile?.activeEmployees ?? 5204).toLocaleString()}</div>
                         <p className="text-xs text-emerald-500 flex items-center mt-1 font-medium">
                             <TrendingUp className="h-3 w-3 mr-1" /> +42 New Hires
                         </p>
@@ -123,7 +180,7 @@ export default function BusinessDashboard() {
                         <ShieldAlert className="w-4 h-4 text-rose-500" />
                     </CardHeader>
                     <CardContent>
-                        <div className="text-2xl font-bold text-rose-600 dark:text-rose-400">~850K SAR</div>
+                        <div className="text-2xl font-bold text-rose-600 dark:text-rose-400">~{Math.round((employerProfile?.potentialFwaLeakage ?? 850000) / 1000)}K SAR</div>
                         <p className="text-xs text-rose-600/80 mt-1">
                             Identified by Daman AI Audits
                         </p>
@@ -131,7 +188,7 @@ export default function BusinessDashboard() {
                 </Card>
             </div>
 
-            <Tabs defaultValue="overview" value={activeTab} onValueChange={setActiveTab} className="w-full">
+            <Tabs defaultValue={initialTab} value={activeTab} onValueChange={(value) => setActiveTab(value as BusinessDashboardTab)} className="w-full">
                 <TabsList className="grid w-full md:w-auto grid-cols-2 mb-6 bg-muted/50 p-1">
                     <TabsTrigger value="overview" className="data-[state=active]:bg-white data-[state=active]:text-sky-600 data-[state=active]:shadow-sm">
                         <LineChart className="w-4 h-4 mr-2" /> Cost Profiling
@@ -295,6 +352,14 @@ export default function BusinessDashboard() {
                                                 <strong>AI Insight:</strong> Increasing copay above 30% typically reduces preventative care visits, leading to a 15% long-term increase in inpatient admissions.
                                             </div>
                                         </div>
+                                        <Button
+                                            className="w-full bg-sky-600 hover:bg-sky-700 text-white"
+                                            onClick={runPolicySimulation}
+                                            disabled={isSubmittingSimulation}
+                                        >
+                                            {isSubmittingSimulation ? "Running simulation..." : "Run Policy Simulation"}
+                                        </Button>
+                                        {simulationStatus ? <p className="text-xs text-muted-foreground">{simulationStatus}</p> : null}
                                     </div>
                                 </CardContent>
                             </Card>

@@ -1,21 +1,36 @@
-import React from "react";
+import { useEffect } from "react";
 import { Switch, Route, useLocation, Redirect } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
-import { AppSidebar } from "@/components/app-sidebar";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { SkipLink } from "@/components/ui/skip-link";
+import { initializeClientTelemetry, trackClientEvent } from "@/lib/telemetry";
 import Home from "@/pages/home";
+import NotFound from "@/pages/not-found";
+
+import { FWALayout } from "@/components/fwa/fwa-layout";
+import { IntelligenceLayout } from "@/pillars/layouts/intelligence-layout";
+import { BusinessLayout } from "@/pillars/layouts/business-layout";
+import { MembersLayout } from "@/pillars/layouts/members-layout";
 
 import IntelligenceDashboard from "@/pages/intelligence/dashboard";
-import BusinessDashboard from "@/pages/business/dashboard";
-import MembersDashboard from "@/pages/members/dashboard";
+import IntelligenceProviderScorecardsPage from "@/pages/intelligence/provider-scorecards";
+import IntelligenceRejectionDecoderPage from "@/pages/intelligence/rejection-decoder";
+import IntelligenceSelfAuditPage from "@/pages/intelligence/self-audit";
 
-import NotFound from "@/pages/not-found";
-import { FWALayout } from "@/components/fwa/fwa-layout";
+import BusinessDashboard from "@/pages/business/dashboard";
+import BusinessEmployerProfilingPage from "@/pages/business/employer-profiling";
+import BusinessPolicySimulatorPage from "@/pages/business/policy-simulator";
+import BusinessDigitalBrokerPage from "@/pages/business/digital-broker";
+
+import MembersDashboard from "@/pages/members/dashboard";
+import MembersMyHealthPage from "@/pages/members/my-health";
+import MembersEducationPage from "@/pages/members/education";
+import MembersHelpFeedbackPage from "@/pages/members/help-feedback";
+import MembersReportIssuePage from "@/pages/members/report-issue";
+
 import FWADashboard from "@/pages/fwa/dashboard";
 import FWAKPIDashboard from "@/pages/fwa/kpi-dashboard";
 import FWACaseManagement from "@/pages/fwa/case-management";
@@ -26,13 +41,9 @@ import FWAPhaseA3 from "@/pages/fwa/phase-a3";
 import FWARegulatoryKB from "@/pages/fwa/regulatory-kb";
 import FWAMedicalKB from "@/pages/fwa/medical-kb";
 import FWAHistoryAgents from "@/pages/fwa/history-agents";
-import FWAAgentConfig from "@/pages/fwa/agent-config";
 import FWAAgentOrchestration from "@/pages/fwa/agent-orchestration";
 import FWASettings from "@/pages/fwa/settings";
 import FWARLHFDashboard from "@/pages/fwa/rlhf-dashboard";
-import FWAProviders from "@/pages/fwa/providers";
-import FWAPatients from "@/pages/fwa/patients";
-import FWADoctors from "@/pages/fwa/doctors";
 import FWAHighRiskEntities from "@/pages/fwa/high-risk-entities";
 import FWABehaviors from "@/pages/fwa/fwa-behaviors";
 import FWAAgentWorkflow from "@/pages/fwa/agent-workflow";
@@ -51,49 +62,51 @@ import FWAProviderProfile from "@/pages/fwa/provider-profile";
 import FWAMLAnalysis from "@/pages/fwa/ml-analysis";
 import GraphAnalysisPage from "@/pages/graph-analysis/graph-analysis";
 import SimulationLabPage from "@/pages/simulation/simulation-lab";
-
 import FWAClaimView from "@/pages/fwa/claim-view";
 
-function MainAppRouter() {
+function IntelligenceRouter() {
   return (
-    <Switch>
-      <Route path="/intelligence" component={IntelligenceDashboard} />
-      <Route path="/business" component={BusinessDashboard} />
-      <Route path="/members" component={MembersDashboard} />
-      <Route component={NotFound} />
-    </Switch>
+    <IntelligenceLayout>
+      <Switch>
+        <Route path="/intelligence">{() => <Redirect to="/intelligence/dashboard" />}</Route>
+        <Route path="/intelligence/dashboard">{() => <IntelligenceDashboard />}</Route>
+        <Route path="/intelligence/provider-scorecards" component={IntelligenceProviderScorecardsPage} />
+        <Route path="/intelligence/rejection-decoder" component={IntelligenceRejectionDecoderPage} />
+        <Route path="/intelligence/self-audit" component={IntelligenceSelfAuditPage} />
+        <Route component={NotFound} />
+      </Switch>
+    </IntelligenceLayout>
   );
 }
 
-function MainAppLayout() {
-  const style = {
-    "--sidebar-width": "16rem",
-    "--sidebar-width-icon": "3rem",
-  };
-
+function BusinessRouter() {
   return (
-    <SidebarProvider style={style as React.CSSProperties}>
-      <div className="flex h-screen w-full print:block">
-        <div className="print:hidden">
-          <AppSidebar />
-        </div>
-        <div className="flex flex-col flex-1 overflow-hidden">
-          <header className="flex items-center justify-between h-16 px-4 border-b bg-card print:hidden">
-            <div className="flex items-center gap-4">
-              <SidebarTrigger data-testid="button-sidebar-toggle" />
-              <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-                <span>Daman Intelligence Engine</span>
-              </div>
-            </div>
-          </header>
-          <main id="main-content" className="flex-1 overflow-auto p-6 print:p-0 print:overflow-visible" role="main">
-            <div className="max-w-7xl mx-auto print:max-w-none">
-              <MainAppRouter />
-            </div>
-          </main>
-        </div>
-      </div>
-    </SidebarProvider>
+    <BusinessLayout>
+      <Switch>
+        <Route path="/business">{() => <Redirect to="/business/dashboard" />}</Route>
+        <Route path="/business/dashboard">{() => <BusinessDashboard />}</Route>
+        <Route path="/business/employer-profiling" component={BusinessEmployerProfilingPage} />
+        <Route path="/business/policy-simulator" component={BusinessPolicySimulatorPage} />
+        <Route path="/business/digital-broker" component={BusinessDigitalBrokerPage} />
+        <Route component={NotFound} />
+      </Switch>
+    </BusinessLayout>
+  );
+}
+
+function MembersRouter() {
+  return (
+    <MembersLayout>
+      <Switch>
+        <Route path="/members">{() => <Redirect to="/members/dashboard" />}</Route>
+        <Route path="/members/dashboard">{() => <MembersDashboard />}</Route>
+        <Route path="/members/my-health" component={MembersMyHealthPage} />
+        <Route path="/members/education" component={MembersEducationPage} />
+        <Route path="/members/help-feedback" component={MembersHelpFeedbackPage} />
+        <Route path="/members/report-issue" component={MembersReportIssuePage} />
+        <Route component={NotFound} />
+      </Switch>
+    </MembersLayout>
   );
 }
 
@@ -101,7 +114,7 @@ function FWARouter() {
   return (
     <FWALayout>
       <Switch>
-        <Route path="/fwa" component={FWADashboard} />
+        <Route path="/fwa">{() => <Redirect to="/fwa/dashboard" />}</Route>
         <Route path="/fwa/dashboard" component={FWADashboard} />
         <Route path="/fwa/kpi-dashboard" component={FWAKPIDashboard} />
         <Route path="/fwa/case-management" component={FWACaseManagement} />
@@ -145,31 +158,50 @@ function FWARouter() {
   );
 }
 
+function HomeRouter() {
+  return (
+    <Switch>
+      <Route path="/" component={Home} />
+      <Route component={NotFound} />
+    </Switch>
+  );
+}
+
 function AppRouter() {
   const [location] = useLocation();
 
-  const isFWAPage = location.startsWith("/fwa");
-  const isStandalonePage = location === "/";
+  useEffect(() => {
+    trackClientEvent("route.view", { location });
+  }, [location]);
 
-  if (isStandalonePage) {
-    return (
-      <Switch>
-        <Route path="/" component={Home} />
-
-        <Route component={NotFound} />
-      </Switch>
-    );
+  if (location === "/") {
+    return <HomeRouter />;
   }
 
-  if (isFWAPage) {
+  if (location.startsWith("/fwa")) {
     return <FWARouter />;
   }
 
-  // Covers /intelligence, /business, /members
-  return <MainAppLayout />;
+  if (location.startsWith("/intelligence")) {
+    return <IntelligenceRouter />;
+  }
+
+  if (location.startsWith("/business")) {
+    return <BusinessRouter />;
+  }
+
+  if (location.startsWith("/members")) {
+    return <MembersRouter />;
+  }
+
+  return <NotFound />;
 }
 
 export default function App() {
+  useEffect(() => {
+    initializeClientTelemetry();
+  }, []);
+
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
