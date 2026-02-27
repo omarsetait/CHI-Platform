@@ -64,6 +64,7 @@ import GraphAnalysisPage from "@/pages/graph-analysis/graph-analysis";
 import SimulationLabPage from "@/pages/simulation/simulation-lab";
 import FWAClaimView from "@/pages/fwa/claim-view";
 import FWAFlaggedClaims from "@/pages/fwa/flagged-claims";
+import CodingIntelligencePage from "@/pages/fwa/coding-intelligence";
 
 function IntelligenceRouter() {
   return (
@@ -137,6 +138,7 @@ function FWARouter() {
         <Route path="/fwa/medical-kb" component={FWAMedicalKB} />
         <Route path="/fwa/knowledge-base" component={FWAKnowledgeBase} />
         <Route path="/fwa/online-listening" component={FWAOnlineListening} />
+        <Route path="/fwa/coding-intelligence" component={CodingIntelligencePage} />
         <Route path="/fwa/enforcement" component={FWAEnforcement} />
         <Route path="/fwa/history-agents" component={FWAHistoryAgents} />
         <Route path="/fwa/agent-config" component={FWAAgentOrchestration} />
