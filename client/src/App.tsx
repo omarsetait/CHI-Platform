@@ -63,6 +63,7 @@ import FWAMLAnalysis from "@/pages/fwa/ml-analysis";
 import GraphAnalysisPage from "@/pages/graph-analysis/graph-analysis";
 import SimulationLabPage from "@/pages/simulation/simulation-lab";
 import FWAClaimView from "@/pages/fwa/claim-view";
+import FWAFlaggedClaims from "@/pages/fwa/flagged-claims";
 
 function IntelligenceRouter() {
   return (
@@ -121,6 +122,7 @@ function FWARouter() {
         <Route path="/fwa/cases" component={FWACaseManagement} />
         <Route path="/fwa/cases/:id" component={FWACaseDetail} />
         <Route path="/fwa/claim/:id" component={FWAClaimView} />
+        <Route path="/fwa/flagged-claims" component={FWAFlaggedClaims} />
         <Route path="/fwa/batch-upload">{() => <Redirect to="/fwa/detection-engine" />}</Route>
         <Route path="/fwa/claims-import" component={FWAClaimsImport} />
         <Route path="/fwa/high-risk-entities" component={FWAHighRiskEntities} />

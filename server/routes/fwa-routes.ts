@@ -8394,6 +8394,140 @@ Respond with JSON:
       handleRouteError(res, error, "/api/fwa/batch/ai-mapping", "generate AI field mapping");
     }
   });
+
+  // ── Flagged Claims (synthetic Saudi-specific fraud demo data) ──
+  app.get("/api/fwa/flagged-claims", async (_req, res) => {
+    try {
+      const flaggedClaims = [
+        {
+          id: "fc-001",
+          claimId: "CLM-2025-SA-00147",
+          patientName: "Fatimah Al-Harbi",
+          providerId: "PRV-RYD-0042",
+          providerName: "Noor Dental Center",
+          insurerName: "Bupa Arabia",
+          icdCode: "K02.9",
+          icdDescription: "Dental caries, unspecified",
+          cptCode: "D2750",
+          cptDescription: "Crown – porcelain fused to high noble metal",
+          claimAmount: 18500,
+          flagReason: "Crown billed for tooth already extracted per prior claim history",
+          flagCategory: "dental_phantom_billing",
+          riskScore: 92,
+          detectedAt: "2025-06-14T08:23:00Z",
+          status: "confirmed_fraud",
+          detectionMethod: "Cross-claim history analysis",
+        },
+        {
+          id: "fc-002",
+          claimId: "CLM-2025-SA-00263",
+          patientName: "Noura Al-Dosari",
+          providerId: "PRV-JED-0118",
+          providerName: "Al-Shifa Women's Hospital",
+          insurerName: "Tawuniya",
+          icdCode: "O80",
+          icdDescription: "Single spontaneous delivery",
+          cptCode: "59510",
+          cptDescription: "Cesarean delivery including postpartum care",
+          claimAmount: 45200,
+          flagReason: "Cesarean CPT billed but diagnosis indicates normal spontaneous delivery",
+          flagCategory: "obgyn_upcoding",
+          riskScore: 88,
+          detectedAt: "2025-06-13T14:05:00Z",
+          status: "under_review",
+          detectionMethod: "ICD-CPT mismatch engine",
+        },
+        {
+          id: "fc-003",
+          claimId: "CLM-2025-SA-00389",
+          patientName: "Mohammed Al-Qahtani",
+          providerId: "PRV-RYD-0077",
+          providerName: "Riyadh Care Polyclinic",
+          insurerName: "MedGulf",
+          icdCode: "M54.5",
+          icdDescription: "Low back pain",
+          cptCode: "99214",
+          cptDescription: "Office visit – moderate complexity",
+          claimAmount: 8700,
+          flagReason: "Same patient referred back and forth between two providers 6 times in 45 days",
+          flagCategory: "referral_churning",
+          riskScore: 76,
+          detectedAt: "2025-06-12T11:30:00Z",
+          status: "pending_investigation",
+          detectionMethod: "Referral network graph analysis",
+        },
+        {
+          id: "fc-004",
+          claimId: "CLM-2025-SA-00421",
+          patientName: "Abdullah Al-Shehri",
+          providerId: "PRV-DMM-0029",
+          providerName: "Eastern Province Medical Group",
+          insurerName: "SAICO",
+          icdCode: "J18.9",
+          icdDescription: "Pneumonia, unspecified organism",
+          cptCode: "71046",
+          cptDescription: "Chest X-ray, 2 views",
+          claimAmount: 12300,
+          flagReason: "Identical service billed to two different insurers on the same date of service",
+          flagCategory: "duplicate_cross_insurer",
+          riskScore: 95,
+          detectedAt: "2025-06-11T09:15:00Z",
+          status: "confirmed_fraud",
+          detectionMethod: "Cross-insurer duplicate detection",
+        },
+        {
+          id: "fc-005",
+          claimId: "CLM-2025-SA-00534",
+          patientName: "Sara Al-Mutairi",
+          providerId: "PRV-JED-0203",
+          providerName: "Al-Amal General Hospital",
+          insurerName: "Walaa",
+          icdCode: "R10.9",
+          icdDescription: "Unspecified abdominal pain",
+          cptCode: "47562",
+          cptDescription: "Laparoscopic cholecystectomy",
+          claimAmount: 67800,
+          flagReason: "Inpatient admission and surgery for condition typically managed outpatient",
+          flagCategory: "unnecessary_admission",
+          riskScore: 71,
+          detectedAt: "2025-06-10T16:45:00Z",
+          status: "under_review",
+          detectionMethod: "Clinical pathway deviation engine",
+        },
+        {
+          id: "fc-006",
+          claimId: "CLM-2025-SA-00612",
+          patientName: "Khalid Al-Ghamdi",
+          providerId: "PRV-RYD-0155",
+          providerName: "Al-Hayat Surgical Center",
+          insurerName: "Bupa Arabia",
+          icdCode: "K80.20",
+          icdDescription: "Calculus of gallbladder without obstruction",
+          cptCode: "47563",
+          cptDescription: "Laparoscopic cholecystectomy with cholangiography",
+          claimAmount: 38900,
+          flagReason: "Comprehensive procedure billed alongside its component services separately",
+          flagCategory: "unbundling",
+          riskScore: 83,
+          detectedAt: "2025-06-09T13:20:00Z",
+          status: "pending_investigation",
+          detectionMethod: "CPT unbundling rules engine",
+        },
+      ];
+
+      const summary = {
+        totalFlagged: flaggedClaims.length,
+        totalExposure: flaggedClaims.reduce((sum, c) => sum + c.claimAmount, 0),
+        confirmedFraud: flaggedClaims.filter((c) => c.status === "confirmed_fraud").length,
+        underReview: flaggedClaims.filter((c) => c.status === "under_review").length,
+        pendingInvestigation: flaggedClaims.filter((c) => c.status === "pending_investigation").length,
+      };
+
+      res.json({ claims: flaggedClaims, summary });
+    } catch (error) {
+      handleRouteError(res, error, "/api/fwa/flagged-claims", "get flagged claims");
+    }
+  });
 }
 
 function generateMockServices(claim: any): any[] {
