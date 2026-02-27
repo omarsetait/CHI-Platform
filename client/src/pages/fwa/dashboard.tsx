@@ -25,6 +25,7 @@ import {
   Search,
   FileText,
   Plus,
+  Command,
 } from "lucide-react";
 import { Link } from "wouter";
 
@@ -288,11 +289,19 @@ export default function OperationsCenter() {
   return (
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-2xl font-bold" data-testid="page-title">Operations Center</h1>
-          <p className="text-muted-foreground">
-            Live overview of FWA alerts, workload, and system health
-          </p>
+        <div className="flex items-center gap-3">
+          <div className="p-2 rounded-lg bg-primary/10">
+            <Command className="w-6 h-6 text-primary" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold" data-testid="page-title">
+              Command Center <span className="text-lg font-normal text-muted-foreground mr-1">—</span>
+              <span className="text-lg font-medium text-muted-foreground" dir="rtl">مركز القيادة</span>
+            </h1>
+            <p className="text-muted-foreground">
+              National fraud intelligence overview — Council of Health Insurance
+            </p>
+          </div>
         </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" data-testid="button-refresh" onClick={() => refetch()}>
@@ -382,6 +391,56 @@ export default function OperationsCenter() {
           isLoading={isLoading}
         />
       </div>
+
+      {/* NPHIES Integration Flow */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-lg">NPHIES Integration Flow</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-between gap-2 overflow-x-auto py-2">
+            {/* Provider */}
+            <div className="flex flex-col items-center min-w-[120px]">
+              <div className="px-4 py-3 rounded-xl bg-blue-100 dark:bg-blue-900/30 text-center">
+                <p className="text-sm font-semibold text-blue-800 dark:text-blue-200">Provider</p>
+                <p className="text-xs text-blue-600 dark:text-blue-300" dir="rtl">مقدم الخدمة</p>
+              </div>
+            </div>
+            <ArrowRight className="w-5 h-5 text-muted-foreground shrink-0" />
+            {/* NPHIES */}
+            <div className="flex flex-col items-center min-w-[120px]">
+              <div className="px-4 py-3 rounded-xl bg-green-100 dark:bg-green-900/30 text-center">
+                <p className="text-sm font-semibold text-green-800 dark:text-green-200">NPHIES</p>
+                <p className="text-xs text-green-600 dark:text-green-300" dir="rtl">نفيس</p>
+              </div>
+            </div>
+            <ArrowRight className="w-5 h-5 text-muted-foreground shrink-0" />
+            {/* TachyHealth AI */}
+            <div className="flex flex-col items-center min-w-[120px]">
+              <div className="px-4 py-3 rounded-xl bg-purple-100 dark:bg-purple-900/30 text-center">
+                <p className="text-sm font-semibold text-purple-800 dark:text-purple-200">TachyHealth AI</p>
+                <p className="text-xs text-purple-600 dark:text-purple-300" dir="rtl">الكشف الذكي</p>
+              </div>
+            </div>
+            <ArrowRight className="w-5 h-5 text-muted-foreground shrink-0" />
+            {/* Decision */}
+            <div className="flex flex-col items-center min-w-[120px]">
+              <div className="px-4 py-3 rounded-xl bg-amber-100 dark:bg-amber-900/30 text-center">
+                <p className="text-sm font-semibold text-amber-800 dark:text-amber-200">Decision</p>
+                <p className="text-xs text-amber-600 dark:text-amber-300" dir="rtl">القرار</p>
+              </div>
+            </div>
+            <ArrowRight className="w-5 h-5 text-muted-foreground shrink-0" />
+            {/* Insurer */}
+            <div className="flex flex-col items-center min-w-[120px]">
+              <div className="px-4 py-3 rounded-xl bg-sky-100 dark:bg-sky-900/30 text-center">
+                <p className="text-sm font-semibold text-sky-800 dark:text-sky-200">Insurer</p>
+                <p className="text-xs text-sky-600 dark:text-sky-300" dir="rtl">شركة التأمين</p>
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-6">
