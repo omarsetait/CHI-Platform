@@ -4971,3 +4971,35 @@ export const insertEmbeddingImportJobSchema = createInsertSchema(embeddingImport
 });
 export type InsertEmbeddingImportJob = z.infer<typeof insertEmbeddingImportJobSchema>;
 export type EmbeddingImportJob = typeof embeddingImportJobs.$inferSelect;
+
+// ── Chat / Daman AI ─────────────────────────────────────────────────
+export const chatConversations = pgTable("chat_conversations", {
+  id: text("id").primaryKey().default(sql`gen_random_uuid()`),
+  sessionId: text("session_id").notNull(),
+  pillarContext: jsonb("pillar_context").$type<{
+    pillarId: string;
+    pagePath: string;
+  }>(),
+  title: text("title").default("New Conversation"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const chatMessages = pgTable("chat_messages", {
+  id: text("id").primaryKey().default(sql`gen_random_uuid()`),
+  conversationId: text("conversation_id")
+    .notNull()
+    .references(() => chatConversations.id, { onDelete: "cascade" }),
+  role: text("role", { enum: ["user", "assistant", "system"] }).notNull(),
+  content: text("content").notNull(),
+  ragChunkIds: jsonb("rag_chunk_ids").$type<string[]>().default([]),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const insertChatConversationSchema = createInsertSchema(chatConversations);
+export const insertChatMessageSchema = createInsertSchema(chatMessages);
+
+export type ChatConversation = typeof chatConversations.$inferSelect;
+export type InsertChatConversation = typeof chatConversations.$inferInsert;
+export type ChatMessage = typeof chatMessages.$inferSelect;
+export type InsertChatMessage = typeof chatMessages.$inferInsert;
