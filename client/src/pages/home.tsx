@@ -27,7 +27,7 @@ interface PlatformModule {
 
 const platformModules: PlatformModule[] = [
   {
-    id: "data-smart-tech",
+    id: "daman-intelligence",
     title: "Daman Intelligence",
     description: "Provider oversight, coding compliance, and DRG readiness",
     icon: Brain,
@@ -37,7 +37,7 @@ const platformModules: PlatformModule[] = [
     features: ["Accreditation Scorecards", "SBS V3.0 Compliance", "DRG Readiness", "Rejection Patterns", "Documentation Quality"],
   },
   {
-    id: "value-based-healthcare",
+    id: "daman-business",
     title: "Daman Business",
     description: "Market oversight, employer compliance, and cost intelligence",
     icon: Activity,
@@ -47,7 +47,7 @@ const platformModules: PlatformModule[] = [
     features: ["Employer Compliance", "Insurer Health Monitor", "Market Concentration", "Coverage Expansion", "Cost Containment"],
   },
   {
-    id: "beneficiary-empowerment",
+    id: "daman-members",
     title: "Daman Members",
     description: "Beneficiary protection, coverage transparency, and fraud reporting",
     icon: Users,
@@ -57,7 +57,7 @@ const platformModules: PlatformModule[] = [
     features: ["Complaints & Disputes", "Coverage Gap Monitor", "Provider Quality", "Report Fraud", "Benefits Awareness"],
   },
   {
-    id: "regulatory-compliance",
+    id: "audit-fwa",
     title: "Audit & FWA Unit",
     description: "National fraud intelligence command center",
     icon: Shield,
