@@ -1,407 +1,238 @@
-import React, { useEffect, useState } from "react";
-import {
-    AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Legend, PieChart, Pie, Cell
-} from "recharts";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Slider } from "@/components/ui/slider";
 import { useQuery } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import {
-    Building2, TrendingUp, TrendingDown, Users, Wallet, Activity, ShieldAlert, LineChart, PieChart as PieChartIcon, Settings2
+  Building2, ShieldCheck, Landmark, GitMerge, Users, PiggyBank,
+  ArrowRight, TrendingUp, TrendingDown, AlertTriangle,
 } from "lucide-react";
+import { Link } from "wouter";
 
-// Mock Data
-const spendTrendData = [
-    { month: "Jan", actual: 1200000, projected: 1150000 },
-    { month: "Feb", actual: 1350000, projected: 1200000 },
-    { month: "Mar", actual: 1420000, projected: 1250000 },
-    { month: "Apr", actual: 1280000, projected: 1300000 },
-    { month: "May", actual: 1550000, projected: 1350000 },
-    { month: "Jun", actual: 1680000, projected: 1400000 },
-];
-
-const departmentSpendData = [
-    { name: "Engineering", spend: 450000, employees: 320 },
-    { name: "Sales", spend: 380000, employees: 250 },
-    { name: "Operations", spend: 290000, employees: 180 },
-    { name: "Executive", spend: 120000, employees: 45 },
-    { name: "Marketing", spend: 180000, employees: 110 },
-];
-
-const categoryData = [
-    { name: "Inpatient", value: 45 },
-    { name: "Outpatient", value: 30 },
-    { name: "Pharmacy", value: 15 },
-    { name: "Dental/Optical", value: 10 },
-];
-const COLORS = ["#0284c7", "#38bdf8", "#7dd3fc", "#e0f2fe"];
-
-interface EmployerProfile {
-    employerId: string;
-    employerName: string;
-    activeEmployees: number;
-    ytdHealthcareSpend: number;
-    riskFactor: string;
-    potentialFwaLeakage: number;
+interface ComplianceData {
+  summary: { totalEmployers: number; complianceRate: number; violated: number; totalFinesYTD: number };
 }
 
-export type BusinessDashboardTab = "overview" | "simulator";
-
-interface BusinessDashboardProps {
-    initialTab?: BusinessDashboardTab;
+interface InsurerHealthData {
+  insurers: Array<{ name: string; lossRatio: number }>;
 }
 
-export default function BusinessDashboard({ initialTab = "overview" }: BusinessDashboardProps) {
-    const [activeTab, setActiveTab] = useState<BusinessDashboardTab>(initialTab);
-    const [selectedEmployer, setSelectedEmployer] = useState("acme");
-    const [isSubmittingSimulation, setIsSubmittingSimulation] = useState(false);
-    const [simulationStatus, setSimulationStatus] = useState<string | null>(null);
-    const [apiSimulationResult, setApiSimulationResult] = useState<{ simulatedAnnualSpend: number } | null>(null);
+interface ConcentrationData {
+  herfindahlIndex: number;
+  interpretation: string;
+}
 
-    useEffect(() => {
-        setActiveTab(initialTab);
-    }, [initialTab]);
+interface CoverageData {
+  current: { covered: number; target: number; progress: number };
+}
 
-    const { data: employerProfile } = useQuery<EmployerProfile | null>({
-        queryKey: ["/api/business/employers", selectedEmployer, "profile"],
-        queryFn: async () => {
-            const res = await fetch(`/api/business/employers/${selectedEmployer}/profile`, { credentials: "include" });
-            if (!res.ok) return null;
-            return res.json();
-        },
-    });
+interface CostData {
+  adminCostRatio: number;
+  oecdBenchmark: number;
+}
 
-    // Simulator State
-    const [copayPercent, setCopayPercent] = useState([20]);
-    const [pharmacyLimit, setPharmacyLimit] = useState([5000]);
+const quickLinks = [
+  { label: "Employer Compliance", href: "/business/employer-compliance", icon: ShieldCheck, color: "text-emerald-600", bg: "bg-emerald-50 dark:bg-emerald-950/30" },
+  { label: "Insurer Health Monitor", href: "/business/insurer-health", icon: Landmark, color: "text-blue-600", bg: "bg-blue-50 dark:bg-blue-950/30" },
+  { label: "Market Concentration", href: "/business/market-concentration", icon: GitMerge, color: "text-violet-600", bg: "bg-violet-50 dark:bg-violet-950/30" },
+  { label: "Coverage Expansion", href: "/business/coverage-expansion", icon: Users, color: "text-amber-600", bg: "bg-amber-50 dark:bg-amber-950/30" },
+  { label: "Cost Containment", href: "/business/cost-containment", icon: PiggyBank, color: "text-rose-600", bg: "bg-rose-50 dark:bg-rose-950/30" },
+];
 
-    // Calculate simulated savings based on slider values
-    const baseSpend = 16800000; // Annual projected
-    const copaySavings = (copayPercent[0] - 20) * 0.005 * baseSpend;
-    const pharmacySavings = (5000 - pharmacyLimit[0]) * 100;
-    const localSimulatedSpend = baseSpend - copaySavings - pharmacySavings;
-    const totalSimulatedSpend = apiSimulationResult?.simulatedAnnualSpend ?? localSimulatedSpend;
-    const savingsAmount = baseSpend - totalSimulatedSpend;
+export default function BusinessDashboard() {
+  const { data: compliance } = useQuery<ComplianceData>({
+    queryKey: ["/api/business/employer-compliance"],
+  });
 
-    const runPolicySimulation = async () => {
-        setIsSubmittingSimulation(true);
-        setSimulationStatus(null);
+  const { data: insurerHealth } = useQuery<InsurerHealthData>({
+    queryKey: ["/api/business/insurer-health"],
+  });
 
-        try {
-            const response = await apiRequest("POST", "/api/business/policy-simulations", {
-                employerId: selectedEmployer,
-                copayPercent: copayPercent[0],
-                pharmacyLimit: pharmacyLimit[0],
-                baselineAnnualSpend: baseSpend,
-            });
-            const data = await response.json();
-            setApiSimulationResult({ simulatedAnnualSpend: data.simulatedAnnualSpend });
-            setSimulationStatus("Policy simulation synced to contract API.");
-        } catch (_error) {
-            setApiSimulationResult(null);
-            setSimulationStatus("Simulation kept in local demo mode. Sign in to sync server-side.");
-        } finally {
-            setIsSubmittingSimulation(false);
-        }
-    };
+  const { data: concentration } = useQuery<ConcentrationData>({
+    queryKey: ["/api/business/market-concentration"],
+  });
 
-    return (
-        <div className="space-y-6 max-w-7xl mx-auto">
-            <div className="flex flex-col md:flex-row justify-between md:items-center gap-4">
-                <div>
-                    <h1 className="text-3xl font-bold tracking-tight text-sky-700 dark:text-sky-400 flex items-center gap-3">
-                        <Building2 className="h-8 w-8" />
-                        Daman Business
-                    </h1>
-                    <p className="text-muted-foreground mt-1">Employer profiling, cost analysis, and AI policy simulation.</p>
-                </div>
-                <div className="flex gap-2 items-center">
-                    <span className="text-sm font-medium mr-2">Viewing Enterprise:</span>
-                    <Select value={selectedEmployer} onValueChange={setSelectedEmployer}>
-                        <SelectTrigger className="w-[180px]">
-                            <SelectValue placeholder="Select Company" />
-                        </SelectTrigger>
-                        <SelectContent>
-                            <SelectItem value="acme">Acme Corp (5,200 Lives)</SelectItem>
-                            <SelectItem value="globex">Globex Inc (1,400 Lives)</SelectItem>
-                            <SelectItem value="soylent">Soylent Corp (850 Lives)</SelectItem>
-                        </SelectContent>
-                    </Select>
-                </div>
+  const { data: coverage } = useQuery<CoverageData>({
+    queryKey: ["/api/business/coverage-expansion"],
+  });
+
+  const { data: cost } = useQuery<CostData>({
+    queryKey: ["/api/business/cost-containment"],
+  });
+
+  const avgLossRatio = insurerHealth?.insurers
+    ? (insurerHealth.insurers.reduce((sum, i) => sum + i.lossRatio, 0) / insurerHealth.insurers.length).toFixed(1)
+    : null;
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div>
+        <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
+          <Building2 className="h-8 w-8 text-sky-600" />
+          Daman Business
+        </h1>
+        <p className="text-muted-foreground mt-1">
+          Market oversight, employer compliance, and cost intelligence
+        </p>
+        <p className="text-sm text-sky-600 dark:text-sky-400 mt-0.5 font-medium" dir="rtl">
+          ضمان الأعمال — الرقابة على السوق وأصحاب العمل
+        </p>
+      </div>
+
+      {/* Summary Metrics */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+        <Card className="border-l-4 border-l-emerald-500 shadow-sm hover:shadow-md transition-shadow">
+          <CardHeader className="py-3 pb-1">
+            <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Compliance Rate</CardTitle>
+          </CardHeader>
+          <CardContent className="pt-0">
+            <div className="text-2xl font-bold">{compliance?.summary.complianceRate ?? "..."}%</div>
+            <p className="text-xs text-emerald-600 flex items-center mt-1">
+              <TrendingUp className="h-3 w-3 mr-1" /> {(compliance?.summary.totalEmployers ?? 0).toLocaleString()} employers tracked
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card className="border-l-4 border-l-blue-500 shadow-sm hover:shadow-md transition-shadow">
+          <CardHeader className="py-3 pb-1">
+            <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Avg Loss Ratio</CardTitle>
+          </CardHeader>
+          <CardContent className="pt-0">
+            <div className="text-2xl font-bold">{avgLossRatio ?? "..."}%</div>
+            <p className="text-xs text-muted-foreground mt-1">
+              Across {insurerHealth?.insurers.length ?? "--"} insurers
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card className="border-l-4 border-l-violet-500 shadow-sm hover:shadow-md transition-shadow">
+          <CardHeader className="py-3 pb-1">
+            <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wide">HHI Index</CardTitle>
+          </CardHeader>
+          <CardContent className="pt-0">
+            <div className="text-2xl font-bold">{concentration?.herfindahlIndex ?? "..."}</div>
+            <p className="text-xs text-amber-600 flex items-center mt-1">
+              <AlertTriangle className="h-3 w-3 mr-1" /> Moderately concentrated
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card className="border-l-4 border-l-amber-500 shadow-sm hover:shadow-md transition-shadow">
+          <CardHeader className="py-3 pb-1">
+            <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Coverage Progress</CardTitle>
+          </CardHeader>
+          <CardContent className="pt-0">
+            <div className="text-2xl font-bold">
+              {coverage ? `${(coverage.current.covered / 1000000).toFixed(1)}M` : "..."}
+              <span className="text-sm font-normal text-muted-foreground"> / 25M</span>
             </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              {coverage?.current.progress ?? "--"}% toward Vision 2030
+            </p>
+          </CardContent>
+        </Card>
 
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <Card className="shadow-sm hover:shadow-md transition-shadow">
-                    <CardHeader className="py-4 items-center flex flex-row justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium text-muted-foreground">YTD Healthcare Spend</CardTitle>
-                        <Wallet className="w-4 h-4 text-sky-500" />
-                    </CardHeader>
-                    <CardContent>
-                        <div className="text-2xl font-bold">{((employerProfile?.ytdHealthcareSpend ?? 8400000) / 1000000).toFixed(1)}M SAR</div>
-                        <p className="text-xs text-rose-500 flex items-center mt-1 font-medium">
-                            <TrendingUp className="h-3 w-3 mr-1" /> +12.5% vs Last Year
-                        </p>
-                    </CardContent>
-                </Card>
+        <Card className="border-l-4 border-l-rose-500 shadow-sm hover:shadow-md transition-shadow">
+          <CardHeader className="py-3 pb-1">
+            <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Admin Cost Ratio</CardTitle>
+          </CardHeader>
+          <CardContent className="pt-0">
+            <div className="text-2xl font-bold">{cost?.adminCostRatio ?? "..."}%</div>
+            <p className="text-xs text-rose-500 flex items-center mt-1">
+              <TrendingDown className="h-3 w-3 mr-1" /> OECD benchmark: {cost?.oecdBenchmark ?? "--"}%
+            </p>
+          </CardContent>
+        </Card>
+      </div>
 
-                <Card className="shadow-sm hover:shadow-md transition-shadow">
-                    <CardHeader className="py-4 items-center flex flex-row justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium text-muted-foreground">Active Employees</CardTitle>
-                        <Users className="w-4 h-4 text-sky-500" />
-                    </CardHeader>
-                    <CardContent>
-                        <div className="text-2xl font-bold">{(employerProfile?.activeEmployees ?? 5204).toLocaleString()}</div>
-                        <p className="text-xs text-emerald-500 flex items-center mt-1 font-medium">
-                            <TrendingUp className="h-3 w-3 mr-1" /> +42 New Hires
-                        </p>
-                    </CardContent>
-                </Card>
-
-                <Card className="shadow-sm hover:shadow-md transition-shadow">
-                    <CardHeader className="py-4 items-center flex flex-row justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium text-muted-foreground">Overall Risk Factor</CardTitle>
-                        <Activity className="w-4 h-4 text-sky-500" />
-                    </CardHeader>
-                    <CardContent>
-                        <div className="text-2xl font-bold text-amber-500">Elevated</div>
-                        <p className="text-xs text-muted-foreground mt-1">
-                            Driven by high inpatient utilization
-                        </p>
-                    </CardContent>
-                </Card>
-
-                <Card className="shadow-sm hover:shadow-md transition-shadow border-rose-200 dark:border-rose-900 bg-rose-50/50 dark:bg-rose-900/10">
-                    <CardHeader className="py-4 items-center flex flex-row justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium text-rose-600 dark:text-rose-400">Potential FWA Leakage</CardTitle>
-                        <ShieldAlert className="w-4 h-4 text-rose-500" />
-                    </CardHeader>
-                    <CardContent>
-                        <div className="text-2xl font-bold text-rose-600 dark:text-rose-400">~{Math.round((employerProfile?.potentialFwaLeakage ?? 850000) / 1000)}K SAR</div>
-                        <p className="text-xs text-rose-600/80 mt-1">
-                            Identified by Daman AI Audits
-                        </p>
-                    </CardContent>
-                </Card>
-            </div>
-
-            <Tabs defaultValue={initialTab} value={activeTab} onValueChange={(value) => setActiveTab(value as BusinessDashboardTab)} className="w-full">
-                <TabsList className="grid w-full md:w-auto grid-cols-2 mb-6 bg-muted/50 p-1">
-                    <TabsTrigger value="overview" className="data-[state=active]:bg-white data-[state=active]:text-sky-600 data-[state=active]:shadow-sm">
-                        <LineChart className="w-4 h-4 mr-2" /> Cost Profiling
-                    </TabsTrigger>
-                    <TabsTrigger value="simulator" className="data-[state=active]:bg-white data-[state=active]:text-sky-600 data-[state=active]:shadow-sm">
-                        <Settings2 className="w-4 h-4 mr-2" /> AI Policy Simulator
-                    </TabsTrigger>
-                </TabsList>
-
-                {/* Overview Tab */}
-                <TabsContent value="overview" className="space-y-6 animate-in fade-in-50 duration-500">
-                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                        <Card className="lg:col-span-2 shadow-sm border border-border/50">
-                            <CardHeader>
-                                <CardTitle>Spend Trend Analysis (YTD)</CardTitle>
-                                <CardDescription>Actual utilization costs vs. Initial Actuarial Projections</CardDescription>
-                            </CardHeader>
-                            <CardContent className="h-[350px]">
-                                <ResponsiveContainer width="100%" height="100%">
-                                    <AreaChart data={spendTrendData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
-                                        <defs>
-                                            <linearGradient id="colorActual" x1="0" y1="0" x2="0" y2="1">
-                                                <stop offset="5%" stopColor="#0ea5e9" stopOpacity={0.3} />
-                                                <stop offset="95%" stopColor="#0ea5e9" stopOpacity={0} />
-                                            </linearGradient>
-                                            <linearGradient id="colorProjected" x1="0" y1="0" x2="0" y2="1">
-                                                <stop offset="5%" stopColor="#94a3b8" stopOpacity={0.3} />
-                                                <stop offset="95%" stopColor="#94a3b8" stopOpacity={0} />
-                                            </linearGradient>
-                                        </defs>
-                                        <CartesianGrid strokeDasharray="3 3" vertical={false} strokeOpacity={0.3} />
-                                        <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fontSize: 12 }} dy={10} />
-                                        <YAxis
-                                            axisLine={false}
-                                            tickLine={false}
-                                            tick={{ fontSize: 12 }}
-                                            tickFormatter={(value) => `${(value / 1000000).toFixed(1)}M`}
-                                            dx={-10}
-                                        />
-                                        <Tooltip
-                                            formatter={(value: number) => [`${(value / 1000).toFixed(0)}k SAR`, undefined]}
-                                            contentStyle={{ borderRadius: '8px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-                                        />
-                                        <Legend verticalAlign="top" height={36} />
-                                        <Area type="monotone" name="Actual Spend" dataKey="actual" stroke="#0ea5e9" strokeWidth={3} fillOpacity={1} fill="url(#colorActual)" />
-                                        <Area type="monotone" name="Projected Spend" dataKey="projected" stroke="#94a3b8" strokeWidth={2} strokeDasharray="5 5" fillOpacity={1} fill="url(#colorProjected)" />
-                                    </AreaChart>
-                                </ResponsiveContainer>
-                            </CardContent>
-                        </Card>
-
-                        <Card className="shadow-sm border border-border/50">
-                            <CardHeader>
-                                <CardTitle>Spend Distribution</CardTitle>
-                                <CardDescription>Cost broken down by service category</CardDescription>
-                            </CardHeader>
-                            <CardContent className="flex flex-col items-center">
-                                <div className="h-[220px] w-full">
-                                    <ResponsiveContainer width="100%" height="100%">
-                                        <PieChart>
-                                            <Pie
-                                                data={categoryData}
-                                                cx="50%"
-                                                cy="50%"
-                                                innerRadius={60}
-                                                outerRadius={90}
-                                                paddingAngle={5}
-                                                dataKey="value"
-                                            >
-                                                {categoryData.map((entry, index) => (
-                                                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                                                ))}
-                                            </Pie>
-                                            <Tooltip formatter={(value) => `${value}%`} />
-                                        </PieChart>
-                                    </ResponsiveContainer>
-                                </div>
-                                <div className="w-full mt-4 space-y-2">
-                                    {categoryData.map((item, index) => (
-                                        <div key={index} className="flex justify-between items-center text-sm">
-                                            <div className="flex items-center gap-2">
-                                                <div className="w-3 h-3 rounded-full" style={{ backgroundColor: COLORS[index] }} />
-                                                <span>{item.name}</span>
-                                            </div>
-                                            <span className="font-medium text-muted-foreground">{item.value}%</span>
-                                        </div>
-                                    ))}
-                                </div>
-                            </CardContent>
-                        </Card>
-                    </div>
-
-                    <Card className="shadow-sm border border-border/50">
-                        <CardHeader>
-                            <CardTitle>Department-Level Cost Profiling</CardTitle>
-                            <CardDescription>Identify high-utilization groups within your workforce</CardDescription>
-                        </CardHeader>
-                        <CardContent className="h-[300px]">
-                            <ResponsiveContainer width="100%" height="100%">
-                                <BarChart data={departmentSpendData} layout="vertical" margin={{ top: 5, right: 30, left: 40, bottom: 5 }}>
-                                    <CartesianGrid strokeDasharray="3 3" horizontal={false} strokeOpacity={0.3} />
-                                    <XAxis type="number" tickFormatter={(val) => `${val / 1000}k`} />
-                                    <YAxis type="category" dataKey="name" axisLine={false} tickLine={false} />
-                                    <Tooltip formatter={(value) => [`${value} SAR`, 'Spend']} />
-                                    <Bar dataKey="spend" name="Total Spend" fill="#0ea5e9" radius={[0, 4, 4, 0]} barSize={24} />
-                                </BarChart>
-                            </ResponsiveContainer>
-                        </CardContent>
-                    </Card>
-                </TabsContent>
-
-                {/* Simulator Tab */}
-                <TabsContent value="simulator" className="animate-in fade-in-50 duration-500">
-                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                        <div className="lg:col-span-1 space-y-6">
-                            <Card className="shadow-sm border-2 border-sky-500/20">
-                                <CardHeader className="bg-sky-50/50 dark:bg-sky-950/20 pb-4">
-                                    <CardTitle className="flex items-center gap-2 text-sky-700 dark:text-sky-400">
-                                        <Settings2 className="w-5 h-5" />
-                                        Policy Parameters
-                                    </CardTitle>
-                                    <CardDescription>
-                                        Adjust these policy levers to simulate the impact on your annual healthcare budget.
-                                    </CardDescription>
-                                </CardHeader>
-                                <CardContent className="space-y-8 pt-6">
-                                    <div className="space-y-4">
-                                        <div className="flex justify-between items-center">
-                                            <label className="text-sm font-medium">Outpatient Copay %</label>
-                                            <span className="text-sm font-bold text-sky-600">{copayPercent[0]}%</span>
-                                        </div>
-                                        <Slider
-                                            value={copayPercent}
-                                            onValueChange={setCopayPercent}
-                                            max={50}
-                                            min={0}
-                                            step={5}
-                                        />
-                                        <p className="text-xs text-muted-foreground">Current Baseline: 20%</p>
-                                    </div>
-
-                                    <div className="space-y-4">
-                                        <div className="flex justify-between items-center">
-                                            <label className="text-sm font-medium">Pharmacy Annual Limit</label>
-                                            <span className="text-sm font-bold text-sky-600">{pharmacyLimit[0]} SAR</span>
-                                        </div>
-                                        <Slider
-                                            value={pharmacyLimit}
-                                            onValueChange={setPharmacyLimit}
-                                            max={10000}
-                                            min={1000}
-                                            step={500}
-                                        />
-                                        <p className="text-xs text-muted-foreground">Current Baseline: 5,000 SAR</p>
-                                    </div>
-
-                                    <div className="space-y-4 pt-4 border-t">
-                                        <div className="flex items-start gap-3 p-3 bg-amber-50 dark:bg-amber-950/30 rounded-lg">
-                                            <ShieldAlert className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
-                                            <div className="text-xs text-amber-800 dark:text-amber-200">
-                                                <strong>AI Insight:</strong> Increasing copay above 30% typically reduces preventative care visits, leading to a 15% long-term increase in inpatient admissions.
-                                            </div>
-                                        </div>
-                                        <Button
-                                            className="w-full bg-sky-600 hover:bg-sky-700 text-white"
-                                            onClick={runPolicySimulation}
-                                            disabled={isSubmittingSimulation}
-                                        >
-                                            {isSubmittingSimulation ? "Running simulation..." : "Run Policy Simulation"}
-                                        </Button>
-                                        {simulationStatus ? <p className="text-xs text-muted-foreground">{simulationStatus}</p> : null}
-                                    </div>
-                                </CardContent>
-                            </Card>
-                        </div>
-
-                        <div className="lg:col-span-2 space-y-6">
-                            <Card className="shadow-sm border border-border/50 h-full flex flex-col">
-                                <CardHeader>
-                                    <CardTitle>Budget Impact Simulation</CardTitle>
-                                    <CardDescription>Projected annual effects based on selected policy parameters</CardDescription>
-                                </CardHeader>
-                                <CardContent className="flex-1 flex flex-col justify-center gap-8">
-                                    <div className="grid grid-cols-2 gap-8 text-center p-8 bg-muted/20 rounded-2xl">
-                                        <div>
-                                            <div className="text-sm font-medium text-muted-foreground mb-2">Original Projected Annual Spend</div>
-                                            <div className="text-3xl font-bold text-foreground">{(baseSpend / 1000000).toFixed(2)}M SAR</div>
-                                        </div>
-                                        <div>
-                                            <div className="text-sm font-medium text-muted-foreground mb-2">Simulated Annual Spend</div>
-                                            <div className="text-3xl font-bold text-sky-600">{(totalSimulatedSpend / 1000000).toFixed(2)}M SAR</div>
-                                        </div>
-                                    </div>
-
-                                    <div className="text-center p-8 rounded-2xl border bg-card relative overflow-hidden">
-                                        <div className={`absolute inset-0 opacity-10 ${savingsAmount >= 0 ? 'bg-emerald-500' : 'bg-rose-500'}`} />
-                                        <div className="relative z-10">
-                                            <div className="text-sm font-medium text-muted-foreground mb-2">Projected Annual Savings</div>
-                                            <div className={`text-5xl font-extrabold ${savingsAmount >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
-                                                {savingsAmount >= 0 ? '+' : ''}{(savingsAmount / 1000).toFixed(0)}K SAR
-                                            </div>
-                                            <p className="text-sm mt-4 text-muted-foreground max-w-sm mx-auto">
-                                                This involves a reduction in short-term pharmacy and outpatient costs.
-                                            </p>
-                                        </div>
-                                    </div>
-                                </CardContent>
-                            </Card>
-                        </div>
-                    </div>
-                </TabsContent>
-
-            </Tabs>
+      {/* Quick Links */}
+      <div>
+        <h2 className="text-lg font-semibold mb-3">Market Oversight Modules</h2>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+          {quickLinks.map((link) => (
+            <Link key={link.href} href={link.href}>
+              <Card className="cursor-pointer hover:shadow-md transition-all hover:scale-[1.02] border border-border/50">
+                <CardContent className="p-4 flex flex-col items-center text-center gap-2">
+                  <div className={`p-3 rounded-xl ${link.bg}`}>
+                    <link.icon className={`h-6 w-6 ${link.color}`} />
+                  </div>
+                  <span className="text-sm font-medium">{link.label}</span>
+                  <ArrowRight className="h-4 w-4 text-muted-foreground" />
+                </CardContent>
+              </Card>
+            </Link>
+          ))}
         </div>
-    );
+      </div>
+
+      {/* Highlights Row */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Compliance Violations */}
+        <Card className="shadow-sm">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <AlertTriangle className="h-5 w-5 text-amber-500" />
+              Compliance Snapshot
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between p-3 rounded-lg bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800">
+                <span className="text-sm font-medium">Compliant Employers</span>
+                <span className="text-lg font-bold text-emerald-600">
+                  {compliance ? (compliance.summary.totalEmployers - compliance.summary.violated).toLocaleString() : "..."}
+                </span>
+              </div>
+              <div className="flex items-center justify-between p-3 rounded-lg bg-rose-50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-800">
+                <span className="text-sm font-medium">Violated</span>
+                <span className="text-lg font-bold text-rose-600">
+                  {compliance?.summary.violated?.toLocaleString() ?? "..."}
+                </span>
+              </div>
+              <div className="flex items-center justify-between p-3 rounded-lg bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800">
+                <span className="text-sm font-medium">Fines Collected YTD</span>
+                <span className="text-lg font-bold text-amber-600">
+                  {compliance ? `${(compliance.summary.totalFinesYTD / 1000000).toFixed(1)}M SAR` : "..."}
+                </span>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Market Health */}
+        <Card className="shadow-sm">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Landmark className="h-5 w-5 text-blue-500" />
+              Market Health Overview
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3">
+              {insurerHealth?.insurers.slice(0, 4).map((insurer) => (
+                <div key={insurer.name} className="flex items-center justify-between p-3 rounded-lg border border-border/50 bg-card hover:bg-muted/30 transition-colors">
+                  <div>
+                    <span className="text-sm font-medium">{insurer.name}</span>
+                    <div className="text-xs text-muted-foreground mt-0.5">Loss Ratio: {insurer.lossRatio}%</div>
+                  </div>
+                  <Badge
+                    className={`text-xs ${
+                      insurer.lossRatio >= 85
+                        ? "bg-rose-100 text-rose-700 dark:bg-rose-900 dark:text-rose-300"
+                        : insurer.lossRatio >= 75
+                          ? "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300"
+                          : "bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300"
+                    }`}
+                  >
+                    {insurer.lossRatio >= 85 ? "At Risk" : insurer.lossRatio >= 75 ? "Watch" : "Healthy"}
+                  </Badge>
+                </div>
+              )) ?? (
+                <div className="text-sm text-muted-foreground text-center py-4">Loading insurers...</div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
 }

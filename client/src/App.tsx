@@ -23,9 +23,11 @@ import RejectionPatternsPage from "@/pages/intelligence/rejection-patterns";
 import DocumentationQualityPage from "@/pages/intelligence/documentation-quality";
 
 import BusinessDashboard from "@/pages/business/dashboard";
-import BusinessEmployerProfilingPage from "@/pages/business/employer-profiling";
-import BusinessPolicySimulatorPage from "@/pages/business/policy-simulator";
-import BusinessDigitalBrokerPage from "@/pages/business/digital-broker";
+import BusinessEmployerCompliancePage from "@/pages/business/employer-compliance";
+import BusinessInsurerHealthPage from "@/pages/business/insurer-health";
+import BusinessMarketConcentrationPage from "@/pages/business/market-concentration";
+import BusinessCoverageExpansionPage from "@/pages/business/coverage-expansion";
+import BusinessCostContainmentPage from "@/pages/business/cost-containment";
 
 import MembersDashboard from "@/pages/members/dashboard";
 import MembersMyHealthPage from "@/pages/members/my-health";
@@ -91,9 +93,11 @@ function BusinessRouter() {
       <Switch>
         <Route path="/business">{() => <Redirect to="/business/dashboard" />}</Route>
         <Route path="/business/dashboard">{() => <BusinessDashboard />}</Route>
-        <Route path="/business/employer-profiling" component={BusinessEmployerProfilingPage} />
-        <Route path="/business/policy-simulator" component={BusinessPolicySimulatorPage} />
-        <Route path="/business/digital-broker" component={BusinessDigitalBrokerPage} />
+        <Route path="/business/employer-compliance" component={BusinessEmployerCompliancePage} />
+        <Route path="/business/insurer-health" component={BusinessInsurerHealthPage} />
+        <Route path="/business/market-concentration" component={BusinessMarketConcentrationPage} />
+        <Route path="/business/coverage-expansion" component={BusinessCoverageExpansionPage} />
+        <Route path="/business/cost-containment" component={BusinessCostContainmentPage} />
         <Route component={NotFound} />
       </Switch>
     </BusinessLayout>
