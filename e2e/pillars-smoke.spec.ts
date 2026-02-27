@@ -13,8 +13,8 @@ const journeys: PillarJourney[] = [
     pillarId: "fwa",
     homeCardTestId: "card-module-audit-fwa",
     expectedLandingPath: "/fwa/dashboard",
-    sidebarNavTestId: "nav-fwa-case-management",
-    expectedSecondaryPath: "/fwa/case-management",
+    sidebarNavTestId: "nav-fwa-high-risk-entities",
+    expectedSecondaryPath: "/fwa/high-risk-entities",
   },
   {
     pillarId: "intelligence",
