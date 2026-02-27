@@ -20,22 +20,22 @@ const journeys: PillarJourney[] = [
     pillarId: "intelligence",
     homeCardTestId: "card-module-daman-intelligence",
     expectedLandingPath: "/intelligence/dashboard",
-    sidebarNavTestId: "nav-intelligence-rejection-decoder",
-    expectedSecondaryPath: "/intelligence/rejection-decoder",
+    sidebarNavTestId: "nav-intelligence-rejection-patterns",
+    expectedSecondaryPath: "/intelligence/rejection-patterns",
   },
   {
     pillarId: "business",
     homeCardTestId: "card-module-daman-business",
     expectedLandingPath: "/business/dashboard",
-    sidebarNavTestId: "nav-business-policy-simulator",
-    expectedSecondaryPath: "/business/policy-simulator",
+    sidebarNavTestId: "nav-business-employer-compliance",
+    expectedSecondaryPath: "/business/employer-compliance",
   },
   {
     pillarId: "members",
     homeCardTestId: "card-module-daman-members",
     expectedLandingPath: "/members/dashboard",
-    sidebarNavTestId: "nav-members-report-issue",
-    expectedSecondaryPath: "/members/report-issue",
+    sidebarNavTestId: "nav-members-report-fraud",
+    expectedSecondaryPath: "/members/report-fraud",
   },
 ];
 
