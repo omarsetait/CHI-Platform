@@ -147,6 +147,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     '/api/demo',
     // Knowledge documents - always accessible for CHI demo
     '/api/knowledge-documents',
+    // Pillar routes - always accessible (demo platform for CHI presentation)
+    '/api/intelligence',
+    '/api/business',
+    '/api/members',
     // Additional development-only paths
     ...(process.env.NODE_ENV !== 'production' ? [
       // Provider Relations
