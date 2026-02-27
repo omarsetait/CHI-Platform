@@ -17,6 +17,7 @@ import { registerFindingsRoutes } from "./routes/findings-routes";
 import { registerETLRoutes } from "./routes/etl-routes";
 import { registerSemanticRoutes } from "./routes/semantic-routes";
 import { registerPillarRoutes } from "./routes/pillar-routes";
+import { registerChatRoutes } from "./routes/chat-routes";
 import authRoutes from "./routes/auth-routes";
 import { registerPipelineRoutes } from "./routes/pipeline-routes";
 import { loadUserFromSession, requireAuth } from "./middleware/auth";
@@ -151,6 +152,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     '/api/intelligence',
     '/api/business',
     '/api/members',
+    // Chat / Daman AI - always accessible (demo platform)
+    '/api/chat',
     // Additional development-only paths
     ...(process.env.NODE_ENV !== 'production' ? [
       // Provider Relations
@@ -225,6 +228,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   registerETLRoutes(app);
   registerSemanticRoutes(app, handleRouteError);
   registerPillarRoutes(app, handleRouteError);
+  registerChatRoutes(app);
 
   const httpServer = createServer(app);
 
