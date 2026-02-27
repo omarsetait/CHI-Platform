@@ -22,6 +22,9 @@ import { PillarSwitcher } from "@/pillars/pillar-switcher";
 import type { PillarConfig } from "@/pillars/types";
 import { trackClientEvent } from "@/lib/telemetry";
 import tachyHealthLogo from "@assets/logo.svg";
+import { ChatProvider } from "@/components/chat/chat-provider";
+import { ChatFab } from "@/components/chat/chat-fab";
+import { ChatPanel } from "@/components/chat/chat-panel";
 
 interface PillarLayoutProps {
   config: PillarConfig;
@@ -40,6 +43,7 @@ export function PillarLayout({ config, children }: PillarLayoutProps) {
   const isActive = (url: string) => location === url || location.startsWith(url + "/");
 
   return (
+    <ChatProvider>
     <SidebarProvider style={style as React.CSSProperties}>
       <div className="flex h-screen w-full bg-background">
         <Sidebar className={cn("border-r bg-sidebar/80 backdrop-blur-md", config.theme.borderClass)}>
@@ -129,8 +133,12 @@ export function PillarLayout({ config, children }: PillarLayoutProps) {
           >
             <div className="mx-auto max-w-7xl animate-in fade-in slide-in-from-bottom-2 duration-500">{children}</div>
           </main>
+
+          <ChatFab pillarId={config.id} />
+          <ChatPanel pillarId={config.id} />
         </div>
       </div>
     </SidebarProvider>
+    </ChatProvider>
   );
 }
