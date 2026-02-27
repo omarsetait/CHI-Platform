@@ -16,9 +16,11 @@ import { BusinessLayout } from "@/pillars/layouts/business-layout";
 import { MembersLayout } from "@/pillars/layouts/members-layout";
 
 import IntelligenceDashboard from "@/pages/intelligence/dashboard";
-import IntelligenceProviderScorecardsPage from "@/pages/intelligence/provider-scorecards";
-import IntelligenceRejectionDecoderPage from "@/pages/intelligence/rejection-decoder";
-import IntelligenceSelfAuditPage from "@/pages/intelligence/self-audit";
+import AccreditationScorecardsPage from "@/pages/intelligence/accreditation-scorecards";
+import SbsCompliancePage from "@/pages/intelligence/sbs-compliance";
+import DrgReadinessPage from "@/pages/intelligence/drg-readiness";
+import RejectionPatternsPage from "@/pages/intelligence/rejection-patterns";
+import DocumentationQualityPage from "@/pages/intelligence/documentation-quality";
 
 import BusinessDashboard from "@/pages/business/dashboard";
 import BusinessEmployerProfilingPage from "@/pages/business/employer-profiling";
@@ -72,9 +74,11 @@ function IntelligenceRouter() {
       <Switch>
         <Route path="/intelligence">{() => <Redirect to="/intelligence/dashboard" />}</Route>
         <Route path="/intelligence/dashboard">{() => <IntelligenceDashboard />}</Route>
-        <Route path="/intelligence/provider-scorecards" component={IntelligenceProviderScorecardsPage} />
-        <Route path="/intelligence/rejection-decoder" component={IntelligenceRejectionDecoderPage} />
-        <Route path="/intelligence/self-audit" component={IntelligenceSelfAuditPage} />
+        <Route path="/intelligence/accreditation-scorecards" component={AccreditationScorecardsPage} />
+        <Route path="/intelligence/sbs-compliance" component={SbsCompliancePage} />
+        <Route path="/intelligence/drg-readiness" component={DrgReadinessPage} />
+        <Route path="/intelligence/rejection-patterns" component={RejectionPatternsPage} />
+        <Route path="/intelligence/documentation-quality" component={DocumentationQualityPage} />
         <Route component={NotFound} />
       </Switch>
     </IntelligenceLayout>
