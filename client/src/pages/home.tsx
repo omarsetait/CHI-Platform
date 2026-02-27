@@ -27,6 +27,16 @@ interface PlatformModule {
 
 const platformModules: PlatformModule[] = [
   {
+    id: "audit-fwa",
+    title: "Audit & FWA Unit",
+    description: "National fraud intelligence command center",
+    icon: Shield,
+    path: "/fwa",
+    color: "text-amber-500",
+    borderColor: "hover:border-amber-500/50",
+    features: ["Command Center", "High-Risk Entities", "Flagged Claims", "Online Listening", "Enforcement & Compliance", "Coding Intelligence"],
+  },
+  {
     id: "daman-intelligence",
     title: "Daman Intelligence",
     description: "Provider oversight, coding compliance, and DRG readiness",
@@ -55,16 +65,6 @@ const platformModules: PlatformModule[] = [
     color: "text-purple-500",
     borderColor: "hover:border-purple-500/50",
     features: ["Complaints & Disputes", "Coverage Gap Monitor", "Provider Quality", "Report Fraud", "Benefits Awareness"],
-  },
-  {
-    id: "audit-fwa",
-    title: "Audit & FWA Unit",
-    description: "National fraud intelligence command center",
-    icon: Shield,
-    path: "/fwa",
-    color: "text-amber-500",
-    borderColor: "hover:border-amber-500/50",
-    features: ["Command Center", "High-Risk Entities", "Flagged Claims", "Online Listening", "Enforcement & Compliance", "Coding Intelligence"],
   },
 ];
 
