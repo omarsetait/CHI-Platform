@@ -61,6 +61,129 @@ export function buildIntelligenceRejectionsResponse() {
   ];
 }
 
+export function buildAccreditationScorecardsResponse() {
+  return {
+    summary: {
+      totalProviders: 8,
+      avgScore: 74.3,
+      drgReadyCount: 3,
+      highRiskCount: 2,
+      avgRejectionRate: 12.8,
+    },
+    providers: [
+      { id: "PRV-001", name: "Riyadh Care Hospital", city: "Riyadh", specialty: "Multi-specialty", overallScore: 92, codingAccuracy: 94, rejectionRate: 5.1, fwaFlags: 1, sbsCompliance: 88, drgReady: true, trend: "improving" },
+      { id: "PRV-002", name: "Jeddah National Medical Center", city: "Jeddah", specialty: "Cardiology", overallScore: 85, codingAccuracy: 87, rejectionRate: 8.3, fwaFlags: 3, sbsCompliance: 79, drgReady: true, trend: "stable" },
+      { id: "PRV-003", name: "Dammam General Hospital", city: "Dammam", specialty: "Orthopedics", overallScore: 78, codingAccuracy: 80, rejectionRate: 11.2, fwaFlags: 5, sbsCompliance: 72, drgReady: false, trend: "improving" },
+      { id: "PRV-004", name: "Makkah Specialist Clinic", city: "Makkah", specialty: "Internal Medicine", overallScore: 71, codingAccuracy: 73, rejectionRate: 14.5, fwaFlags: 8, sbsCompliance: 65, drgReady: false, trend: "declining" },
+      { id: "PRV-005", name: "Madinah Health Complex", city: "Madinah", specialty: "Pediatrics", overallScore: 65, codingAccuracy: 68, rejectionRate: 17.8, fwaFlags: 11, sbsCompliance: 55, drgReady: false, trend: "declining" },
+      { id: "PRV-006", name: "Al Khobar Medical Tower", city: "Dammam", specialty: "Dermatology", overallScore: 80, codingAccuracy: 82, rejectionRate: 9.7, fwaFlags: 4, sbsCompliance: 76, drgReady: true, trend: "stable" },
+      { id: "PRV-007", name: "Taif Regional Hospital", city: "Makkah", specialty: "General Surgery", overallScore: 68, codingAccuracy: 70, rejectionRate: 15.9, fwaFlags: 9, sbsCompliance: 60, drgReady: false, trend: "stable" },
+      { id: "PRV-008", name: "Tabuk Care Center", city: "Riyadh", specialty: "Ophthalmology", overallScore: 55, codingAccuracy: 58, rejectionRate: 20.1, fwaFlags: 14, sbsCompliance: 45, drgReady: false, trend: "declining" },
+    ],
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+export function buildSbsComplianceResponse() {
+  return {
+    overallRate: 62,
+    byRegion: [
+      { region: "Riyadh", rate: 78, providers: 45 },
+      { region: "Jeddah", rate: 65, providers: 38 },
+      { region: "Dammam", rate: 71, providers: 28 },
+      { region: "Makkah", rate: 52, providers: 22 },
+      { region: "Madinah", rate: 48, providers: 18 },
+    ],
+    commonIssues: [
+      { issue: "Incorrect modifier usage", count: 342, severity: "high" },
+      { issue: "Missing pre-authorization codes", count: 287, severity: "high" },
+      { issue: "Outdated ICD-10 mappings", count: 198, severity: "medium" },
+      { issue: "Incomplete procedure documentation", count: 156, severity: "medium" },
+      { issue: "Bundled services billed separately", count: 121, severity: "low" },
+    ],
+    trend: [
+      { month: "Oct 2025", rate: 41 },
+      { month: "Nov 2025", rate: 47 },
+      { month: "Dec 2025", rate: 52 },
+      { month: "Jan 2026", rate: 57 },
+      { month: "Feb 2026", rate: 62 },
+    ],
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+export function buildDrgReadinessResponse() {
+  return {
+    overall: { ready: 38, inProgress: 34, notStarted: 28 },
+    criteria: [
+      { name: "Clinical Documentation Improvement", progress: 65 },
+      { name: "Coder Training & Certification", progress: 48 },
+      { name: "System Integration (Grouper)", progress: 32 },
+      { name: "Cost Accounting Setup", progress: 25 },
+      { name: "Quality Metrics Alignment", progress: 55 },
+      { name: "Physician Engagement Program", progress: 40 },
+    ],
+    projectedTimeline: [
+      { quarter: "Q1 2026", readiness: 38 },
+      { quarter: "Q2 2026", readiness: 52 },
+      { quarter: "Q3 2026", readiness: 68 },
+      { quarter: "Q4 2026", readiness: 82 },
+      { quarter: "Q1 2027", readiness: 95 },
+    ],
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+export function buildRejectionPatternsResponse() {
+  return {
+    overallRate: 15.2,
+    bySpecialty: [
+      { specialty: "Internal Medicine", rate: 18.4, claims: 4520 },
+      { specialty: "Orthopedics", rate: 16.1, claims: 2890 },
+      { specialty: "Cardiology", rate: 14.7, claims: 3200 },
+      { specialty: "Pediatrics", rate: 12.3, claims: 2100 },
+      { specialty: "Dermatology", rate: 10.8, claims: 1850 },
+      { specialty: "Ophthalmology", rate: 9.5, claims: 1400 },
+    ],
+    byInsurer: [
+      { insurer: "Bupa Arabia", rate: 12.1, claims: 5800 },
+      { insurer: "Tawuniya", rate: 14.5, claims: 4900 },
+      { insurer: "Medgulf", rate: 16.8, claims: 3200 },
+      { insurer: "ACIG", rate: 18.2, claims: 2100 },
+      { insurer: "Malath", rate: 15.4, claims: 1800 },
+      { insurer: "Al Rajhi Takaful", rate: 13.7, claims: 1500 },
+    ],
+    byRegion: [
+      { region: "Riyadh", rate: 11.2, claims: 6500 },
+      { region: "Jeddah", rate: 14.8, claims: 4800 },
+      { region: "Dammam", rate: 13.5, claims: 3200 },
+      { region: "Makkah", rate: 18.1, claims: 2800 },
+      { region: "Madinah", rate: 19.4, claims: 2000 },
+    ],
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+export function buildDocumentationQualityResponse() {
+  return {
+    overallIndex: 68,
+    metrics: [
+      { name: "Clinical Note Completeness", score: 72, benchmark: 85 },
+      { name: "Diagnosis Specificity", score: 65, benchmark: 80 },
+      { name: "Procedure Documentation", score: 70, benchmark: 82 },
+      { name: "Medical Necessity Support", score: 58, benchmark: 78 },
+      { name: "Discharge Summary Quality", score: 75, benchmark: 88 },
+      { name: "Coding-Documentation Alignment", score: 68, benchmark: 85 },
+    ],
+    impact: {
+      revenueAtRisk: 12500000,
+      drgDowngrades: 342,
+      preventableRejections: 1856,
+    },
+    generatedAt: new Date().toISOString(),
+  };
+}
+
 export function buildBusinessEmployerProfileResponse(id: string) {
   return {
     employerId: id,
@@ -139,6 +262,48 @@ export function registerPillarRoutes(app: Express, handleRouteError: RouteErrorH
       });
     } catch (error) {
       handleRouteError(res, error, "/api/intelligence/self-audit/simulations", "create self-audit simulation");
+    }
+  });
+
+  // --- Intelligence Provider Oversight Routes ---
+
+  app.get("/api/intelligence/accreditation-scorecards", async (_req, res) => {
+    try {
+      res.json(buildAccreditationScorecardsResponse());
+    } catch (error) {
+      handleRouteError(res, error, "/api/intelligence/accreditation-scorecards", "fetch accreditation scorecards");
+    }
+  });
+
+  app.get("/api/intelligence/sbs-compliance", async (_req, res) => {
+    try {
+      res.json(buildSbsComplianceResponse());
+    } catch (error) {
+      handleRouteError(res, error, "/api/intelligence/sbs-compliance", "fetch SBS compliance data");
+    }
+  });
+
+  app.get("/api/intelligence/drg-readiness", async (_req, res) => {
+    try {
+      res.json(buildDrgReadinessResponse());
+    } catch (error) {
+      handleRouteError(res, error, "/api/intelligence/drg-readiness", "fetch DRG readiness data");
+    }
+  });
+
+  app.get("/api/intelligence/rejection-patterns", async (_req, res) => {
+    try {
+      res.json(buildRejectionPatternsResponse());
+    } catch (error) {
+      handleRouteError(res, error, "/api/intelligence/rejection-patterns", "fetch rejection patterns");
+    }
+  });
+
+  app.get("/api/intelligence/documentation-quality", async (_req, res) => {
+    try {
+      res.json(buildDocumentationQualityResponse());
+    } catch (error) {
+      handleRouteError(res, error, "/api/intelligence/documentation-quality", "fetch documentation quality data");
     }
   });
 

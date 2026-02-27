@@ -1,5 +1,5 @@
-import { Brain, BarChart3, FileSearch, Shield } from "lucide-react";
-import type { PillarConfig } from "@/pillars/types";
+import { Brain, LayoutDashboard, Award, FileCode, Activity, BarChart, ClipboardCheck } from "lucide-react";
+import type { PillarConfig } from "../types";
 
 export const intelligencePillarConfig: PillarConfig = {
   id: "intelligence",
@@ -7,34 +7,33 @@ export const intelligencePillarConfig: PillarConfig = {
   basePath: "/intelligence",
   defaultRoute: "/intelligence/dashboard",
   icon: Brain,
-  subtitle: "Provider scorecards, rejection decoding, and self-audit intelligence.",
+  subtitle: "Provider oversight, coding compliance, and DRG readiness",
   navSections: [
     {
       title: "Overview",
       items: [
-        { label: "Dashboard", href: "/intelligence/dashboard", icon: Brain },
+        { label: "Dashboard", href: "/intelligence/dashboard", icon: LayoutDashboard },
       ],
     },
     {
-      title: "Core Journeys",
+      title: "Provider Oversight",
       items: [
-        { label: "Provider Scorecards", href: "/intelligence/provider-scorecards", icon: BarChart3 },
-        { label: "Rejection Decoder", href: "/intelligence/rejection-decoder", icon: FileSearch },
-        { label: "Self-Audit", href: "/intelligence/self-audit", icon: Shield },
+        { label: "Accreditation Scorecards", href: "/intelligence/accreditation-scorecards", icon: Award },
+        { label: "SBS V3.0 Compliance", href: "/intelligence/sbs-compliance", icon: FileCode },
+        { label: "DRG Readiness", href: "/intelligence/drg-readiness", icon: Activity },
+        { label: "Rejection Patterns", href: "/intelligence/rejection-patterns", icon: BarChart },
+        { label: "Documentation Quality", href: "/intelligence/documentation-quality", icon: ClipboardCheck },
       ],
     },
   ],
-  footer: {
-    title: "Intelligence Unit",
-    subtitle: "Provider benchmark and correction workflows",
-  },
+  footer: { title: "Daman Intelligence", subtitle: "Provider Oversight Platform" },
   theme: {
-    borderClass: "border-violet-200 dark:border-violet-900/50",
-    sectionLabelClass: "text-violet-700 dark:text-violet-300",
+    borderClass: "border-violet-200 dark:border-violet-800",
+    sectionLabelClass: "text-violet-500 dark:text-violet-400",
     headerIconClass: "text-violet-600 dark:text-violet-400",
-    headerTextClass: "text-violet-700 dark:text-violet-200",
-    badgeClass: "bg-violet-100 text-violet-700 dark:bg-violet-900/50 dark:text-violet-300",
-    accentBackgroundClass: "from-violet-500/10 via-transparent to-violet-500/5",
+    headerTextClass: "text-violet-700 dark:text-violet-300",
+    badgeClass: "bg-violet-100 text-violet-700 dark:bg-violet-900 dark:text-violet-300",
+    accentBackgroundClass: "bg-gradient-to-br from-violet-50/50 to-white dark:from-violet-950/20 dark:to-gray-950",
   },
   sidebarWidth: "17.5rem",
   sidebarIconWidth: "3.5rem",
