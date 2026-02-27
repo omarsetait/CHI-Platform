@@ -30,10 +30,11 @@ import BusinessCoverageExpansionPage from "@/pages/business/coverage-expansion";
 import BusinessCostContainmentPage from "@/pages/business/cost-containment";
 
 import MembersDashboard from "@/pages/members/dashboard";
-import MembersMyHealthPage from "@/pages/members/my-health";
-import MembersEducationPage from "@/pages/members/education";
-import MembersHelpFeedbackPage from "@/pages/members/help-feedback";
-import MembersReportIssuePage from "@/pages/members/report-issue";
+import MembersComplaintsPage from "@/pages/members/complaints";
+import MembersCoverageGapsPage from "@/pages/members/coverage-gaps";
+import MembersProviderQualityPage from "@/pages/members/provider-quality";
+import MembersReportFraudPage from "@/pages/members/report-fraud";
+import MembersBenefitsAwarenessPage from "@/pages/members/benefits-awareness";
 
 import FWADashboard from "@/pages/fwa/dashboard";
 import FWAKPIDashboard from "@/pages/fwa/kpi-dashboard";
@@ -110,10 +111,11 @@ function MembersRouter() {
       <Switch>
         <Route path="/members">{() => <Redirect to="/members/dashboard" />}</Route>
         <Route path="/members/dashboard">{() => <MembersDashboard />}</Route>
-        <Route path="/members/my-health" component={MembersMyHealthPage} />
-        <Route path="/members/education" component={MembersEducationPage} />
-        <Route path="/members/help-feedback" component={MembersHelpFeedbackPage} />
-        <Route path="/members/report-issue" component={MembersReportIssuePage} />
+        <Route path="/members/complaints" component={MembersComplaintsPage} />
+        <Route path="/members/coverage-gaps" component={MembersCoverageGapsPage} />
+        <Route path="/members/provider-quality" component={MembersProviderQualityPage} />
+        <Route path="/members/report-fraud" component={MembersReportFraudPage} />
+        <Route path="/members/benefits-awareness" component={MembersBenefitsAwarenessPage} />
         <Route component={NotFound} />
       </Switch>
     </MembersLayout>
