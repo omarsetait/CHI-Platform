@@ -217,6 +217,119 @@ export function buildMembersHealthFeedResponse() {
   ];
 }
 
+export function buildEmployerComplianceResponse() {
+  return {
+    summary: {
+      totalEmployers: 48500,
+      complianceRate: 85,
+      violated: 2425,
+      totalFinesYTD: 2500000,
+    },
+    bySector: [
+      { sector: "Construction", complianceRate: 76, employers: 8200 },
+      { sector: "Hospitality", complianceRate: 80, employers: 6100 },
+      { sector: "Retail", complianceRate: 87, employers: 9400 },
+      { sector: "Technology", complianceRate: 95, employers: 5800 },
+      { sector: "Healthcare", complianceRate: 95, employers: 7200 },
+      { sector: "Manufacturing", complianceRate: 88, employers: 11800 },
+    ],
+    recentViolations: [
+      { employer: "Al-Nakheel Construction Co.", sector: "Construction", violation: "Failure to insure 120 workers", fineAmount: 180000, date: "2026-02-15" },
+      { employer: "Gulf Hospitality Group", sector: "Hospitality", violation: "Expired policies for 85 employees", fineAmount: 127500, date: "2026-02-10" },
+      { employer: "Riyadh Fresh Markets", sector: "Retail", violation: "Non-compliant plan tier for 45 staff", fineAmount: 67500, date: "2026-02-03" },
+    ],
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+export function buildInsurerHealthResponse() {
+  return {
+    insurers: [
+      { name: "Bupa Arabia", premiums: 8200, claims: 6150, lossRatio: 75.0, capitalAdequacy: 185, marketShare: 22.4, trend: "stable" },
+      { name: "Tawuniya", premiums: 7100, claims: 5680, lossRatio: 80.0, capitalAdequacy: 172, marketShare: 19.4, trend: "stable" },
+      { name: "MedGulf", premiums: 4800, claims: 4320, lossRatio: 90.0, capitalAdequacy: 138, marketShare: 13.1, trend: "at_risk" },
+      { name: "Al Rajhi Takaful", premiums: 3200, claims: 2400, lossRatio: 75.0, capitalAdequacy: 195, marketShare: 8.7, trend: "improving" },
+      { name: "SAICO", premiums: 2100, claims: 1890, lossRatio: 90.0, capitalAdequacy: 142, marketShare: 5.7, trend: "declining" },
+      { name: "Walaa", premiums: 1800, claims: 1260, lossRatio: 70.0, capitalAdequacy: 210, marketShare: 4.9, trend: "improving" },
+    ],
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+export function buildMarketConcentrationResponse() {
+  return {
+    herfindahlIndex: 1420,
+    interpretation: "Moderately concentrated market — between 1,000 and 2,500 HHI threshold. Regulators should monitor top-3 insurers for anti-competitive pricing.",
+    top5Share: 68.6,
+    mergerScenarios: [
+      {
+        scenario: "Bupa Arabia + MedGulf merger",
+        combinedShare: 35.5,
+        resultingHHI: 1988,
+        impact: "Would push market toward highly concentrated territory (HHI > 2,500 threshold approaching). CHI should impose premium-cap conditions.",
+      },
+      {
+        scenario: "Tawuniya + Al Rajhi Takaful merger",
+        combinedShare: 28.1,
+        resultingHHI: 1757,
+        impact: "Moderate increase in concentration. Acceptable with behavioral remedies — mandate continued Takaful product availability.",
+      },
+    ],
+    historicalHHI: [
+      { year: "2023", hhi: 1580 },
+      { year: "2024", hhi: 1510 },
+      { year: "2025", hhi: 1460 },
+      { year: "2026", hhi: 1420 },
+    ],
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+export function buildCoverageExpansionResponse() {
+  return {
+    current: {
+      covered: 11500000,
+      target: 25000000,
+      progress: 46,
+    },
+    segments: [
+      { segment: "Private Sector Employees", covered: 8200000, target: 9000000, progress: 91 },
+      { segment: "Saudi Dependents", covered: 2000000, target: 3000000, progress: 66 },
+      { segment: "Domestic Workers", covered: 540000, target: 3000000, progress: 18 },
+      { segment: "Gig Economy Workers", covered: 350000, target: 5000000, progress: 7 },
+      { segment: "Visit Visa Holders", covered: 200000, target: 5000000, progress: 4 },
+    ],
+    premiumImpact: {
+      currentAvgPremium: 4200,
+      projectedWithExpansion: 3100,
+      volumeDiscount: "26% reduction due to risk pool expansion",
+    },
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+export function buildCostContainmentResponse() {
+  return {
+    adminCostRatio: 18.7,
+    oecdBenchmark: 12.0,
+    savingsOpportunity: 2490000000,
+    breakdown: [
+      { category: "Claims Processing", percent: 32, amount: 4720000000 },
+      { category: "Provider Network Mgmt", percent: 24, amount: 3540000000 },
+      { category: "IT & Digital Infrastructure", percent: 19, amount: 2800000000 },
+      { category: "Regulatory Compliance", percent: 15, amount: 2210000000 },
+      { category: "Customer Service", percent: 10, amount: 1470000000 },
+    ],
+    costTrend: [
+      { year: "2023", ratio: 22.1 },
+      { year: "2024", ratio: 20.5 },
+      { year: "2025", ratio: 19.4 },
+      { year: "2026", ratio: 18.7 },
+    ],
+    generatedAt: new Date().toISOString(),
+  };
+}
+
 export function registerPillarRoutes(app: Express, handleRouteError: RouteErrorHandler) {
   app.get("/api/intelligence/scorecards/summary", async (req, res) => {
     try {
@@ -304,6 +417,48 @@ export function registerPillarRoutes(app: Express, handleRouteError: RouteErrorH
       res.json(buildDocumentationQualityResponse());
     } catch (error) {
       handleRouteError(res, error, "/api/intelligence/documentation-quality", "fetch documentation quality data");
+    }
+  });
+
+  // --- Business Market Oversight Routes ---
+
+  app.get("/api/business/employer-compliance", async (_req, res) => {
+    try {
+      res.json(buildEmployerComplianceResponse());
+    } catch (error) {
+      handleRouteError(res, error, "/api/business/employer-compliance", "fetch employer compliance data");
+    }
+  });
+
+  app.get("/api/business/insurer-health", async (_req, res) => {
+    try {
+      res.json(buildInsurerHealthResponse());
+    } catch (error) {
+      handleRouteError(res, error, "/api/business/insurer-health", "fetch insurer health data");
+    }
+  });
+
+  app.get("/api/business/market-concentration", async (_req, res) => {
+    try {
+      res.json(buildMarketConcentrationResponse());
+    } catch (error) {
+      handleRouteError(res, error, "/api/business/market-concentration", "fetch market concentration data");
+    }
+  });
+
+  app.get("/api/business/coverage-expansion", async (_req, res) => {
+    try {
+      res.json(buildCoverageExpansionResponse());
+    } catch (error) {
+      handleRouteError(res, error, "/api/business/coverage-expansion", "fetch coverage expansion data");
+    }
+  });
+
+  app.get("/api/business/cost-containment", async (_req, res) => {
+    try {
+      res.json(buildCostContainmentResponse());
+    } catch (error) {
+      handleRouteError(res, error, "/api/business/cost-containment", "fetch cost containment data");
     }
   });
 
