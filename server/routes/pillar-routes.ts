@@ -27,6 +27,13 @@ export const memberReportSchema = z.object({
   details: z.string().min(20),
 });
 
+export const fraudReportSchema = z.object({
+  reportType: z.enum(["billing_fraud", "identity_misuse", "phantom_services", "upcoding", "other"]),
+  providerName: z.string().optional(),
+  description: z.string().min(1),
+  anonymous: z.boolean(),
+});
+
 export function buildIntelligenceSummaryResponse() {
   return {
     overallPerformance: 87.6,
@@ -192,6 +199,121 @@ export function buildBusinessEmployerProfileResponse(id: string) {
     ytdHealthcareSpend: 8400000,
     riskFactor: "elevated",
     potentialFwaLeakage: 850000,
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+export function buildMembersComplaintsResponse() {
+  return {
+    summary: {
+      total: 14200,
+      resolved: 11360,
+      pending: 2130,
+      escalated: 710,
+      avgResolutionDays: 12.4,
+    },
+    byType: [
+      { type: "Claim Denial Disputes", percent: 33.9, count: 4814 },
+      { type: "Coverage Confusion", percent: 24.0, count: 3408 },
+      { type: "Provider Billing Issues", percent: 18.0, count: 2556 },
+      { type: "Pre-Authorization Delays", percent: 14.0, count: 1988 },
+      { type: "Quality of Care", percent: 10.0, count: 1420 },
+    ],
+    topOffenders: [
+      { entity: "MedGulf Insurance", complaints: 1840, resolutionRate: 72.3 },
+      { entity: "Al Salam Hospital Group", complaints: 1260, resolutionRate: 68.1 },
+      { entity: "National Care Clinics", complaints: 980, resolutionRate: 81.5 },
+    ],
+    trend: [
+      { month: "Sep 2025", total: 2180, resolved: 1810 },
+      { month: "Oct 2025", total: 2350, resolved: 1920 },
+      { month: "Nov 2025", total: 2410, resolved: 1980 },
+      { month: "Dec 2025", total: 2520, resolved: 2050 },
+      { month: "Jan 2026", total: 2380, resolved: 1960 },
+      { month: "Feb 2026", total: 2360, resolved: 1940 },
+    ],
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+export function buildMembersCoverageGapsResponse() {
+  return {
+    totalUninsured: 1850000,
+    bySegment: [
+      { segment: "Domestic Workers", count: 680000, risk: "critical" },
+      { segment: "Gig Economy Workers", count: 520000, risk: "high" },
+      { segment: "Expired Policies", count: 340000, risk: "high" },
+      { segment: "Saudi Dependents", count: 210000, risk: "medium" },
+      { segment: "Rural Areas", count: 100000, risk: "medium" },
+    ],
+    byRegion: [
+      { region: "Riyadh", insured: 4200000, total: 4580000, gapPercent: 8.3 },
+      { region: "Makkah", insured: 3100000, total: 3570000, gapPercent: 13.1 },
+      { region: "Eastern", insured: 2400000, total: 2730000, gapPercent: 12.1 },
+      { region: "Madinah", insured: 1100000, total: 1310000, gapPercent: 15.9 },
+      { region: "Asir", insured: 700000, total: 935000, gapPercent: 25.2 },
+    ],
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+export function buildMembersProviderQualityResponse() {
+  return {
+    avgNationalRating: 4.0,
+    avgWaitTime: 32,
+    providers: [
+      { name: "King Fahd Medical City", city: "Riyadh", rating: 4.8, waitTime: 15, satisfaction: 96, accredited: true },
+      { name: "King Faisal Specialist Hospital", city: "Riyadh", rating: 4.7, waitTime: 20, satisfaction: 94, accredited: true },
+      { name: "Saudi German Hospital", city: "Jeddah", rating: 4.3, waitTime: 25, satisfaction: 88, accredited: true },
+      { name: "Dr. Sulaiman Al Habib", city: "Riyadh", rating: 4.1, waitTime: 30, satisfaction: 85, accredited: true },
+      { name: "Dallah Hospital", city: "Riyadh", rating: 3.8, waitTime: 35, satisfaction: 79, accredited: true },
+      { name: "Al Noor Specialist Hospital", city: "Makkah", rating: 3.5, waitTime: 45, satisfaction: 72, accredited: true },
+      { name: "Jeddah Dental Center", city: "Jeddah", rating: 3.1, waitTime: 55, satisfaction: 61, accredited: false },
+    ],
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+export function buildMembersBenefitsAwarenessResponse() {
+  return {
+    categories: [
+      {
+        name: "Preventive Care",
+        nameAr: "الرعاية الوقائية",
+        services: [
+          { service: "Annual Health Checkup", serviceAr: "الفحص الصحي السنوي", covered: true, limit: "1 visit per year" },
+          { service: "Vaccinations (Adult Schedule)", serviceAr: "التطعيمات (جدول البالغين)", covered: true, limit: "As per MOH schedule" },
+          { service: "Cancer Screening", serviceAr: "فحص السرطان", covered: true, limit: "Age-appropriate per CHI guidelines" },
+        ],
+      },
+      {
+        name: "Maternity",
+        nameAr: "الأمومة",
+        services: [
+          { service: "Prenatal Visits", serviceAr: "زيارات ما قبل الولادة", covered: true, limit: "Up to 12 visits" },
+          { service: "Delivery (Normal & C-Section)", serviceAr: "الولادة (طبيعية وقيصرية)", covered: true, limit: "Full coverage with network provider" },
+          { service: "IVF Treatment", serviceAr: "علاج أطفال الأنابيب", covered: false, limit: "Not covered under standard plans" },
+        ],
+      },
+      {
+        name: "Emergency",
+        nameAr: "الطوارئ",
+        services: [
+          { service: "ER Visit", serviceAr: "زيارة الطوارئ", covered: true, limit: "No limit for genuine emergencies" },
+          { service: "Ambulance Transport", serviceAr: "نقل الإسعاف", covered: true, limit: "Within network coverage area" },
+          { service: "Out-of-Network Emergency", serviceAr: "طوارئ خارج الشبكة", covered: true, limit: "Covered, subject to reimbursement" },
+        ],
+      },
+      {
+        name: "Mental Health",
+        nameAr: "الصحة النفسية",
+        services: [
+          { service: "Psychiatric Consultation", serviceAr: "استشارة نفسية", covered: true, limit: "Up to 12 sessions per year" },
+          { service: "Inpatient Mental Health", serviceAr: "العلاج النفسي الداخلي", covered: true, limit: "Up to 30 days per year" },
+          { service: "Addiction Treatment", serviceAr: "علاج الإدمان", covered: false, limit: "Excluded from standard policies" },
+        ],
+      },
+    ],
     generatedAt: new Date().toISOString(),
   };
 }
@@ -534,6 +656,66 @@ export function registerPillarRoutes(app: Express, handleRouteError: RouteErrorH
       });
     } catch (error) {
       handleRouteError(res, error, "/api/members/reports", "submit member report");
+    }
+  });
+
+  // --- Members Beneficiary Services Routes ---
+
+  app.get("/api/members/complaints", async (_req, res) => {
+    try {
+      res.json(buildMembersComplaintsResponse());
+    } catch (error) {
+      handleRouteError(res, error, "/api/members/complaints", "fetch member complaints data");
+    }
+  });
+
+  app.get("/api/members/coverage-gaps", async (_req, res) => {
+    try {
+      res.json(buildMembersCoverageGapsResponse());
+    } catch (error) {
+      handleRouteError(res, error, "/api/members/coverage-gaps", "fetch coverage gaps data");
+    }
+  });
+
+  app.get("/api/members/provider-quality", async (_req, res) => {
+    try {
+      res.json(buildMembersProviderQualityResponse());
+    } catch (error) {
+      handleRouteError(res, error, "/api/members/provider-quality", "fetch provider quality data");
+    }
+  });
+
+  app.get("/api/members/benefits-awareness", async (_req, res) => {
+    try {
+      res.json(buildMembersBenefitsAwarenessResponse());
+    } catch (error) {
+      handleRouteError(res, error, "/api/members/benefits-awareness", "fetch benefits awareness data");
+    }
+  });
+
+  app.post("/api/members/fraud-reports", async (req, res) => {
+    try {
+      const data = fraudReportSchema.parse(req.body);
+
+      await createAuditLog({
+        userId: req.user?.id,
+        action: "MEMBER_FRAUD_REPORT_SUBMITTED",
+        resourceType: "member_fraud_report",
+        resourceId: data.providerName || "anonymous",
+        ipAddress: req.ip || req.socket.remoteAddress,
+        userAgent: req.get("User-Agent"),
+        details: { ...data, description: data.anonymous ? "[REDACTED]" : data.description },
+      });
+
+      res.status(201).json({
+        id: `fr-${Date.now()}`,
+        trackingNumber: `FR-${new Date().getFullYear()}-${Math.floor(Math.random() * 9000 + 1000)}`,
+        status: "submitted",
+        submittedAt: new Date().toISOString(),
+        message: "Your fraud report has been submitted and routed to the Audit & FWA Investigation Unit for review.",
+      });
+    } catch (error) {
+      handleRouteError(res, error, "/api/members/fraud-reports", "submit fraud report");
     }
   });
 }

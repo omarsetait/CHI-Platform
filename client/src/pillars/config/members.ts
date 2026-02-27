@@ -1,5 +1,5 @@
-import { HeartPulse, Activity, BookOpen, MessageSquare, ShieldAlert } from "lucide-react";
-import type { PillarConfig } from "@/pillars/types";
+import { HeartPulse, LayoutDashboard, MessageSquare, MapPin, Star, ShieldAlert, BookOpen } from "lucide-react";
+import type { PillarConfig } from "../types";
 
 export const membersPillarConfig: PillarConfig = {
   id: "members",
@@ -7,35 +7,33 @@ export const membersPillarConfig: PillarConfig = {
   basePath: "/members",
   defaultRoute: "/members/dashboard",
   icon: HeartPulse,
-  subtitle: "Member support, education, and safety reporting experiences.",
+  subtitle: "Beneficiary protection, coverage transparency, and fraud reporting",
   navSections: [
     {
       title: "Overview",
       items: [
-        { label: "Dashboard", href: "/members/dashboard", icon: HeartPulse },
+        { label: "Dashboard", href: "/members/dashboard", icon: LayoutDashboard },
       ],
     },
     {
-      title: "Core Journeys",
+      title: "Beneficiary Services",
       items: [
-        { label: "My Health", href: "/members/my-health", icon: Activity },
-        { label: "Education", href: "/members/education", icon: BookOpen },
-        { label: "Help & Feedback", href: "/members/help-feedback", icon: MessageSquare },
-        { label: "Report Issue", href: "/members/report-issue", icon: ShieldAlert },
+        { label: "Complaints & Disputes", href: "/members/complaints", icon: MessageSquare },
+        { label: "Coverage Gap Monitor", href: "/members/coverage-gaps", icon: MapPin },
+        { label: "Provider Quality", href: "/members/provider-quality", icon: Star },
+        { label: "Report Fraud", href: "/members/report-fraud", icon: ShieldAlert },
+        { label: "Benefits Awareness", href: "/members/benefits-awareness", icon: BookOpen },
       ],
     },
   ],
-  footer: {
-    title: "Members Unit",
-    subtitle: "Empathy-first member guidance and protection",
-  },
+  footer: { title: "Daman Members", subtitle: "Beneficiary Protection" },
   theme: {
     borderClass: "border-teal-200 dark:border-teal-900/50",
     sectionLabelClass: "text-teal-700 dark:text-teal-300",
     headerIconClass: "text-teal-600 dark:text-teal-400",
     headerTextClass: "text-teal-700 dark:text-teal-200",
     badgeClass: "bg-teal-100 text-teal-700 dark:bg-teal-900/50 dark:text-teal-300",
-    accentBackgroundClass: "from-teal-500/10 via-transparent to-teal-500/5",
+    accentBackgroundClass: "bg-gradient-to-br from-teal-50/50 to-white dark:from-teal-950/20 dark:to-gray-950",
   },
   sidebarWidth: "17.5rem",
   sidebarIconWidth: "3.5rem",
