@@ -40,7 +40,7 @@ try {
 }
 
 import { db } from "../db";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import {
   providerDirectory,
   fwaHighRiskProviders,
@@ -1200,14 +1200,14 @@ async function seed() {
   if (FORCE) {
     console.log("--force flag detected. Clearing existing CHI demo data...");
     // Delete in reverse order of dependencies
-    await db.delete(fwaCases).where(eq(fwaCases.caseId, fwaCases.caseId)); // delete all
-    await db.delete(onlineListeningMentions).where(eq(onlineListeningMentions.id, onlineListeningMentions.id));
-    await db.delete(enforcementCases).where(eq(enforcementCases.id, enforcementCases.id));
-    await db.delete(claims).where(eq(claims.id, claims.id));
-    await db.delete(fwaHighRiskDoctors).where(eq(fwaHighRiskDoctors.id, fwaHighRiskDoctors.id));
-    await db.delete(fwaHighRiskPatients).where(eq(fwaHighRiskPatients.id, fwaHighRiskPatients.id));
-    await db.delete(fwaHighRiskProviders).where(eq(fwaHighRiskProviders.id, fwaHighRiskProviders.id));
-    await db.delete(providerDirectory).where(eq(providerDirectory.id, providerDirectory.id));
+    await db.execute(sql`DELETE FROM fwa_cases`);
+    await db.execute(sql`DELETE FROM online_listening_mentions`);
+    await db.execute(sql`DELETE FROM enforcement_cases`);
+    await db.execute(sql`DELETE FROM claims`);
+    await db.execute(sql`DELETE FROM fwa_high_risk_doctors`);
+    await db.execute(sql`DELETE FROM fwa_high_risk_patients`);
+    await db.execute(sql`DELETE FROM fwa_high_risk_providers`);
+    await db.execute(sql`DELETE FROM provider_directory`);
     console.log("Cleared existing data.\n");
   }
 
