@@ -825,13 +825,16 @@ export const knowledgeChunks = pgTable("knowledge_chunks", {
   tokenCount: integer("token_count"),
   pageNumber: integer("page_number"), // Which page this chunk is from
   sectionTitle: text("section_title"), // Section/heading this belongs to
-  // Note: embedding column created via SQL migration (vector(1536))
+  embedding: vector("embedding", { dimensions: 1536 }),
   metadata: jsonb("metadata").$type<Record<string, any>>().default({}),
   createdAt: timestamp("created_at").defaultNow()
-});
+}, (table) => [
+  index("knowledge_chunks_embedding_idx").using("hnsw", table.embedding.op("vector_cosine_ops"))
+]);
 
 export const insertKnowledgeChunkSchema = createInsertSchema(knowledgeChunks).omit({
   id: true,
+  embedding: true,
   createdAt: true
 });
 export type InsertKnowledgeChunk = z.infer<typeof insertKnowledgeChunkSchema>;
@@ -4993,6 +4996,24 @@ export const chatMessages = pgTable("chat_messages", {
   role: text("role", { enum: ["user", "assistant", "system"] }).notNull(),
   content: text("content").notNull(),
   ragChunkIds: jsonb("rag_chunk_ids").$type<string[]>().default([]),
+  retrievalMetadata: jsonb("retrieval_metadata").$type<{
+    usedGrounding?: boolean;
+    retrievalCount?: number;
+    sources?: Array<{
+      chunkId: string;
+      documentId: string;
+      documentTitle: string | null;
+      similarity: number;
+      chunkIndex: number;
+    }>;
+    ragStatus?: string | null;
+    metrics?: {
+      totalMs: number;
+      embeddingMs: number;
+      retrievalMs: number;
+      generationMs: number;
+    };
+  }>().default({}),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -5003,3 +5024,351 @@ export type ChatConversation = typeof chatConversations.$inferSelect;
 export type InsertChatConversation = typeof chatConversations.$inferInsert;
 export type ChatMessage = typeof chatMessages.$inferSelect;
 export type InsertChatMessage = typeof chatMessages.$inferInsert;
+
+// ── Pillar Portal: Shared Tables ────────────────────────────────────
+
+export const providerTypeEnum = pgEnum("provider_type", [
+  "tertiary_hospital",
+  "secondary_hospital",
+  "primary_care_center",
+  "specialist_clinic",
+  "dental_clinic",
+  "rehabilitation_center",
+  "polyclinic",
+  "medical_tower",
+]);
+
+export const accreditationStatusEnum = pgEnum("accreditation_status", [
+  "accredited",
+  "conditional",
+  "pending",
+  "expired",
+  "revoked",
+]);
+
+export const portalProviders = pgTable("portal_providers", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  code: varchar("code", { length: 20 }).unique().notNull(),
+  name: text("name").notNull(),
+  nameAr: text("name_ar").notNull(),
+  licenseNo: varchar("license_no", { length: 30 }).notNull(),
+  region: text("region").notNull(),
+  city: text("city").notNull(),
+  type: providerTypeEnum("type").notNull(),
+  bedCount: integer("bed_count"),
+  specialties: text("specialties").array().default([]),
+  accreditationStatus: accreditationStatusEnum("accreditation_status").default("accredited"),
+  phone: varchar("phone", { length: 20 }),
+  email: text("email"),
+  latitude: decimal("latitude", { precision: 10, scale: 7 }),
+  longitude: decimal("longitude", { precision: 10, scale: 7 }),
+  acceptedInsurers: text("accepted_insurers").array().default([]),
+  languages: text("languages").array().default([]),
+  rating: decimal("rating", { precision: 3, scale: 2 }),
+  reviewCount: integer("review_count").default(0),
+  avgWaitMinutes: integer("avg_wait_minutes"),
+  workingHours: text("working_hours"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export type PortalProvider = typeof portalProviders.$inferSelect;
+export type InsertPortalProvider = typeof portalProviders.$inferInsert;
+
+export const portalInsurers = pgTable("portal_insurers", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  code: varchar("code", { length: 20 }).unique().notNull(),
+  name: text("name").notNull(),
+  nameAr: text("name_ar").notNull(),
+  licenseNo: varchar("license_no", { length: 30 }),
+  marketShare: decimal("market_share", { precision: 5, scale: 2 }),
+  lossRatio: decimal("loss_ratio", { precision: 5, scale: 2 }),
+  capitalAdequacy: decimal("capital_adequacy", { precision: 5, scale: 2 }),
+  healthStatus: text("health_status"),
+  premiumVolumeSar: decimal("premium_volume_sar", { precision: 14, scale: 2 }),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export type PortalInsurer = typeof portalInsurers.$inferSelect;
+export type InsertPortalInsurer = typeof portalInsurers.$inferInsert;
+
+export const portalRegions = pgTable("portal_regions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  code: varchar("code", { length: 10 }).unique().notNull(),
+  name: text("name").notNull(),
+  nameAr: text("name_ar").notNull(),
+  population: integer("population"),
+  insuredCount: integer("insured_count"),
+  providerCount: integer("provider_count"),
+  coverageRate: decimal("coverage_rate", { precision: 5, scale: 2 }),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export type PortalRegion = typeof portalRegions.$inferSelect;
+export type InsertPortalRegion = typeof portalRegions.$inferInsert;
+
+// ── Pillar Portal: Intelligence Tables ──────────────────────────────
+
+export const drgReadinessStatusEnum = pgEnum("drg_readiness_status", [
+  "complete",
+  "in_progress",
+  "not_started",
+]);
+
+export const providerScorecards = pgTable("provider_scorecards", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  providerCode: varchar("provider_code", { length: 20 }).notNull(),
+  month: varchar("month", { length: 7 }).notNull(),
+  overallScore: decimal("overall_score", { precision: 5, scale: 2 }),
+  codingAccuracy: decimal("coding_accuracy", { precision: 5, scale: 2 }),
+  rejectionRate: decimal("rejection_rate", { precision: 5, scale: 2 }),
+  sbsCompliance: decimal("sbs_compliance", { precision: 5, scale: 2 }),
+  drgReadiness: decimal("drg_readiness", { precision: 5, scale: 2 }),
+  documentationQuality: decimal("documentation_quality", { precision: 5, scale: 2 }),
+  fwaRisk: decimal("fwa_risk", { precision: 5, scale: 2 }),
+  peerRankPercentile: integer("peer_rank_percentile"),
+  trend: text("trend"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export type ProviderScorecard = typeof providerScorecards.$inferSelect;
+export type InsertProviderScorecard = typeof providerScorecards.$inferInsert;
+
+export const providerRejections = pgTable("provider_rejections", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  providerCode: varchar("provider_code", { length: 20 }).notNull(),
+  claimRef: varchar("claim_ref", { length: 30 }).notNull(),
+  patientMrn: varchar("patient_mrn", { length: 20 }),
+  icdCode: varchar("icd_code", { length: 15 }).notNull(),
+  icdDescription: text("icd_description"),
+  cptCode: varchar("cpt_code", { length: 15 }),
+  cptDescription: text("cpt_description"),
+  denialReason: text("denial_reason").notNull(),
+  denialCategory: text("denial_category").notNull(),
+  amountSar: decimal("amount_sar", { precision: 12, scale: 2 }).notNull(),
+  recommendation: text("recommendation"),
+  claimDate: timestamp("claim_date").notNull(),
+  denialDate: timestamp("denial_date").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export type ProviderRejection = typeof providerRejections.$inferSelect;
+export type InsertProviderRejection = typeof providerRejections.$inferInsert;
+
+export const providerDrgAssessments = pgTable("provider_drg_assessments", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  providerCode: varchar("provider_code", { length: 20 }).notNull(),
+  criteriaName: text("criteria_name").notNull(),
+  criteriaDescription: text("criteria_description"),
+  status: drgReadinessStatusEnum("status").notNull(),
+  gapDescription: text("gap_description"),
+  recommendedAction: text("recommended_action"),
+  targetDate: timestamp("target_date"),
+  peerCompletionRate: decimal("peer_completion_rate", { precision: 5, scale: 2 }),
+  sortOrder: integer("sort_order").default(0),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export type ProviderDrgAssessment = typeof providerDrgAssessments.$inferSelect;
+export type InsertProviderDrgAssessment = typeof providerDrgAssessments.$inferInsert;
+
+// ── Pillar Portal: Business Tables ──────────────────────────────────
+
+export const employerSectorEnum = pgEnum("employer_sector", [
+  "construction",
+  "technology",
+  "hospitality",
+  "oil_gas",
+  "retail",
+  "healthcare",
+  "manufacturing",
+  "education",
+  "financial_services",
+  "transportation",
+]);
+
+export const complianceStatusEnum = pgEnum("compliance_status", [
+  "compliant",
+  "action_required",
+  "suspended",
+  "under_review",
+]);
+
+export const portalEmployers = pgTable("portal_employers", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  code: varchar("code", { length: 20 }).unique().notNull(),
+  name: text("name").notNull(),
+  nameAr: text("name_ar"),
+  crNumber: varchar("cr_number", { length: 20 }).notNull(),
+  sector: employerSectorEnum("sector").notNull(),
+  sizeBand: text("size_band"),
+  employeeCount: integer("employee_count").notNull(),
+  insuredCount: integer("insured_count").notNull(),
+  pendingEnrollment: integer("pending_enrollment").default(0),
+  city: text("city").notNull(),
+  region: text("region").notNull(),
+  complianceStatus: complianceStatusEnum("compliance_status").default("compliant"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export type PortalEmployer = typeof portalEmployers.$inferSelect;
+export type InsertPortalEmployer = typeof portalEmployers.$inferInsert;
+
+export const employerPolicies = pgTable("employer_policies", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  employerCode: varchar("employer_code", { length: 20 }).notNull(),
+  insurerCode: varchar("insurer_code", { length: 20 }).notNull(),
+  insurerName: text("insurer_name").notNull(),
+  planTier: text("plan_tier").notNull(),
+  premiumPerEmployee: decimal("premium_per_employee", { precision: 10, scale: 2 }).notNull(),
+  totalAnnualPremium: decimal("total_annual_premium", { precision: 14, scale: 2 }),
+  coverageStart: timestamp("coverage_start").notNull(),
+  coverageEnd: timestamp("coverage_end").notNull(),
+  dependentsCount: integer("dependents_count").default(0),
+  renewalDaysRemaining: integer("renewal_days_remaining"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export type EmployerPolicy = typeof employerPolicies.$inferSelect;
+export type InsertEmployerPolicy = typeof employerPolicies.$inferInsert;
+
+export const workforceHealthProfiles = pgTable("workforce_health_profiles", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  employerCode: varchar("employer_code", { length: 20 }).unique().notNull(),
+  avgAge: decimal("avg_age", { precision: 4, scale: 1 }),
+  malePercent: decimal("male_percent", { precision: 5, scale: 2 }),
+  chronicConditions: jsonb("chronic_conditions"),
+  topSpecialties: jsonb("top_specialties"),
+  visitsPerEmployee: decimal("visits_per_employee", { precision: 5, scale: 2 }),
+  erUtilizationPercent: decimal("er_utilization_percent", { precision: 5, scale: 2 }),
+  erBenchmarkPercent: decimal("er_benchmark_percent", { precision: 5, scale: 2 }),
+  totalAnnualSpendSar: decimal("total_annual_spend_sar", { precision: 14, scale: 2 }),
+  costPerEmployee: decimal("cost_per_employee", { precision: 10, scale: 2 }),
+  costTrendPercent: decimal("cost_trend_percent", { precision: 5, scale: 2 }),
+  absenteeismDays: decimal("absenteeism_days", { precision: 5, scale: 2 }),
+  absenteeismBenchmark: decimal("absenteeism_benchmark", { precision: 5, scale: 2 }),
+  wellnessScore: integer("wellness_score"),
+  wellnessBreakdown: jsonb("wellness_breakdown"),
+  insights: jsonb("insights"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export type WorkforceHealthProfile = typeof workforceHealthProfiles.$inferSelect;
+export type InsertWorkforceHealthProfile = typeof workforceHealthProfiles.$inferInsert;
+
+export const employerViolations = pgTable("employer_violations", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  employerCode: varchar("employer_code", { length: 20 }).notNull(),
+  violationType: text("violation_type").notNull(),
+  description: text("description"),
+  fineAmountSar: decimal("fine_amount_sar", { precision: 10, scale: 2 }),
+  status: text("status"),
+  issuedDate: timestamp("issued_date").notNull(),
+  resolvedDate: timestamp("resolved_date"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export type EmployerViolation = typeof employerViolations.$inferSelect;
+export type InsertEmployerViolation = typeof employerViolations.$inferInsert;
+
+// ── Pillar Portal: Members Tables ───────────────────────────────────
+
+export const planTierEnum = pgEnum("plan_tier", [
+  "bronze",
+  "silver",
+  "gold",
+  "platinum",
+]);
+
+export const coverageStatusEnum = pgEnum("coverage_status", [
+  "covered",
+  "partial",
+  "not_covered",
+]);
+
+export const complaintStatusEnum = pgEnum("complaint_status", [
+  "submitted",
+  "under_review",
+  "investigation",
+  "resolution",
+  "closed",
+]);
+
+export const portalMembers = pgTable("portal_members", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  code: varchar("code", { length: 20 }).unique().notNull(),
+  name: text("name").notNull(),
+  nameAr: text("name_ar"),
+  iqamaNo: varchar("iqama_no", { length: 15 }).notNull(),
+  policyNumber: varchar("policy_number", { length: 25 }).notNull(),
+  employerCode: varchar("employer_code", { length: 20 }),
+  employerName: text("employer_name"),
+  insurerCode: varchar("insurer_code", { length: 20 }),
+  insurerName: text("insurer_name"),
+  planTier: planTierEnum("plan_tier").notNull(),
+  nationality: text("nationality"),
+  age: integer("age"),
+  gender: text("gender"),
+  city: text("city").notNull(),
+  region: text("region").notNull(),
+  dependentsCount: integer("dependents_count").default(0),
+  policyValidUntil: timestamp("policy_valid_until"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export type PortalMember = typeof portalMembers.$inferSelect;
+export type InsertPortalMember = typeof portalMembers.$inferInsert;
+
+export const memberCoverage = pgTable("member_coverage", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  memberCode: varchar("member_code", { length: 20 }).notNull(),
+  benefitCategory: text("benefit_category").notNull(),
+  benefitCategoryAr: text("benefit_category_ar"),
+  icon: text("icon"),
+  status: coverageStatusEnum("status").notNull(),
+  limitSar: decimal("limit_sar", { precision: 10, scale: 2 }),
+  usedSar: decimal("used_sar", { precision: 10, scale: 2 }).default("0"),
+  limitUnits: integer("limit_units"),
+  usedUnits: integer("used_units").default(0),
+  copayPercent: integer("copay_percent").default(0),
+  note: text("note"),
+  noteAr: text("note_ar"),
+  sortOrder: integer("sort_order").default(0),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export type MemberCoverage = typeof memberCoverage.$inferSelect;
+export type InsertMemberCoverage = typeof memberCoverage.$inferInsert;
+
+export const memberComplaints = pgTable("member_complaints", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  ticketNumber: varchar("ticket_number", { length: 20 }).unique().notNull(),
+  memberCode: varchar("member_code", { length: 20 }).notNull(),
+  type: text("type").notNull(),
+  description: text("description").notNull(),
+  status: complaintStatusEnum("status").default("submitted"),
+  assignedTo: text("assigned_to"),
+  estimatedResolution: text("estimated_resolution"),
+  timeline: jsonb("timeline"),
+  messages: jsonb("messages"),
+  outcome: text("outcome"),
+  submittedAt: timestamp("submitted_at").defaultNow().notNull(),
+  resolvedAt: timestamp("resolved_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export type MemberComplaint = typeof memberComplaints.$inferSelect;
+export type InsertMemberComplaint = typeof memberComplaints.$inferInsert;
+
+export const coverageLookups = pgTable("coverage_lookups", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  question: text("question").notNull(),
+  questionAr: text("question_ar"),
+  answer: text("answer").notNull(),
+  answerAr: text("answer_ar"),
+  planTiers: text("plan_tiers").array().default([]),
+  category: text("category"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export type CoverageLookup = typeof coverageLookups.$inferSelect;
+export type InsertCoverageLookup = typeof coverageLookups.$inferInsert;
