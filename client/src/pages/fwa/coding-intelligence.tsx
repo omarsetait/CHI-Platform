@@ -54,11 +54,17 @@ interface RejectionTrend {
 
 interface FrequencyPair {
   icdCode: string;
-  diagnosis: string;
+  icdDescription: string;
   cptCode: string;
-  procedure: string;
-  volume: number;
+  cptDescription: string;
+  total: number;
+  accepted: number;
+  rejected: number;
   acceptanceRate: number;
+  // Legacy field aliases for backward compatibility
+  diagnosis?: string;
+  procedure?: string;
+  volume?: number;
 }
 
 interface ValidationResult {
@@ -80,7 +86,11 @@ interface ProcessingMetrics {
   }[];
 }
 
-const PIE_COLORS = ["#ef4444", "#f97316", "#eab308", "#22c55e", "#3b82f6", "#8b5cf6"];
+// CHI brand colors: primary cyan-blue, deeper blue, purple accent, and complementary tones
+const CHI_CYAN = "#28AAE2";
+const CHI_BLUE = "#1863DC";
+const CHI_PURPLE = "#7C3AED";
+const PIE_COLORS = [CHI_CYAN, CHI_BLUE, CHI_PURPLE, "#06B6D4", "#3B82F6", "#A78BFA"];
 
 export default function CodingIntelligencePage() {
   const [activeTab, setActiveTab] = useState("validator");
@@ -346,28 +356,38 @@ export default function CodingIntelligencePage() {
                   <div className="space-y-2 text-sm">
                     <div className="flex items-center gap-2">
                       <Badge variant="destructive" className="text-xs">REJECT</Badge>
+                      <span className="font-mono">K04.7 + D2740</span>
+                      <span className="text-muted-foreground">- Dental ring case: periapical abscess + crown</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Badge variant="destructive" className="text-xs">REJECT</Badge>
                       <span className="font-mono">O80 + 59510</span>
-                      <span className="text-muted-foreground">- Spontaneous delivery billed as cesarean</span>
+                      <span className="text-muted-foreground">- OB/GYN case: normal delivery + C-section billing</span>
                     </div>
                     <div className="flex items-center gap-2">
                       <Badge variant="destructive" className="text-xs">REJECT</Badge>
                       <span className="font-mono">J06.9 + 99215</span>
-                      <span className="text-muted-foreground">- URI with high-complexity visit</span>
+                      <span className="text-muted-foreground">- Upcoding: common cold + high-complexity visit</span>
                     </div>
                     <div className="flex items-center gap-2">
                       <Badge variant="destructive" className="text-xs">REJECT</Badge>
-                      <span className="font-mono">K02.9 + D2740</span>
-                      <span className="text-muted-foreground">- Crown without prior exam</span>
+                      <span className="font-mono">K02.1 + D7210</span>
+                      <span className="text-muted-foreground">- Dental caries + extraction (should be filling)</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Badge variant="destructive" className="text-xs">REJECT</Badge>
+                      <span className="font-mono">Z34.0 + 59510</span>
+                      <span className="text-muted-foreground">- Prenatal supervision + C-section (sequence error)</span>
                     </div>
                     <div className="flex items-center gap-2">
                       <Badge className="bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300 text-xs">ACCEPT</Badge>
-                      <span className="font-mono">E11.9 + 99214</span>
-                      <span className="text-muted-foreground">- Diabetes follow-up visit</span>
+                      <span className="font-mono">Z23 + 90686</span>
+                      <span className="text-muted-foreground">- Normal: immunization (should ACCEPT)</span>
                     </div>
                     <div className="flex items-center gap-2">
                       <Badge className="bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300 text-xs">ACCEPT</Badge>
-                      <span className="font-mono">J18.9 + 71046</span>
-                      <span className="text-muted-foreground">- Pneumonia with chest X-ray</span>
+                      <span className="font-mono">E11.9 + 99213</span>
+                      <span className="text-muted-foreground">- Diabetes routine visit (should ACCEPT)</span>
                     </div>
                   </div>
                 </CardContent>
@@ -389,7 +409,7 @@ export default function CodingIntelligencePage() {
                 <CardHeader>
                   <CardTitle>Monthly Accepted vs Rejected Claims</CardTitle>
                   <CardDescription>
-                    Stacked view of claim outcomes over the past 6 months
+                    Stacked view of claim outcomes over the past 12 months
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
@@ -406,8 +426,8 @@ export default function CodingIntelligencePage() {
                           ]}
                         />
                         <Legend />
-                        <Bar dataKey="accepted" stackId="a" fill="#22c55e" name="Accepted" />
-                        <Bar dataKey="rejected" stackId="a" fill="#ef4444" name="Rejected" />
+                        <Bar dataKey="accepted" stackId="a" fill={CHI_CYAN} name="Accepted" />
+                        <Bar dataKey="rejected" stackId="a" fill={CHI_PURPLE} name="Rejected" />
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
@@ -432,9 +452,9 @@ export default function CodingIntelligencePage() {
                         <Line
                           type="monotone"
                           dataKey="acceptanceRate"
-                          stroke="#8b5cf6"
+                          stroke={CHI_BLUE}
                           strokeWidth={3}
-                          dot={{ r: 5, fill: "#8b5cf6" }}
+                          dot={{ r: 5, fill: CHI_BLUE }}
                           name="Acceptance Rate"
                         />
                       </LineChart>
@@ -473,24 +493,28 @@ export default function CodingIntelligencePage() {
                       <TableHead>Diagnosis</TableHead>
                       <TableHead>CPT Code</TableHead>
                       <TableHead>Procedure</TableHead>
-                      <TableHead className="text-right">Volume</TableHead>
+                      <TableHead className="text-right">Total</TableHead>
+                      <TableHead className="text-right">Accepted</TableHead>
+                      <TableHead className="text-right">Rejected</TableHead>
                       <TableHead className="text-right">Acceptance Rate</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {(frequencyData?.pairs ?? []).map((pair) => (
-                      <TableRow key={`${pair.icdCode}-${pair.cptCode}`}>
+                    {(frequencyData?.pairs ?? []).map((pair, idx) => (
+                      <TableRow key={`${pair.icdCode}-${pair.cptCode}-${idx}`}>
                         <TableCell className="font-mono font-semibold">{pair.icdCode}</TableCell>
-                        <TableCell className="max-w-[200px] truncate">{pair.diagnosis}</TableCell>
+                        <TableCell className="max-w-[200px] truncate">{pair.icdDescription ?? pair.diagnosis}</TableCell>
                         <TableCell className="font-mono font-semibold">{pair.cptCode}</TableCell>
-                        <TableCell className="max-w-[200px] truncate">{pair.procedure}</TableCell>
-                        <TableCell className="text-right">{pair.volume.toLocaleString()}</TableCell>
+                        <TableCell className="max-w-[200px] truncate">{pair.cptDescription ?? pair.procedure}</TableCell>
+                        <TableCell className="text-right">{(pair.total ?? pair.volume ?? 0).toLocaleString()}</TableCell>
+                        <TableCell className="text-right">{(pair.accepted ?? 0).toLocaleString()}</TableCell>
+                        <TableCell className="text-right">{(pair.rejected ?? 0).toLocaleString()}</TableCell>
                         <TableCell className="text-right">
                           <Badge
                             className={
                               pair.acceptanceRate >= 90
                                 ? "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300"
-                                : pair.acceptanceRate >= 50
+                                : pair.acceptanceRate >= 70
                                   ? "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300"
                                   : "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300"
                             }
@@ -515,6 +539,7 @@ export default function CodingIntelligencePage() {
               <Skeleton className="h-[200px] w-full" />
             </div>
           ) : (
+            <>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <Card>
                 <CardHeader>
@@ -590,6 +615,27 @@ export default function CodingIntelligencePage() {
                 </CardContent>
               </Card>
             </div>
+
+            {/* SBS V3.0 Context Note */}
+            <Card className="border-[#28AAE2]/30 bg-[#28AAE2]/5 dark:bg-[#28AAE2]/10">
+              <CardContent className="p-4">
+                <div className="flex items-start gap-3">
+                  <AlertTriangle className="w-5 h-5 text-[#1863DC] mt-0.5 flex-shrink-0" />
+                  <div>
+                    <p className="text-sm font-semibold text-[#1863DC] dark:text-[#28AAE2]">
+                      SBS V3.0 Coding Standard Update
+                    </p>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      SBS V3.0 went live January 2026 — compliance-related rejections increased as new coding
+                      validation rules took effect. The "SBS V3.0 Coding Standard Mismatch" category now
+                      accounts for 33.7% of all rejections, up from 18% under the previous standard. Providers
+                      are advised to review updated coding guidelines for dental, obstetric, and E/M services.
+                    </p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+            </>
           )}
         </TabsContent>
       </Tabs>
