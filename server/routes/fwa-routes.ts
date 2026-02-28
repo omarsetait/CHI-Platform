@@ -4137,145 +4137,182 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       }
     }
 
-    // Online Listening: No longer seed fake demo data - use real news API instead
-    // The fetch endpoint at /api/fwa/chi/online-listening/fetch retrieves real news
+    // Online Listening: Seed Saudi-specific social media mentions for fraud case studies
     if (!seededTables.has('online_listening')) {
       seededTables.add('online_listening');
-      // Don't seed any fake data - let the real news API populate this
-    }
-    
-    // Old demo data disabled - keeping for reference only
-    if (false) {
       const existingMentions = await storage.getOnlineListeningMentions();
-      const hasHealthcareMentions = existingMentions.some(m => 
-        m.providerName?.includes('مستشفى') || 
-        m.providerName?.includes('Hospital') ||
-        m.content?.includes('مستشفى')
-      );
-      if (!hasHealthcareMentions) {
-        const onlineListeningDataDisabled = [
+      if (existingMentions.length === 0) {
+        const saudiMentionsData = [
+          // === Case Study 1: Dental Ring ===
           {
-            source: "alriyadh" as const,
-            providerName: "مستشفى الحبيب (Dr. Sulaiman Al Habib)",
-            providerId: "PRV-HABIB-001",
-            content: "مستشفى الدكتور سليمان الحبيب يحصل على جائزة التميز في الرعاية الصحية من وزارة الصحة السعودية. المستشفى يقدم خدمات طبية متميزة تشمل أحدث التقنيات العلاجية.",
-            sentiment: "very_positive" as const,
-            sentimentScore: "0.85",
-            topics: ["جوائز", "تميز", "رعاية_صحية"],
-            sourceUrl: "https://www.alriyadh.com/health/2025678",
-            publishedAt: new Date("2025-01-12"),
-            engagementCount: 234,
-            reachEstimate: 45000,
-            requiresAction: false,
-            alertLevel: "normal" as const,
-          },
-          {
-            source: "almadina" as const,
-            providerName: "مستشفى المواساة (Al Mouwasat Hospital)",
-            providerId: "PRV-MOUWASAT-001",
-            content: "شكاوى من مراجعي مستشفى المواساة في الدمام بسبب طول فترات الانتظار في قسم الطوارئ. مجلس الضمان الصحي يتابع الموضوع ويطالب المستشفى بتحسين الخدمات.",
-            sentiment: "negative" as const,
-            sentimentScore: "-0.45",
-            topics: ["شكاوى", "انتظار", "طوارئ"],
-            sourceUrl: "https://www.al-madina.com/article/789456",
-            publishedAt: new Date("2025-01-11"),
-            engagementCount: 567,
-            reachEstimate: 89000,
+            providerId: "PRV-CS1-001",
+            providerName: "Al Noor Dental Center",
+            source: "twitter" as const,
+            authorHandle: "@SaudiPatient_22",
+            content: "My dental clinic charged Bupa for 3 root canals I never had — anyone else experiencing this? مركز النور لطب الأسنان #تأمين_صحي #احتيال",
+            sentiment: "very_negative" as const,
+            sentimentScore: "-0.9200",
+            topics: ["billing_fraud", "dental", "phantom_billing"],
+            engagementCount: 342,
+            reachEstimate: 15200,
             requiresAction: true,
-            alertLevel: "warning" as const,
+            publishedAt: new Date("2026-02-15T14:30:00Z"),
           },
           {
-            source: "alsharq_alawsat" as const,
-            providerName: "المستشفى السعودي الألماني (Saudi German Hospital)",
-            providerId: "PRV-SGH-001",
-            content: "المستشفى السعودي الألماني يحصل على اعتماد JCI للمرة الثالثة. إنجاز كبير يعكس التزام المستشفى بمعايير الجودة العالمية في تقديم الخدمات الصحية.",
-            sentiment: "very_positive" as const,
-            sentimentScore: "0.92",
-            topics: ["اعتماد_دولي", "جودة", "معايير"],
-            sourceUrl: "https://aawsat.com/home/article/4567890",
-            publishedAt: new Date("2025-01-10"),
-            engagementCount: 1245,
-            reachEstimate: 250000,
-            requiresAction: false,
-            alertLevel: "normal" as const,
+            providerId: "PRV-CS1-004",
+            providerName: "Pearl Dental Center",
+            source: "twitter" as const,
+            authorHandle: "@ConsumerRights_SA",
+            content: "@CHI_Saudi I was billed SAR 4,500 for procedures I didn't receive at Pearl Dental Center. This is fraud! When will CHI take action? مركز اللؤلؤة لطب الأسنان",
+            sentiment: "very_negative" as const,
+            sentimentScore: "-0.8800",
+            topics: ["billing_fraud", "dental", "regulatory_complaint"],
+            engagementCount: 567,
+            reachEstimate: 28400,
+            requiresAction: true,
+            publishedAt: new Date("2026-02-18T09:15:00Z"),
           },
           {
-            source: "okaz" as const,
-            providerName: "مستشفى دله (Dallah Hospital)",
-            providerId: "PRV-DALLAH-001",
-            content: "مستشفى دله يعلن عن افتتاح مركز جديد للقلب والأوعية الدموية في الرياض. استثمار بقيمة 500 مليون ريال سعودي لتعزيز الخدمات الطبية التخصصية.",
-            sentiment: "positive" as const,
-            sentimentScore: "0.65",
-            topics: ["توسع", "قلب", "استثمار"],
-            sourceUrl: "https://www.okaz.com.sa/news/local/2345678",
-            publishedAt: new Date("2025-01-09"),
-            engagementCount: 892,
-            reachEstimate: 120000,
-            requiresAction: false,
-            alertLevel: "normal" as const,
+            providerId: "PRV-CS1-002",
+            providerName: "Smile Plus Clinic",
+            source: "forum" as const,
+            authorHandle: "RiyadhResident_88",
+            content: "Warning: Smile Plus Clinic in Olaya district charged my insurance for dental work that was never done. They billed for 2 crowns and a root canal on a single visit. تحذير من عيادة سمايل بلس",
+            sentiment: "negative" as const,
+            sentimentScore: "-0.7500",
+            topics: ["dental", "billing_fraud", "consumer_warning"],
+            engagementCount: 89,
+            reachEstimate: 4200,
+            requiresAction: true,
+            publishedAt: new Date("2026-02-10T16:45:00Z"),
           },
+
+          // === Case Study 2: OB/GYN Upcoding ===
+          {
+            providerId: "PRV-CS2-001",
+            providerName: "Al Hayat Women's Hospital",
+            source: "twitter" as const,
+            authorHandle: "@UmmAhmed_JED",
+            content: "My wife was pressured into a C-section at Al Hayat Hospital even though the doctor said natural delivery was fine. SAR 12,000 bill! Who benefits from these unnecessary surgeries? #مستشفى_الحياة #ولادة_قيصرية",
+            sentiment: "very_negative" as const,
+            sentimentScore: "-0.8500",
+            topics: ["upcoding", "obstetrics", "unnecessary_procedures"],
+            engagementCount: 891,
+            reachEstimate: 42000,
+            requiresAction: true,
+            publishedAt: new Date("2026-02-20T11:20:00Z"),
+          },
+          {
+            source: "news_article" as const,
+            providerName: "Multiple providers",
+            content: "Rising C-section rates in Saudi private hospitals spark regulatory concern — CHI data shows a 68% C-section rate at some Jeddah facilities vs 23% national average. Health economists warn this may indicate systematic upcoding.",
+            sentiment: "negative" as const,
+            sentimentScore: "-0.6000",
+            topics: ["upcoding", "obstetrics", "regulatory", "c_section_rates"],
+            engagementCount: 2340,
+            reachEstimate: 156000,
+            requiresAction: false,
+            publishedAt: new Date("2026-02-22T08:00:00Z"),
+            sourceUrl: "https://www.arabnews.com/health/article/2026/02/22/rising-csection-rates",
+          },
+
+          // === General Healthcare Mentions (Background) ===
+          // Negative: Insurance coverage complaint
+          {
+            source: "twitter" as const,
+            authorHandle: "@FrustratedExpat_KSA",
+            content: "Submitted a claim to my insurer 3 weeks ago for a specialist visit and still no response. The new NPHIES portal keeps timing out. How is this acceptable? #NPHIES #تأمين_طبي",
+            sentiment: "negative" as const,
+            sentimentScore: "-0.6500",
+            topics: ["insurance_coverage", "nphies", "claims_delay"],
+            engagementCount: 213,
+            reachEstimate: 9800,
+            requiresAction: false,
+            publishedAt: new Date("2026-02-12T10:00:00Z"),
+          },
+          // Negative: NPHIES system issues
           {
             source: "sabq" as const,
-            providerName: "مستشفى الحبيب (Dr. Sulaiman Al Habib)",
-            providerId: "PRV-HABIB-001",
-            content: "مجلس الضمان الصحي يتلقى شكاوى من مراجعين حول فواتير غير واضحة من مستشفى الحبيب. المجلس يؤكد متابعته للموضوع وضرورة الشفافية في الفوترة.",
-            sentiment: "very_negative" as const,
-            sentimentScore: "-0.78",
-            topics: ["شكاوى", "فوترة", "شفافية"],
-            sourceUrl: "https://sabq.org/saudia/123456789",
-            publishedAt: new Date("2025-01-08"),
-            engagementCount: 1567,
-            reachEstimate: 180000,
-            requiresAction: true,
-            alertLevel: "critical" as const,
-          },
-          {
-            source: "alriyadh" as const,
-            providerName: "مستشفى المواساة (Al Mouwasat Hospital)",
-            providerId: "PRV-MOUWASAT-001",
-            content: "مستشفى المواساة يطلق برنامج جديد للكشف المبكر عن السرطان بالتعاون مع وزارة الصحة. الخدمة مجانية للمواطنين السعوديين ضمن رؤية 2030.",
-            sentiment: "positive" as const,
-            sentimentScore: "0.72",
-            topics: ["سرطان", "كشف_مبكر", "صحة_عامة"],
-            sourceUrl: "https://www.alriyadh.com/health/2025679",
-            publishedAt: new Date("2025-01-07"),
-            engagementCount: 2341,
-            reachEstimate: 350000,
+            providerName: "Multiple providers",
+            content: "مقدمو خدمات صحية يشتكون من أعطال متكررة في نظام نفيس خلال ساعات الذروة، مما يؤخر معالجة المطالبات ويؤثر على التدفق النقدي للمستشفيات الصغيرة. NPHIES downtime complaints rise among providers.",
+            sentiment: "negative" as const,
+            sentimentScore: "-0.5500",
+            topics: ["nphies", "system_outage", "provider_complaints"],
+            engagementCount: 456,
+            reachEstimate: 34000,
             requiresAction: false,
-            alertLevel: "normal" as const,
+            publishedAt: new Date("2026-02-14T07:30:00Z"),
+            sourceUrl: "https://sabq.org/saudia/nphies-downtime-2026",
           },
-          {
-            source: "almadina" as const,
-            providerName: "المستشفى السعودي الألماني (Saudi German Hospital)",
-            providerId: "PRV-SGH-001",
-            content: "المستشفى السعودي الألماني في جدة يقدم خدمات طبية متميزة لكن الأسعار مرتفعة مقارنة بالمستشفيات الأخرى. مراجعون يطالبون بمراجعة سياسة التسعير.",
-            sentiment: "neutral" as const,
-            sentimentScore: "0.15",
-            topics: ["أسعار", "جودة", "مقارنة"],
-            sourceUrl: "https://www.al-madina.com/article/789457",
-            publishedAt: new Date("2025-01-06"),
-            engagementCount: 423,
-            reachEstimate: 67000,
-            requiresAction: false,
-            alertLevel: "normal" as const,
-          },
+          // Negative: Medication pricing concerns
           {
             source: "okaz" as const,
-            providerName: "مستشفى دله (Dallah Hospital)",
-            providerId: "PRV-DALLAH-001",
-            content: "شكوى رسمية: مستشفى دله رفض استقبال حالة طوارئ بسبب مشاكل في التأمين. مجلس الضمان الصحي يحقق في المخالفة ويؤكد أن ذلك مخالف للأنظمة.",
-            sentiment: "very_negative" as const,
-            sentimentScore: "-0.82",
-            topics: ["طوارئ", "تأمين", "مخالفة"],
-            sourceUrl: "https://www.okaz.com.sa/news/local/2345679",
-            publishedAt: new Date("2025-01-05"),
-            engagementCount: 3456,
-            reachEstimate: 450000,
-            requiresAction: true,
-            alertLevel: "critical" as const,
+            content: "ارتفاع أسعار الأدوية المزمنة في الصيدليات الخاصة يثير قلق المرضى — بعض الأدوية زادت بنسبة 40% خلال 6 أشهر. مجلس الضمان الصحي يدرس وضع سقف سعري. Medication prices surge concerns patients.",
+            sentiment: "negative" as const,
+            sentimentScore: "-0.5000",
+            topics: ["medication_pricing", "pharmacy", "cost_of_care"],
+            engagementCount: 1120,
+            reachEstimate: 78000,
+            requiresAction: false,
+            publishedAt: new Date("2026-02-08T12:00:00Z"),
+            sourceUrl: "https://www.okaz.com.sa/news/local/medication-prices-2026",
+          },
+          // Positive: CHI regulations
+          {
+            source: "alriyadh" as const,
+            content: "مجلس الضمان الصحي يطلق مبادرة جديدة لتعزيز الشفافية في الفوترة الطبية وحماية حقوق المؤمن لهم. المبادرة تشمل خط ساخن للإبلاغ عن المخالفات. CHI launches billing transparency initiative with fraud hotline.",
+            sentiment: "positive" as const,
+            sentimentScore: "0.7200",
+            topics: ["chi_regulation", "transparency", "patient_rights"],
+            engagementCount: 876,
+            reachEstimate: 92000,
+            requiresAction: false,
+            publishedAt: new Date("2026-02-05T09:00:00Z"),
+            sourceUrl: "https://www.alriyadh.com/health/chi-transparency-2026",
+          },
+          // Positive: CHI enforcement actions
+          {
+            source: "twitter" as const,
+            authorHandle: "@HealthPolicy_SA",
+            content: "Good to see CHI cracking down on fraudulent billing practices. 12 clinics fined in January alone. This is how you protect patients and the insurance system. أحسنت يا مجلس الضمان الصحي #CHI #مكافحة_الاحتيال",
+            sentiment: "positive" as const,
+            sentimentScore: "0.8000",
+            topics: ["chi_enforcement", "fraud_prevention", "positive_sentiment"],
+            engagementCount: 1543,
+            reachEstimate: 67000,
+            requiresAction: false,
+            publishedAt: new Date("2026-02-25T15:45:00Z"),
+          },
+          // Neutral: Wait time complaints
+          {
+            source: "almadina" as const,
+            providerName: "King Fahd Medical City",
+            content: "مدينة الملك فهد الطبية تعلن عن خطة لتقليل أوقات الانتظار في العيادات الخارجية بنسبة 30% خلال الربع القادم. الخطة تشمل توسيع ساعات العمل وإضافة عيادات مسائية. Wait time reduction plan announced.",
+            sentiment: "neutral" as const,
+            sentimentScore: "0.1500",
+            topics: ["wait_times", "service_improvement", "outpatient"],
+            engagementCount: 312,
+            reachEstimate: 45000,
+            requiresAction: false,
+            publishedAt: new Date("2026-02-17T06:00:00Z"),
+            sourceUrl: "https://www.al-madina.com/article/wait-time-plan-2026",
+          },
+          // Neutral: SBS V3.0 compliance challenges
+          {
+            source: "sabq" as const,
+            providerName: "Multiple providers",
+            content: "مقدمو الخدمات الصحية يستعدون لتطبيق معايير SBS V3.0 الجديدة — التحديات تشمل تحديث أنظمة الفوترة وتدريب الكوادر. مجلس الضمان يمدد فترة الامتثال 3 أشهر إضافية. SBS V3.0 compliance deadline extended.",
+            sentiment: "neutral" as const,
+            sentimentScore: "0.0500",
+            topics: ["sbs_v3", "compliance", "provider_readiness"],
+            engagementCount: 198,
+            reachEstimate: 21000,
+            requiresAction: false,
+            publishedAt: new Date("2026-02-03T14:00:00Z"),
+            sourceUrl: "https://sabq.org/saudia/sbs-v3-compliance-2026",
           },
         ];
-        for (const mention of onlineListeningDataDisabled) {
+        for (const mention of saudiMentionsData) {
           await storage.createOnlineListeningMention(mention);
         }
       }
@@ -8425,12 +8462,18 @@ Respond with JSON:
   app.get("/api/fwa/cpoe/rejection-trends", async (_req, res) => {
     try {
       const trends = [
-        { month: "Sep 2025", total: 12450, accepted: 10580, rejected: 1870, acceptanceRate: 85.0 },
-        { month: "Oct 2025", total: 13200, accepted: 11352, rejected: 1848, acceptanceRate: 86.0 },
-        { month: "Nov 2025", total: 14100, accepted: 12267, rejected: 1833, acceptanceRate: 87.0 },
-        { month: "Dec 2025", total: 13800, accepted: 11868, rejected: 1932, acceptanceRate: 86.0 },
-        { month: "Jan 2026", total: 15200, accepted: 13376, rejected: 1824, acceptanceRate: 88.0 },
-        { month: "Feb 2026", total: 14500, accepted: 12905, rejected: 1595, acceptanceRate: 89.0 },
+        { month: "Mar 2025", total: 14200, accepted: 12100, rejected: 2100, acceptanceRate: 85.2 },
+        { month: "Apr 2025", total: 14800, accepted: 12700, rejected: 2100, acceptanceRate: 85.8 },
+        { month: "May 2025", total: 15100, accepted: 13000, rejected: 2100, acceptanceRate: 86.1 },
+        { month: "Jun 2025", total: 14600, accepted: 12400, rejected: 2200, acceptanceRate: 84.9 },
+        { month: "Jul 2025", total: 13900, accepted: 11800, rejected: 2100, acceptanceRate: 84.9 },
+        { month: "Aug 2025", total: 14300, accepted: 12200, rejected: 2100, acceptanceRate: 85.3 },
+        { month: "Sep 2025", total: 15200, accepted: 13100, rejected: 2100, acceptanceRate: 86.2 },
+        { month: "Oct 2025", total: 15800, accepted: 13600, rejected: 2200, acceptanceRate: 86.1 },
+        { month: "Nov 2025", total: 15400, accepted: 13200, rejected: 2200, acceptanceRate: 85.7 },
+        { month: "Dec 2025", total: 14100, accepted: 11900, rejected: 2200, acceptanceRate: 84.4 },
+        { month: "Jan 2026", total: 16200, accepted: 13800, rejected: 2400, acceptanceRate: 85.2 },
+        { month: "Feb 2026", total: 16800, accepted: 14300, rejected: 2500, acceptanceRate: 85.1 },
       ];
       res.json({ trends });
     } catch (error) {
@@ -8442,16 +8485,21 @@ Respond with JSON:
   app.get("/api/fwa/cpoe/frequency-table", async (_req, res) => {
     try {
       const pairs = [
-        { icdCode: "Z23", diagnosis: "Encounter for immunization", cptCode: "90686", procedure: "Influenza vaccine, quadrivalent", volume: 8420, acceptanceRate: 96.2 },
-        { icdCode: "J06.9", diagnosis: "Acute upper respiratory infection", cptCode: "99213", procedure: "Office visit, established patient (low complexity)", volume: 7150, acceptanceRate: 42.1 },
-        { icdCode: "E11.9", diagnosis: "Type 2 diabetes mellitus without complications", cptCode: "99214", procedure: "Office visit, established patient (moderate complexity)", volume: 6830, acceptanceRate: 94.5 },
-        { icdCode: "I10", diagnosis: "Essential hypertension", cptCode: "99213", procedure: "Office visit, established patient (low complexity)", volume: 6200, acceptanceRate: 95.8 },
-        { icdCode: "O80", diagnosis: "Encounter for full-term uncomplicated delivery", cptCode: "59510", procedure: "Cesarean delivery with postpartum care", volume: 5100, acceptanceRate: 18.3 },
-        { icdCode: "M54.5", diagnosis: "Low back pain", cptCode: "72148", procedure: "MRI lumbar spine without contrast", volume: 4800, acceptanceRate: 91.2 },
-        { icdCode: "K21.0", diagnosis: "GERD with esophagitis", cptCode: "43239", procedure: "Upper GI endoscopy with biopsy", volume: 4350, acceptanceRate: 93.7 },
-        { icdCode: "K02.9", diagnosis: "Dental caries, unspecified", cptCode: "D2740", procedure: "Crown - porcelain/ceramic substrate", volume: 3900, acceptanceRate: 31.5 },
-        { icdCode: "J18.9", diagnosis: "Pneumonia, unspecified organism", cptCode: "71046", procedure: "Chest X-ray, 2 views", volume: 3600, acceptanceRate: 97.1 },
-        { icdCode: "N39.0", diagnosis: "Urinary tract infection, site not specified", cptCode: "81001", procedure: "Urinalysis with microscopy", volume: 3200, acceptanceRate: 98.4 },
+        { icdCode: "Z23", icdDescription: "Encounter for immunization", cptCode: "90686", cptDescription: "Influenza vaccine, quadrivalent", total: 9840, accepted: 9640, rejected: 200, acceptanceRate: 98.0 },
+        { icdCode: "E11.9", icdDescription: "Type 2 diabetes mellitus without complications", cptCode: "99213", cptDescription: "Office visit, established patient (low complexity)", total: 8720, accepted: 8110, rejected: 610, acceptanceRate: 93.0 },
+        { icdCode: "I10", icdDescription: "Essential hypertension", cptCode: "99214", cptDescription: "Office visit, established patient (moderate complexity)", total: 7950, accepted: 7473, rejected: 477, acceptanceRate: 94.0 },
+        { icdCode: "J06.9", icdDescription: "Acute upper respiratory infection", cptCode: "99215", cptDescription: "Office visit, established patient (high complexity)", total: 7200, accepted: 4320, rejected: 2880, acceptanceRate: 60.0 },
+        { icdCode: "O82", icdDescription: "Encounter for cesarean delivery", cptCode: "59510", cptDescription: "Cesarean delivery with postpartum care", total: 6450, accepted: 5805, rejected: 645, acceptanceRate: 90.0 },
+        { icdCode: "O80", icdDescription: "Encounter for full-term uncomplicated delivery", cptCode: "59400", cptDescription: "Routine obstetric care, vaginal delivery", total: 6100, accepted: 5795, rejected: 305, acceptanceRate: 95.0 },
+        { icdCode: "K04.7", icdDescription: "Periapical abscess without sinus", cptCode: "D2740", cptDescription: "Crown - porcelain/ceramic substrate", total: 5800, accepted: 3770, rejected: 2030, acceptanceRate: 65.0 },
+        { icdCode: "M54.5", icdDescription: "Low back pain", cptCode: "99213", cptDescription: "Office visit, established patient (low complexity)", total: 5400, accepted: 4860, rejected: 540, acceptanceRate: 90.0 },
+        { icdCode: "K02.1", icdDescription: "Dental caries on pit and fissure surface", cptCode: "D2150", cptDescription: "Amalgam filling - two surfaces", total: 5100, accepted: 4743, rejected: 357, acceptanceRate: 93.0 },
+        { icdCode: "Z34.0", icdDescription: "Encounter for supervision of normal first pregnancy", cptCode: "99213", cptDescription: "Office visit, established patient (low complexity)", total: 4800, accepted: 4560, rejected: 240, acceptanceRate: 95.0 },
+        { icdCode: "K08.1", icdDescription: "Complete loss of teeth due to trauma", cptCode: "D7210", cptDescription: "Surgical removal of erupted tooth", total: 4200, accepted: 3780, rejected: 420, acceptanceRate: 90.0 },
+        { icdCode: "J18.9", icdDescription: "Pneumonia, unspecified organism", cptCode: "71046", cptDescription: "Chest X-ray, 2 views", total: 3950, accepted: 3831, rejected: 119, acceptanceRate: 97.0 },
+        { icdCode: "N39.0", icdDescription: "Urinary tract infection, site not specified", cptCode: "81001", cptDescription: "Urinalysis with microscopy", total: 3600, accepted: 3528, rejected: 72, acceptanceRate: 98.0 },
+        { icdCode: "O80", icdDescription: "Encounter for full-term uncomplicated delivery", cptCode: "59510", cptDescription: "Cesarean delivery with postpartum care", total: 3200, accepted: 576, rejected: 2624, acceptanceRate: 18.0 },
+        { icdCode: "K21.0", icdDescription: "GERD with esophagitis", cptCode: "43239", cptDescription: "Upper GI endoscopy with biopsy", total: 2900, accepted: 2610, rejected: 290, acceptanceRate: 90.0 },
       ];
       res.json({ pairs });
     } catch (error) {
@@ -8471,22 +8519,47 @@ Respond with JSON:
       const upperIcd = String(icdCode).toUpperCase().trim();
       const upperCpt = String(cptCode).toUpperCase().trim();
 
-      // Hard-coded known rejections
+      // Hard-coded known rejections — Saudi case-study-relevant pairs
       const knownRejections: Record<string, { reason: string; confidence: number; historicalRate: number }> = {
         "O80+59510": {
-          reason: "Spontaneous vaginal delivery (O80) billed as cesarean delivery (59510). These are mutually exclusive procedures — a delivery cannot be both spontaneous vaginal and cesarean.",
+          reason: "Spontaneous vaginal delivery (O80) billed as cesarean delivery (59510). These are mutually exclusive procedures — a delivery cannot be both spontaneous vaginal and cesarean. SBS V3.0 explicitly flags this combination.",
           confidence: 98.5,
-          historicalRate: 18.3,
+          historicalRate: 18.0,
+        },
+        "K04.7+D2740": {
+          reason: "Periapical abscess (K04.7) paired with crown placement (D2740) is clinically implausible. An active periapical infection contraindicates permanent crown restoration — the infection must be resolved first via root canal or extraction.",
+          confidence: 96.3,
+          historicalRate: 65.0,
         },
         "J06.9+99215": {
-          reason: "Acute upper respiratory infection (J06.9) paired with high-complexity office visit (99215). URI is a straightforward diagnosis that does not support the medical necessity for a level 5 E/M visit.",
+          reason: "Acute upper respiratory infection (J06.9) paired with high-complexity office visit (99215). URI is a straightforward diagnosis that does not support the medical necessity for a level 5 E/M visit. This is a common upcoding pattern flagged by SBS V3.0.",
           confidence: 95.2,
-          historicalRate: 12.7,
+          historicalRate: 60.0,
+        },
+        "K02.1+D7210": {
+          reason: "Dental caries on pit and fissure surface (K02.1) paired with surgical tooth extraction (D7210). Caries should be treated with a filling (D2150), not extraction. Extraction is only warranted when the tooth is non-restorable.",
+          confidence: 93.7,
+          historicalRate: 22.4,
+        },
+        "Z34.0+59510": {
+          reason: "Supervision of normal first pregnancy (Z34.0) billed with cesarean delivery (59510). Z34.0 is a prenatal supervision code and cannot be used as the primary diagnosis for a delivery procedure — a delivery diagnosis (O80-O82) is required.",
+          confidence: 97.1,
+          historicalRate: 8.5,
+        },
+        "O80+99215": {
+          reason: "Full-term uncomplicated delivery (O80) billed as a high-complexity office visit (99215). Delivery services require obstetric procedure codes (59400-59622), not evaluation and management codes. Wrong code category.",
+          confidence: 96.8,
+          historicalRate: 5.2,
         },
         "K02.9+D2740": {
-          reason: "Dental caries (K02.9) billed directly with crown placement (D2740) without prior comprehensive exam or restoration attempt. Crown placement requires documented prior treatment steps.",
+          reason: "Dental caries (K02.9) billed directly with crown placement (D2740) without prior comprehensive exam or restoration attempt. Crown placement requires documented prior treatment steps per SBS V3.0 dental coding standards.",
           confidence: 92.8,
           historicalRate: 31.5,
+        },
+        "E11.9+90686": {
+          reason: "Type 2 diabetes (E11.9) paired with influenza vaccine administration (90686). The diagnosis code must reflect the reason for the immunization (Z23), not the patient's chronic condition. Incorrect primary diagnosis for preventive service.",
+          confidence: 91.4,
+          historicalRate: 35.8,
         },
       };
 
@@ -8521,15 +8594,15 @@ Respond with JSON:
   app.get("/api/fwa/cpoe/processing-metrics", async (_req, res) => {
     try {
       res.json({
-        avgProcessingTimeMs: 847,
-        totalProcessed: 83150,
+        avgProcessingTimeMs: 1247,
+        totalProcessed: 183150,
         commonRejectionReasons: [
-          { reason: "Medical necessity not established", count: 3420, percentage: 28.5 },
-          { reason: "Procedure-diagnosis mismatch", count: 2640, percentage: 22.0 },
-          { reason: "Unbundling detected", count: 1920, percentage: 16.0 },
-          { reason: "Duplicate service within timeframe", count: 1440, percentage: 12.0 },
-          { reason: "Upcoding - higher complexity billed", count: 1560, percentage: 13.0 },
-          { reason: "Missing prior authorization", count: 1020, percentage: 8.5 },
+          { reason: "SBS V3.0 Coding Standard Mismatch", count: 8420, percentage: 33.7 },
+          { reason: "ICD-CPT Clinical Implausibility", count: 5630, percentage: 22.5 },
+          { reason: "Duplicate Service Within Window", count: 3780, percentage: 15.1 },
+          { reason: "Upcoding — Complexity Level Exceeded", count: 2950, percentage: 11.8 },
+          { reason: "Pre-Authorization Required but Missing", count: 2340, percentage: 9.4 },
+          { reason: "Provider Not Authorized for Service", count: 1880, percentage: 7.5 },
         ],
       });
     } catch (error) {
