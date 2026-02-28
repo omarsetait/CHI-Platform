@@ -21,32 +21,57 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetDescription,
+} from "@/components/ui/sheet";
+import {
   AlertTriangle,
   DollarSign,
   ShieldAlert,
   Eye,
   Search,
   Flag,
+  Bot,
+  FileText,
+  MapPin,
+  Stethoscope,
+  Calendar,
 } from "lucide-react";
+import { Separator } from "@/components/ui/separator";
 
+// DB-backed claim shape (matches Drizzle claims table)
 interface FlaggedClaim {
   id: string;
-  claimId: string;
-  patientName: string;
-  providerId: string;
-  providerName: string;
-  insurerName: string;
-  icdCode: string;
-  icdDescription: string;
-  cptCode: string;
-  cptDescription: string;
-  claimAmount: number;
-  flagReason: string;
-  flagCategory: string;
-  riskScore: number;
-  detectedAt: string;
-  status: string;
-  detectionMethod: string;
+  claimNumber: string;
+  policyNumber: string;
+  registrationDate: string;
+  claimType: string;
+  hospital: string;
+  amount: string;
+  outlierScore: string;
+  description: string | null;
+  icd: string | null;
+  providerName: string | null;
+  patientName: string | null;
+  serviceDate: string | null;
+  status: string | null;
+  category: string | null;
+  flagged: boolean;
+  flagReason: string | null;
+  cptCodes: string[] | null;
+  diagnosisCodes: string[] | null;
+  providerCity: string | null;
+  providerRegion: string | null;
+  specialty: string | null;
+  providerType: string | null;
+  providerId: string | null;
+  gender: string | null;
+  nationality: string | null;
+  claimIcd10Descriptions: string | null;
+  aiStatus: string | null;
 }
 
 interface FlaggedClaimsSummary {
@@ -54,7 +79,6 @@ interface FlaggedClaimsSummary {
   totalExposure: number;
   confirmedFraud: number;
   underReview: number;
-  pendingInvestigation: number;
 }
 
 interface FlaggedClaimsResponse {
@@ -62,35 +86,73 @@ interface FlaggedClaimsResponse {
   summary: FlaggedClaimsSummary;
 }
 
+// ─── Category labels matching DB category values ───
 const CATEGORY_LABELS: Record<string, string> = {
+  phantom_billing: "Phantom Billing",
+  upcoding: "Upcoding",
+  cross_insurer_duplicate: "Cross-Insurer Duplicate",
+  unbundling: "Unbundling",
+  referral_churning: "Referral Churning",
+  unnecessary_admission: "Unnecessary Admission",
   dental_phantom_billing: "Phantom Billing",
   obgyn_upcoding: "OB/GYN Upcoding",
-  referral_churning: "Referral Churning",
   duplicate_cross_insurer: "Duplicate Cross-Insurer",
-  unnecessary_admission: "Unnecessary Admission",
-  unbundling: "Unbundling",
 };
 
+// ─── Status labels matching DB status values ───
 const STATUS_LABELS: Record<string, string> = {
-  under_review: "Under Review",
   confirmed_fraud: "Confirmed Fraud",
+  under_review: "Under Review",
+  pending_review: "Pending Review",
+  flagged: "Flagged",
   pending_investigation: "Pending Investigation",
 };
+
+// ─── Fraud pattern badge colors based on flagReason text ───
+function getFlagReasonBadgeClasses(flagReason: string | null): string {
+  if (!flagReason) return "bg-gray-100 text-gray-700 border-gray-200 dark:bg-gray-900/30 dark:text-gray-400 dark:border-gray-800";
+  const lower = flagReason.toLowerCase();
+  if (lower.includes("phantom billing") || lower.includes("phantom"))
+    return "bg-red-100 text-red-700 border-red-200 dark:bg-red-900/30 dark:text-red-400 dark:border-red-800";
+  if (lower.includes("upcoding") || lower.includes("upcode"))
+    return "bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-900/30 dark:text-orange-400 dark:border-orange-800";
+  if (lower.includes("cross-insurer") || lower.includes("duplicate"))
+    return "bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-900/30 dark:text-purple-400 dark:border-purple-800";
+  if (lower.includes("unbundling") || lower.includes("unbundle"))
+    return "bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:border-amber-800";
+  if (lower.includes("referral") || lower.includes("churning"))
+    return "bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:border-blue-800";
+  return "bg-gray-100 text-gray-700 border-gray-200 dark:bg-gray-900/30 dark:text-gray-400 dark:border-gray-800";
+}
+
+function getFlagReasonLabel(flagReason: string | null): string {
+  if (!flagReason) return "Unknown";
+  const lower = flagReason.toLowerCase();
+  if (lower.includes("phantom")) return "Phantom Billing";
+  if (lower.includes("upcoding") || lower.includes("upcode")) return "Upcoding";
+  if (lower.includes("cross-insurer") || lower.includes("duplicate")) return "Cross-Insurer Duplicate";
+  if (lower.includes("unbundling") || lower.includes("unbundle")) return "Unbundling";
+  if (lower.includes("referral") || lower.includes("churning")) return "Referral Churning";
+  return "Suspicious Pattern";
+}
 
 function getCategoryBadgeClasses(category: string): string {
   switch (category) {
     case "dental_phantom_billing":
+    case "phantom_billing":
       return "bg-red-100 text-red-700 border-red-200 dark:bg-red-900/30 dark:text-red-400 dark:border-red-800";
     case "obgyn_upcoding":
+    case "upcoding":
       return "bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-900/30 dark:text-orange-400 dark:border-orange-800";
     case "referral_churning":
-      return "bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:border-amber-800";
+      return "bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:border-blue-800";
     case "duplicate_cross_insurer":
+    case "cross_insurer_duplicate":
       return "bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-900/30 dark:text-purple-400 dark:border-purple-800";
     case "unnecessary_admission":
-      return "bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:border-blue-800";
-    case "unbundling":
       return "bg-teal-100 text-teal-700 border-teal-200 dark:bg-teal-900/30 dark:text-teal-400 dark:border-teal-800";
+    case "unbundling":
+      return "bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:border-amber-800";
     default:
       return "bg-gray-100 text-gray-700 border-gray-200 dark:bg-gray-900/30 dark:text-gray-400 dark:border-gray-800";
   }
@@ -102,8 +164,11 @@ function getStatusBadgeClasses(status: string): string {
       return "bg-red-100 text-red-700 border-red-200 dark:bg-red-900/30 dark:text-red-400 dark:border-red-800";
     case "under_review":
       return "bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:border-amber-800";
+    case "pending_review":
     case "pending_investigation":
       return "bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:border-blue-800";
+    case "flagged":
+      return "bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-900/30 dark:text-orange-400 dark:border-orange-800";
     default:
       return "bg-gray-100 text-gray-700 border-gray-200 dark:bg-gray-900/30 dark:text-gray-400 dark:border-gray-800";
   }
@@ -124,15 +189,11 @@ function getRiskProgressColor(score: number): string {
 }
 
 function formatCurrency(amount: number): string {
-  return new Intl.NumberFormat("en-SA", {
-    style: "currency",
-    currency: "SAR",
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  }).format(amount);
+  return `SAR ${Number(amount).toLocaleString()}`;
 }
 
-function formatDate(dateStr: string): string {
+function formatDate(dateStr: string | null): string {
+  if (!dateStr) return "N/A";
   return new Date(dateStr).toLocaleDateString("en-SA", {
     year: "numeric",
     month: "short",
@@ -144,6 +205,8 @@ export default function FlaggedClaimsPage() {
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [selectedClaim, setSelectedClaim] = useState<FlaggedClaim | null>(null);
+  const [sheetOpen, setSheetOpen] = useState(false);
 
   const { data, isLoading } = useQuery<FlaggedClaimsResponse>({
     queryKey: ["/api/fwa/flagged-claims"],
@@ -156,15 +219,14 @@ export default function FlaggedClaimsPage() {
     return claims.filter((claim) => {
       const matchesSearch =
         !search ||
-        claim.claimId.toLowerCase().includes(search.toLowerCase()) ||
-        claim.providerName.toLowerCase().includes(search.toLowerCase()) ||
-        claim.patientName.toLowerCase().includes(search.toLowerCase()) ||
-        claim.insurerName.toLowerCase().includes(search.toLowerCase()) ||
-        claim.icdCode.toLowerCase().includes(search.toLowerCase()) ||
-        claim.cptCode.toLowerCase().includes(search.toLowerCase());
+        (claim.claimNumber || "").toLowerCase().includes(search.toLowerCase()) ||
+        (claim.providerName || "").toLowerCase().includes(search.toLowerCase()) ||
+        (claim.patientName || "").toLowerCase().includes(search.toLowerCase()) ||
+        (claim.icd || "").toLowerCase().includes(search.toLowerCase()) ||
+        (claim.flagReason || "").toLowerCase().includes(search.toLowerCase());
 
       const matchesCategory =
-        categoryFilter === "all" || claim.flagCategory === categoryFilter;
+        categoryFilter === "all" || claim.category === categoryFilter;
 
       const matchesStatus =
         statusFilter === "all" || claim.status === statusFilter;
@@ -172,6 +234,15 @@ export default function FlaggedClaimsPage() {
       return matchesSearch && matchesCategory && matchesStatus;
     });
   }, [claims, search, categoryFilter, statusFilter]);
+
+  const handleClaimClick = (claim: FlaggedClaim) => {
+    setSelectedClaim(claim);
+    setSheetOpen(true);
+  };
+
+  const outlierScorePercent = (score: string | null | undefined): number => {
+    return Math.round(Number(score || 0) * 100);
+  };
 
   if (isLoading) {
     return (
@@ -307,86 +378,111 @@ export default function FlaggedClaimsPage() {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Claim ID</TableHead>
+              <TableHead>Claim #</TableHead>
               <TableHead>Provider</TableHead>
-              <TableHead>Insurer</TableHead>
               <TableHead>ICD / CPT</TableHead>
-              <TableHead className="text-right">Amount</TableHead>
+              <TableHead>Flag Reason</TableHead>
+              <TableHead className="text-right">Amount (SAR)</TableHead>
               <TableHead>Risk</TableHead>
               <TableHead>Category</TableHead>
               <TableHead>Status</TableHead>
-              <TableHead>Detected</TableHead>
+              <TableHead>Date</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {filtered.map((claim) => (
-              <TableRow key={claim.id} className="hover-elevate">
-                <TableCell>
-                  <p className="font-medium font-mono text-sm">
-                    {claim.claimId}
-                  </p>
-                </TableCell>
-                <TableCell>
-                  <p className="font-medium text-sm">{claim.providerName}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {claim.patientName}
-                  </p>
-                </TableCell>
-                <TableCell>
-                  <span className="text-sm">{claim.insurerName}</span>
-                </TableCell>
-                <TableCell>
-                  <div className="space-y-1">
-                    <div className="flex gap-1.5">
-                      <Badge variant="outline" className="text-xs font-mono">
-                        {claim.icdCode}
-                      </Badge>
-                      <Badge variant="outline" className="text-xs font-mono">
-                        {claim.cptCode}
-                      </Badge>
+            {filtered.map((claim) => {
+              const riskScore = outlierScorePercent(claim.outlierScore);
+              const isAiFlagged = Number(claim.outlierScore || 0) > 0.7;
+              return (
+                <TableRow
+                  key={claim.id}
+                  className="hover-elevate cursor-pointer"
+                  onClick={() => handleClaimClick(claim)}
+                >
+                  <TableCell>
+                    <div className="flex items-center gap-2">
+                      <p className="font-medium font-mono text-sm">
+                        {claim.claimNumber}
+                      </p>
+                      {isAiFlagged && (
+                        <Badge
+                          variant="outline"
+                          className="text-[10px] px-1.5 py-0 bg-violet-100 text-violet-700 border-violet-300 dark:bg-violet-900/30 dark:text-violet-400 dark:border-violet-700"
+                        >
+                          <Bot className="h-3 w-3 mr-0.5" />
+                          AI
+                        </Badge>
+                      )}
                     </div>
-                    <p className="text-xs text-muted-foreground max-w-[220px] truncate">
-                      {claim.flagReason}
+                  </TableCell>
+                  <TableCell>
+                    <p className="font-medium text-sm">{claim.providerName || "Unknown"}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {claim.patientName || "Unknown"}
                     </p>
-                  </div>
-                </TableCell>
-                <TableCell className="text-right font-medium">
-                  {formatCurrency(claim.claimAmount)}
-                </TableCell>
-                <TableCell>
-                  <div className="flex items-center gap-2 min-w-[100px]">
-                    <Progress
-                      value={claim.riskScore}
-                      className={`w-14 h-2 ${getRiskProgressColor(claim.riskScore)}`}
-                    />
-                    <span
-                      className={`text-sm font-semibold ${getRiskColor(claim.riskScore)}`}
+                  </TableCell>
+                  <TableCell>
+                    <div className="space-y-1">
+                      <div className="flex gap-1.5 flex-wrap">
+                        {claim.icd && (
+                          <Badge variant="outline" className="text-xs font-mono">
+                            {claim.icd}
+                          </Badge>
+                        )}
+                        {claim.cptCodes && claim.cptCodes.length > 0 && (
+                          <Badge variant="outline" className="text-xs font-mono">
+                            {claim.cptCodes[0]}
+                            {claim.cptCodes.length > 1 && ` +${claim.cptCodes.length - 1}`}
+                          </Badge>
+                        )}
+                      </div>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <Badge
+                      className={`text-xs whitespace-nowrap ${getFlagReasonBadgeClasses(claim.flagReason)}`}
                     >
-                      {claim.riskScore}
+                      {getFlagReasonLabel(claim.flagReason)}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="text-right font-medium">
+                    {formatCurrency(Number(claim.amount || 0))}
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-2 min-w-[100px]">
+                      <Progress
+                        value={riskScore}
+                        className={`w-14 h-2 ${getRiskProgressColor(riskScore)}`}
+                      />
+                      <span
+                        className={`text-sm font-semibold ${getRiskColor(riskScore)}`}
+                      >
+                        {riskScore}
+                      </span>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <Badge
+                      className={`text-xs whitespace-nowrap ${getCategoryBadgeClasses(claim.category || "")}`}
+                    >
+                      {CATEGORY_LABELS[claim.category || ""] ?? claim.category ?? "N/A"}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>
+                    <Badge
+                      className={`text-xs whitespace-nowrap ${getStatusBadgeClasses(claim.status || "")}`}
+                    >
+                      {STATUS_LABELS[claim.status || ""] ?? claim.status ?? "N/A"}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>
+                    <span className="text-sm text-muted-foreground whitespace-nowrap">
+                      {formatDate(claim.registrationDate)}
                     </span>
-                  </div>
-                </TableCell>
-                <TableCell>
-                  <Badge
-                    className={`text-xs whitespace-nowrap ${getCategoryBadgeClasses(claim.flagCategory)}`}
-                  >
-                    {CATEGORY_LABELS[claim.flagCategory] ?? claim.flagCategory}
-                  </Badge>
-                </TableCell>
-                <TableCell>
-                  <Badge
-                    className={`text-xs whitespace-nowrap ${getStatusBadgeClasses(claim.status)}`}
-                  >
-                    {STATUS_LABELS[claim.status] ?? claim.status}
-                  </Badge>
-                </TableCell>
-                <TableCell>
-                  <span className="text-sm text-muted-foreground whitespace-nowrap">
-                    {formatDate(claim.detectedAt)}
-                  </span>
-                </TableCell>
-              </TableRow>
-            ))}
+                  </TableCell>
+                </TableRow>
+              );
+            })}
             {filtered.length === 0 && (
               <TableRow>
                 <TableCell
@@ -403,6 +499,185 @@ export default function FlaggedClaimsPage() {
           </TableBody>
         </Table>
       </Card>
+
+      {/* Claim Detail Sheet (slide-out panel) */}
+      <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
+        <SheetContent className="sm:max-w-lg overflow-y-auto">
+          {selectedClaim && (
+            <>
+              <SheetHeader>
+                <SheetTitle className="flex items-center gap-2">
+                  <FileText className="h-5 w-5" />
+                  Claim Detail
+                </SheetTitle>
+                <SheetDescription>
+                  {selectedClaim.claimNumber}
+                </SheetDescription>
+              </SheetHeader>
+
+              <div className="mt-6 space-y-6">
+                {/* Amount prominently displayed */}
+                <div className="rounded-lg bg-muted/50 p-4 text-center">
+                  <p className="text-sm text-muted-foreground mb-1">Claim Amount</p>
+                  <p className="text-3xl font-bold">
+                    {formatCurrency(Number(selectedClaim.amount || 0))}
+                  </p>
+                </div>
+
+                {/* Flag Reason Badge */}
+                <div className="space-y-2">
+                  <h4 className="text-sm font-medium text-muted-foreground">Flag Reason</h4>
+                  <Badge
+                    className={`text-sm ${getFlagReasonBadgeClasses(selectedClaim.flagReason)}`}
+                  >
+                    {getFlagReasonLabel(selectedClaim.flagReason)}
+                  </Badge>
+                  {selectedClaim.flagReason && (
+                    <p className="text-sm text-muted-foreground mt-1">
+                      {selectedClaim.flagReason}
+                    </p>
+                  )}
+                </div>
+
+                <Separator />
+
+                {/* Provider & Patient */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <h4 className="text-sm font-medium text-muted-foreground mb-1">Provider</h4>
+                    <p className="text-sm font-medium">{selectedClaim.providerName || "N/A"}</p>
+                    {selectedClaim.providerCity && (
+                      <p className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
+                        <MapPin className="h-3 w-3" />
+                        {selectedClaim.providerCity}
+                        {selectedClaim.providerRegion && `, ${selectedClaim.providerRegion}`}
+                      </p>
+                    )}
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-medium text-muted-foreground mb-1">Patient</h4>
+                    <p className="text-sm font-medium">{selectedClaim.patientName || "N/A"}</p>
+                  </div>
+                </div>
+
+                <Separator />
+
+                {/* Clinical Details */}
+                <div className="space-y-3">
+                  <h4 className="text-sm font-medium text-muted-foreground flex items-center gap-1.5">
+                    <Stethoscope className="h-4 w-4" />
+                    Clinical Details
+                  </h4>
+                  <div className="space-y-2">
+                    <div>
+                      <span className="text-xs text-muted-foreground">ICD Code</span>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        {selectedClaim.icd ? (
+                          <Badge variant="outline" className="font-mono">
+                            {selectedClaim.icd}
+                          </Badge>
+                        ) : (
+                          <span className="text-sm text-muted-foreground">N/A</span>
+                        )}
+                        {selectedClaim.claimIcd10Descriptions && (
+                          <span className="text-sm text-muted-foreground">
+                            {selectedClaim.claimIcd10Descriptions}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div>
+                      <span className="text-xs text-muted-foreground">CPT Codes</span>
+                      <div className="flex flex-wrap gap-1.5 mt-0.5">
+                        {selectedClaim.cptCodes && selectedClaim.cptCodes.length > 0 ? (
+                          selectedClaim.cptCodes.map((code, i) => (
+                            <Badge key={i} variant="outline" className="font-mono">
+                              {code}
+                            </Badge>
+                          ))
+                        ) : (
+                          <span className="text-sm text-muted-foreground">N/A</span>
+                        )}
+                      </div>
+                    </div>
+                    {selectedClaim.specialty && (
+                      <div>
+                        <span className="text-xs text-muted-foreground">Specialty</span>
+                        <p className="text-sm">{selectedClaim.specialty}</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <Separator />
+
+                {/* Status & Detection */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <h4 className="text-sm font-medium text-muted-foreground mb-1">Status</h4>
+                    <Badge
+                      className={`text-xs ${getStatusBadgeClasses(selectedClaim.status || "")}`}
+                    >
+                      {STATUS_LABELS[selectedClaim.status || ""] ?? selectedClaim.status ?? "N/A"}
+                    </Badge>
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-medium text-muted-foreground mb-1">Category</h4>
+                    <Badge
+                      className={`text-xs ${getCategoryBadgeClasses(selectedClaim.category || "")}`}
+                    >
+                      {CATEGORY_LABELS[selectedClaim.category || ""] ?? selectedClaim.category ?? "N/A"}
+                    </Badge>
+                  </div>
+                </div>
+
+                {/* Detection Confidence (from outlierScore) */}
+                <div className="space-y-2">
+                  <h4 className="text-sm font-medium text-muted-foreground">Detection Confidence</h4>
+                  <div className="flex items-center gap-3">
+                    <Progress
+                      value={outlierScorePercent(selectedClaim.outlierScore)}
+                      className={`flex-1 h-3 ${getRiskProgressColor(outlierScorePercent(selectedClaim.outlierScore))}`}
+                    />
+                    <span className={`text-lg font-bold ${getRiskColor(outlierScorePercent(selectedClaim.outlierScore))}`}>
+                      {outlierScorePercent(selectedClaim.outlierScore)}%
+                    </span>
+                  </div>
+                  {Number(selectedClaim.outlierScore || 0) > 0.7 && (
+                    <Badge
+                      variant="outline"
+                      className="text-xs bg-violet-100 text-violet-700 border-violet-300 dark:bg-violet-900/30 dark:text-violet-400 dark:border-violet-700"
+                    >
+                      <Bot className="h-3 w-3 mr-1" />
+                      AI Flagged - High Confidence
+                    </Badge>
+                  )}
+                </div>
+
+                <Separator />
+
+                {/* Dates */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <h4 className="text-sm font-medium text-muted-foreground flex items-center gap-1">
+                      <Calendar className="h-3 w-3" />
+                      Registration Date
+                    </h4>
+                    <p className="text-sm mt-0.5">{formatDate(selectedClaim.registrationDate)}</p>
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-medium text-muted-foreground flex items-center gap-1">
+                      <Calendar className="h-3 w-3" />
+                      Service Date
+                    </h4>
+                    <p className="text-sm mt-0.5">{formatDate(selectedClaim.serviceDate)}</p>
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }
