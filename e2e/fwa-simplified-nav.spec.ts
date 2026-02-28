@@ -8,10 +8,12 @@ const expectedNavItems = [
   { testId: "nav-fwa-coding-intelligence", label: "Coding Intelligence" },
   { testId: "nav-fwa-enforcement-&-compliance", label: "Enforcement & Compliance" },
   { testId: "nav-fwa-intelligence-reports", label: "Intelligence Reports" },
+  { testId: "nav-fwa-knowledge-hub", label: "Knowledge Hub" },
+  { testId: "nav-fwa-daman-ai-chat", label: "Daman AI Chat" },
 ];
 
 test.describe("FWA simplified navigation", () => {
-  test("shows exactly 7 regulatory-focused nav items in the sidebar", async ({ page }) => {
+  test("shows exactly 9 regulatory-focused nav items in the sidebar", async ({ page }) => {
     await page.goto("/fwa/dashboard");
     for (const item of expectedNavItems) {
       await expect(page.getByTestId(item.testId)).toBeVisible();

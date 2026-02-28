@@ -1,4 +1,15 @@
-import { Shield, Command, AlertTriangle, FileSearch, Rss, Gavel, BarChart3, Stethoscope } from "lucide-react";
+import {
+  Shield,
+  Command,
+  AlertTriangle,
+  FileSearch,
+  Rss,
+  Gavel,
+  BarChart3,
+  Stethoscope,
+  Database,
+  MessageCircle,
+} from "lucide-react";
 import type { PillarConfig } from "@/pillars/types";
 
 export const fwaPillarConfig: PillarConfig = {
@@ -24,6 +35,13 @@ export const fwaPillarConfig: PillarConfig = {
       items: [
         { label: "Enforcement & Compliance", href: "/fwa/enforcement", icon: Gavel },
         { label: "Intelligence Reports", href: "/fwa/kpi-dashboard", icon: BarChart3 },
+      ],
+    },
+    {
+      title: "Knowledge & AI",
+      items: [
+        { label: "Knowledge Hub", href: "/fwa/knowledge-hub", icon: Database },
+        { label: "Daman AI Chat", href: "/fwa/chat", icon: MessageCircle },
       ],
     },
   ],
