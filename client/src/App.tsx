@@ -28,6 +28,9 @@ import BusinessInsurerHealthPage from "@/pages/business/insurer-health";
 import BusinessMarketConcentrationPage from "@/pages/business/market-concentration";
 import BusinessCoverageExpansionPage from "@/pages/business/coverage-expansion";
 import BusinessCostContainmentPage from "@/pages/business/cost-containment";
+import EmployerProfilePage from "@/pages/business/employer-profile";
+import EmployerHealthPage from "@/pages/business/employer-health";
+import EmployerCostsPage from "@/pages/business/employer-costs";
 
 import MembersDashboard from "@/pages/members/dashboard";
 import MembersComplaintsPage from "@/pages/members/complaints";
@@ -100,6 +103,9 @@ function BusinessRouter() {
         <Route path="/business/market-concentration" component={BusinessMarketConcentrationPage} />
         <Route path="/business/coverage-expansion" component={BusinessCoverageExpansionPage} />
         <Route path="/business/cost-containment" component={BusinessCostContainmentPage} />
+        <Route path="/business/employer/:code" component={EmployerProfilePage} />
+        <Route path="/business/employer/:code/health" component={EmployerHealthPage} />
+        <Route path="/business/employer/:code/costs" component={EmployerCostsPage} />
         <Route component={NotFound} />
       </Switch>
     </BusinessLayout>
