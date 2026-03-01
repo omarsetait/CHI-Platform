@@ -1,6 +1,22 @@
 import type { Express, Response } from "express";
 import { z } from "zod";
 import { createAuditLog } from "../middleware/audit";
+import { db } from "../db";
+import { eq, ilike, desc, and } from "drizzle-orm";
+import {
+  portalProviders,
+  providerScorecards,
+  providerRejections,
+  providerDrgAssessments,
+  portalEmployers,
+  employerPolicies,
+  workforceHealthProfiles,
+  employerViolations,
+  portalMembers,
+  memberCoverage,
+  memberComplaints,
+  coverageLookups,
+} from "@shared/schema";
 
 interface RouteErrorHandler {
   (res: Response, error: unknown, routePath: string, operation?: string): void;
@@ -716,6 +732,358 @@ export function registerPillarRoutes(app: Express, handleRouteError: RouteErrorH
       });
     } catch (error) {
       handleRouteError(res, error, "/api/members/fraud-reports", "submit fraud report");
+    }
+  });
+
+  // ── Intelligence Portal Routes ────────────────────────────────
+
+  // GET /api/intelligence/portal/providers — list all providers for selector
+  app.get("/api/intelligence/portal/providers", async (_req, res) => {
+    try {
+      const providers = await db.select({
+        code: portalProviders.code,
+        name: portalProviders.name,
+        nameAr: portalProviders.nameAr,
+        city: portalProviders.city,
+        type: portalProviders.type,
+        region: portalProviders.region,
+      }).from(portalProviders).orderBy(portalProviders.name);
+      res.json({ data: providers, generatedAt: new Date().toISOString() });
+    } catch (error) {
+      handleRouteError(res, error, "/api/intelligence/portal/providers", "list providers");
+    }
+  });
+
+  // GET /api/intelligence/portal/provider/:code — full provider profile + latest scorecard
+  app.get("/api/intelligence/portal/provider/:code", async (req, res) => {
+    try {
+      const { code } = req.params;
+      const provider = await db.select().from(portalProviders).where(eq(portalProviders.code, code)).limit(1);
+      if (!provider.length) return res.status(404).json({ error: "Provider not found" });
+
+      const scorecards = await db.select().from(providerScorecards)
+        .where(eq(providerScorecards.providerCode, code))
+        .orderBy(providerScorecards.month);
+
+      const latestScorecard = scorecards[scorecards.length - 1];
+
+      res.json({
+        provider: provider[0],
+        currentScorecard: latestScorecard,
+        scorecardHistory: scorecards,
+        generatedAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      handleRouteError(res, error, "/api/intelligence/portal/provider/:code", "fetch provider profile");
+    }
+  });
+
+  // GET /api/intelligence/portal/provider/:code/rejections — rejection analysis
+  app.get("/api/intelligence/portal/provider/:code/rejections", async (req, res) => {
+    try {
+      const { code } = req.params;
+      const rejections = await db.select().from(providerRejections)
+        .where(eq(providerRejections.providerCode, code))
+        .orderBy(providerRejections.denialDate);
+
+      const total = rejections.length;
+      const byCategory = rejections.reduce((acc, r) => {
+        acc[r.denialCategory] = (acc[r.denialCategory] || 0) + 1;
+        return acc;
+      }, {} as Record<string, number>);
+
+      const categoryBreakdown = Object.entries(byCategory).map(([category, count]) => ({
+        category,
+        count,
+        percent: total > 0 ? Math.round((count / total) * 100) : 0,
+      })).sort((a, b) => b.count - a.count);
+
+      const totalAmount = rejections.reduce((sum, r) => sum + Number(r.amountSar), 0);
+
+      res.json({
+        totalRejections: total,
+        totalAmountSar: totalAmount,
+        categoryBreakdown,
+        rejections,
+        generatedAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      handleRouteError(res, error, "/api/intelligence/portal/provider/:code/rejections", "fetch rejections");
+    }
+  });
+
+  // GET /api/intelligence/portal/provider/:code/drg — DRG readiness
+  app.get("/api/intelligence/portal/provider/:code/drg", async (req, res) => {
+    try {
+      const { code } = req.params;
+      const assessments = await db.select().from(providerDrgAssessments)
+        .where(eq(providerDrgAssessments.providerCode, code))
+        .orderBy(providerDrgAssessments.sortOrder);
+
+      const complete = assessments.filter(a => a.status === "complete").length;
+      const total = assessments.length;
+
+      res.json({
+        completionRate: total > 0 ? Math.round((complete / total) * 100) : 0,
+        completeCount: complete,
+        totalCriteria: total,
+        assessments,
+        generatedAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      handleRouteError(res, error, "/api/intelligence/portal/provider/:code/drg", "fetch DRG readiness");
+    }
+  });
+
+  // ── Business Portal Routes ────────────────────────────────────
+
+  // GET /api/business/portal/employers — list for selector
+  app.get("/api/business/portal/employers", async (_req, res) => {
+    try {
+      const employers = await db.select({
+        code: portalEmployers.code,
+        name: portalEmployers.name,
+        nameAr: portalEmployers.nameAr,
+        sector: portalEmployers.sector,
+        city: portalEmployers.city,
+        employeeCount: portalEmployers.employeeCount,
+        complianceStatus: portalEmployers.complianceStatus,
+      }).from(portalEmployers).orderBy(portalEmployers.name);
+      res.json({ data: employers, generatedAt: new Date().toISOString() });
+    } catch (error) {
+      handleRouteError(res, error, "/api/business/portal/employers", "list employers");
+    }
+  });
+
+  // GET /api/business/portal/employer/:code — employer profile + policy + compliance
+  app.get("/api/business/portal/employer/:code", async (req, res) => {
+    try {
+      const { code } = req.params;
+      const employer = await db.select().from(portalEmployers).where(eq(portalEmployers.code, code)).limit(1);
+      if (!employer.length) return res.status(404).json({ error: "Employer not found" });
+
+      const policies = await db.select().from(employerPolicies)
+        .where(eq(employerPolicies.employerCode, code));
+
+      const violations = await db.select().from(employerViolations)
+        .where(eq(employerViolations.employerCode, code))
+        .orderBy(desc(employerViolations.issuedDate));
+
+      const totalPremium = policies.reduce((sum, p) => sum + Number(p.totalAnnualPremium || 0), 0);
+      const totalDependents = policies.reduce((sum, p) => sum + (p.dependentsCount || 0), 0);
+      const nearestRenewal = policies.reduce((min, p) => {
+        const days = p.renewalDaysRemaining || 999;
+        return days < min ? days : min;
+      }, 999);
+
+      res.json({
+        employer: employer[0],
+        policies,
+        violations,
+        summary: {
+          totalAnnualPremium: totalPremium,
+          totalDependents,
+          nearestRenewalDays: nearestRenewal < 999 ? nearestRenewal : null,
+          openViolations: violations.filter(v => v.status !== "resolved").length,
+        },
+        generatedAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      handleRouteError(res, error, "/api/business/portal/employer/:code", "fetch employer profile");
+    }
+  });
+
+  // GET /api/business/portal/employer/:code/health — workforce health profile
+  app.get("/api/business/portal/employer/:code/health", async (req, res) => {
+    try {
+      const { code } = req.params;
+      const profile = await db.select().from(workforceHealthProfiles)
+        .where(eq(workforceHealthProfiles.employerCode, code)).limit(1);
+      if (!profile.length) return res.status(404).json({ error: "Health profile not found" });
+
+      res.json({
+        ...profile[0],
+        generatedAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      handleRouteError(res, error, "/api/business/portal/employer/:code/health", "fetch workforce health");
+    }
+  });
+
+  // GET /api/business/portal/employer/:code/costs — cost intelligence with plan comparison
+  app.get("/api/business/portal/employer/:code/costs", async (req, res) => {
+    try {
+      const { code } = req.params;
+      const policies = await db.select().from(employerPolicies)
+        .where(eq(employerPolicies.employerCode, code));
+      if (!policies.length) return res.status(404).json({ error: "No policies found" });
+
+      const healthProfile = await db.select().from(workforceHealthProfiles)
+        .where(eq(workforceHealthProfiles.employerCode, code)).limit(1);
+
+      const currentPolicy = policies[0];
+      const currentPremium = Number(currentPolicy.premiumPerEmployee);
+
+      // Generate alternative plan comparisons
+      const alternatives = [
+        { tier: "Bronze", premium: Math.round(currentPremium * 0.7), savings: Math.round(currentPremium * 0.3), tradeoff: "Higher copay (30%), limited specialist network" },
+        { tier: "Silver", premium: Math.round(currentPremium * 0.85), savings: Math.round(currentPremium * 0.15), tradeoff: "Moderate copay (20%), standard network" },
+        { tier: "Gold", premium: currentPremium, savings: 0, tradeoff: "Current plan — low copay (10%), full network" },
+        { tier: "Platinum", premium: Math.round(currentPremium * 1.25), savings: -Math.round(currentPremium * 0.25), tradeoff: "Zero copay, VIP network, wellness programs included" },
+      ];
+
+      res.json({
+        currentPolicy,
+        costPerEmployee: healthProfile[0]?.costPerEmployee || null,
+        totalAnnualSpend: healthProfile[0]?.totalAnnualSpendSar || null,
+        costTrend: healthProfile[0]?.costTrendPercent || null,
+        alternatives,
+        generatedAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      handleRouteError(res, error, "/api/business/portal/employer/:code/costs", "fetch cost intelligence");
+    }
+  });
+
+  // ── Members Portal Routes ─────────────────────────────────────
+
+  // GET /api/members/portal/members — list for selector
+  app.get("/api/members/portal/members", async (_req, res) => {
+    try {
+      const members = await db.select({
+        code: portalMembers.code,
+        name: portalMembers.name,
+        nameAr: portalMembers.nameAr,
+        planTier: portalMembers.planTier,
+        city: portalMembers.city,
+        insurerName: portalMembers.insurerName,
+      }).from(portalMembers).orderBy(portalMembers.name);
+      res.json({ data: members, generatedAt: new Date().toISOString() });
+    } catch (error) {
+      handleRouteError(res, error, "/api/members/portal/members", "list members");
+    }
+  });
+
+  // GET /api/members/portal/member/:code — member profile
+  app.get("/api/members/portal/member/:code", async (req, res) => {
+    try {
+      const { code } = req.params;
+      const member = await db.select().from(portalMembers).where(eq(portalMembers.code, code)).limit(1);
+      if (!member.length) return res.status(404).json({ error: "Member not found" });
+
+      res.json({
+        member: member[0],
+        generatedAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      handleRouteError(res, error, "/api/members/portal/member/:code", "fetch member profile");
+    }
+  });
+
+  // GET /api/members/portal/member/:code/coverage — coverage details
+  app.get("/api/members/portal/member/:code/coverage", async (req, res) => {
+    try {
+      const { code } = req.params;
+      const coverage = await db.select().from(memberCoverage)
+        .where(eq(memberCoverage.memberCode, code))
+        .orderBy(memberCoverage.sortOrder);
+
+      const totalLimit = coverage.reduce((sum, c) => sum + Number(c.limitSar || 0), 0);
+      const totalUsed = coverage.reduce((sum, c) => sum + Number(c.usedSar || 0), 0);
+
+      res.json({
+        totalLimit,
+        totalUsed,
+        utilizationPercent: totalLimit > 0 ? Math.round((totalUsed / totalLimit) * 100) : 0,
+        categories: coverage,
+        generatedAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      handleRouteError(res, error, "/api/members/portal/member/:code/coverage", "fetch coverage");
+    }
+  });
+
+  // GET /api/members/portal/member/:code/complaints — complaint history
+  app.get("/api/members/portal/member/:code/complaints", async (req, res) => {
+    try {
+      const { code } = req.params;
+      const complaints = await db.select().from(memberComplaints)
+        .where(eq(memberComplaints.memberCode, code))
+        .orderBy(desc(memberComplaints.submittedAt));
+
+      res.json({
+        total: complaints.length,
+        open: complaints.filter(c => c.status !== "closed").length,
+        complaints,
+        generatedAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      handleRouteError(res, error, "/api/members/portal/member/:code/complaints", "fetch complaints");
+    }
+  });
+
+  // GET /api/members/portal/coverage-lookup — "Is X covered?" search
+  app.get("/api/members/portal/coverage-lookup", async (req, res) => {
+    try {
+      const q = (req.query.q as string) || "";
+      const planTier = req.query.planTier as string;
+
+      let query = db.select().from(coverageLookups);
+      const conditions = [];
+
+      if (q) {
+        conditions.push(ilike(coverageLookups.question, `%${q}%`));
+      }
+
+      const results = conditions.length > 0
+        ? await query.where(and(...conditions))
+        : await query;
+
+      // Filter by planTier in application layer (empty array = universal, include those too)
+      const filtered = planTier
+        ? results.filter(r => (r.planTiers || []).length === 0 || r.planTiers!.includes(planTier))
+        : results;
+
+      res.json({ data: filtered, generatedAt: new Date().toISOString() });
+    } catch (error) {
+      handleRouteError(res, error, "/api/members/portal/coverage-lookup", "coverage lookup");
+    }
+  });
+
+  // GET /api/members/portal/providers — provider directory search
+  app.get("/api/members/portal/providers", async (req, res) => {
+    try {
+      const { specialty, city, insurer, sortBy } = req.query;
+
+      let results = await db.select().from(portalProviders);
+
+      // Filter in application layer for flexibility
+      if (specialty) {
+        results = results.filter(p =>
+          (p.specialties || []).some(s => s.toLowerCase().includes((specialty as string).toLowerCase()))
+        );
+      }
+      if (city) {
+        results = results.filter(p => p.city.toLowerCase() === (city as string).toLowerCase());
+      }
+      if (insurer) {
+        results = results.filter(p =>
+          (p.acceptedInsurers || []).some(i => i.toLowerCase().includes((insurer as string).toLowerCase()))
+        );
+      }
+
+      // Sort
+      if (sortBy === "rating") {
+        results.sort((a, b) => Number(b.rating || 0) - Number(a.rating || 0));
+      } else if (sortBy === "wait") {
+        results.sort((a, b) => (a.avgWaitMinutes || 999) - (b.avgWaitMinutes || 999));
+      } else {
+        results.sort((a, b) => a.name.localeCompare(b.name));
+      }
+
+      res.json({ data: results, generatedAt: new Date().toISOString() });
+    } catch (error) {
+      handleRouteError(res, error, "/api/members/portal/providers", "search providers");
     }
   });
 }
