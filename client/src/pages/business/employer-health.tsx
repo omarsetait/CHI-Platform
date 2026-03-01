@@ -1,4 +1,5 @@
 import { useParams } from "wouter";
+import { usePersona } from "@/hooks/use-persona";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -100,7 +101,9 @@ function formatDate(dateStr: string): string {
 // ── Main Component ─────────────────────────────────────────────────
 
 export default function EmployerHealthPage() {
-  const { code } = useParams<{ code: string }>();
+  const params = useParams<{ code: string }>();
+  const [personaCode] = usePersona("business");
+  const code = params.code || personaCode;
 
   // Fetch employer basic info for EntityHeader
   const { data: employerData } = useQuery<{

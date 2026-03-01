@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import { useParams } from "wouter";
+import { usePersona } from "@/hooks/use-persona";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -152,7 +153,9 @@ function formatDate(dateStr: string): string {
 // ── Main Component ─────────────────────────────────────────────────
 
 export default function MyComplaintsPage() {
-  const { code } = useParams<{ code: string }>();
+  const params = useParams<{ code: string }>();
+  const [personaCode] = usePersona("members");
+  const code = params.code || personaCode;
   const { toast } = useToast();
 
   // Dialog state

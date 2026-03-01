@@ -1,4 +1,5 @@
 import { useParams } from "wouter";
+import { usePersona } from "@/hooks/use-persona";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -109,7 +110,9 @@ const tierColors: Record<string, string> = {
 // ── Main Component ─────────────────────────────────────────────────
 
 export default function EmployerCostsPage() {
-  const { code } = useParams<{ code: string }>();
+  const params = useParams<{ code: string }>();
+  const [personaCode] = usePersona("business");
+  const code = params.code || personaCode;
 
   // Fetch employer basic info
   const { data: employerData } = useQuery<EmployerProfileResponse>({

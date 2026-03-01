@@ -1,4 +1,4 @@
-import { Building2, LayoutDashboard, ShieldCheck, Landmark, GitMerge, Users, PiggyBank } from "lucide-react";
+import { Building2, LayoutDashboard, ShieldCheck, Landmark, GitMerge, Users, PiggyBank, HeartPulse, TrendingDown } from "lucide-react";
 import type { PillarConfig } from "../types";
 
 export const businessPillarConfig: PillarConfig = {
@@ -13,6 +13,14 @@ export const businessPillarConfig: PillarConfig = {
       title: "Overview",
       items: [
         { label: "Dashboard", href: "/business/dashboard", icon: LayoutDashboard },
+      ],
+    },
+    {
+      title: "My Company",
+      items: [
+        { label: "Company Profile", href: "/business/my-company", icon: Building2 },
+        { label: "Workforce Health", href: "/business/my-company/health", icon: HeartPulse },
+        { label: "Cost Intelligence", href: "/business/my-company/costs", icon: TrendingDown },
       ],
     },
     {

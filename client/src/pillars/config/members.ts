@@ -1,4 +1,4 @@
-import { HeartPulse, LayoutDashboard, MessageSquare, MapPin, Star, ShieldAlert, BookOpen } from "lucide-react";
+import { HeartPulse, LayoutDashboard, MessageSquare, MapPin, Star, ShieldAlert, BookOpen, Shield, Search } from "lucide-react";
 import type { PillarConfig } from "../types";
 
 export const membersPillarConfig: PillarConfig = {
@@ -13,6 +13,14 @@ export const membersPillarConfig: PillarConfig = {
       title: "Overview",
       items: [
         { label: "Dashboard", href: "/members/dashboard", icon: LayoutDashboard },
+      ],
+    },
+    {
+      title: "My Health",
+      items: [
+        { label: "My Coverage", href: "/members/my-health", icon: Shield },
+        { label: "Find a Provider", href: "/members/my-health/providers", icon: Search },
+        { label: "My Complaints", href: "/members/my-health/complaints", icon: MessageSquare },
       ],
     },
     {

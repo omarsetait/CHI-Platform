@@ -21,6 +21,9 @@ import SbsCompliancePage from "@/pages/intelligence/sbs-compliance";
 import DrgReadinessPage from "@/pages/intelligence/drg-readiness";
 import RejectionPatternsPage from "@/pages/intelligence/rejection-patterns";
 import DocumentationQualityPage from "@/pages/intelligence/documentation-quality";
+import ProviderProfilePage from "@/pages/intelligence/provider-profile";
+import ProviderRejectionsPage from "@/pages/intelligence/provider-rejections";
+import ProviderDrgPage from "@/pages/intelligence/provider-drg";
 
 import BusinessDashboard from "@/pages/business/dashboard";
 import BusinessEmployerCompliancePage from "@/pages/business/employer-compliance";
@@ -38,6 +41,9 @@ import MembersCoverageGapsPage from "@/pages/members/coverage-gaps";
 import MembersProviderQualityPage from "@/pages/members/provider-quality";
 import MembersReportFraudPage from "@/pages/members/report-fraud";
 import MembersBenefitsAwarenessPage from "@/pages/members/benefits-awareness";
+import MyCoveragePage from "@/pages/members/my-coverage";
+import FindProviderPage from "@/pages/members/find-provider";
+import MyComplaintsPage from "@/pages/members/my-complaints";
 
 import FWADashboard from "@/pages/fwa/dashboard";
 import FWAKPIDashboard from "@/pages/fwa/kpi-dashboard";
@@ -86,6 +92,12 @@ function IntelligenceRouter() {
         <Route path="/intelligence/drg-readiness" component={DrgReadinessPage} />
         <Route path="/intelligence/rejection-patterns" component={RejectionPatternsPage} />
         <Route path="/intelligence/documentation-quality" component={DocumentationQualityPage} />
+        <Route path="/intelligence/my-hospital" component={ProviderProfilePage} />
+        <Route path="/intelligence/my-hospital/rejections" component={ProviderRejectionsPage} />
+        <Route path="/intelligence/my-hospital/drg" component={ProviderDrgPage} />
+        <Route path="/intelligence/provider/:code" component={ProviderProfilePage} />
+        <Route path="/intelligence/provider/:code/rejections" component={ProviderRejectionsPage} />
+        <Route path="/intelligence/provider/:code/drg" component={ProviderDrgPage} />
         <Route component={NotFound} />
       </Switch>
     </IntelligenceLayout>
@@ -103,6 +115,9 @@ function BusinessRouter() {
         <Route path="/business/market-concentration" component={BusinessMarketConcentrationPage} />
         <Route path="/business/coverage-expansion" component={BusinessCoverageExpansionPage} />
         <Route path="/business/cost-containment" component={BusinessCostContainmentPage} />
+        <Route path="/business/my-company" component={EmployerProfilePage} />
+        <Route path="/business/my-company/health" component={EmployerHealthPage} />
+        <Route path="/business/my-company/costs" component={EmployerCostsPage} />
         <Route path="/business/employer/:code" component={EmployerProfilePage} />
         <Route path="/business/employer/:code/health" component={EmployerHealthPage} />
         <Route path="/business/employer/:code/costs" component={EmployerCostsPage} />
@@ -123,6 +138,12 @@ function MembersRouter() {
         <Route path="/members/provider-quality" component={MembersProviderQualityPage} />
         <Route path="/members/report-fraud" component={MembersReportFraudPage} />
         <Route path="/members/benefits-awareness" component={MembersBenefitsAwarenessPage} />
+        <Route path="/members/my-health" component={MyCoveragePage} />
+        <Route path="/members/my-health/providers" component={FindProviderPage} />
+        <Route path="/members/my-health/complaints" component={MyComplaintsPage} />
+        <Route path="/members/member/:code" component={MyCoveragePage} />
+        <Route path="/members/member/:code/providers" component={FindProviderPage} />
+        <Route path="/members/member/:code/complaints" component={MyComplaintsPage} />
         <Route component={NotFound} />
       </Switch>
     </MembersLayout>

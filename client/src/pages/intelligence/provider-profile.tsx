@@ -1,4 +1,5 @@
 import { useParams } from "wouter";
+import { usePersona } from "@/hooks/use-persona";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -96,7 +97,9 @@ function scoreColor(score: number): string {
 }
 
 export default function ProviderProfilePage() {
-  const { code } = useParams<{ code: string }>();
+  const params = useParams<{ code: string }>();
+  const [personaCode] = usePersona("intelligence");
+  const code = params.code || personaCode;
 
   const { data, isLoading } = useQuery<ProviderProfileResponse>({
     queryKey: ["/api/intelligence/portal/provider", code],
@@ -104,14 +107,6 @@ export default function ProviderProfilePage() {
       fetch(`/api/intelligence/portal/provider/${code}`).then((r) => r.json()),
     enabled: !!code,
   });
-
-  if (!code) {
-    return (
-      <div className="flex items-center justify-center py-20 text-muted-foreground">
-        No provider code specified.
-      </div>
-    );
-  }
 
   if (isLoading) {
     return (

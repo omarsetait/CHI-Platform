@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import { useParams } from "wouter";
+import { usePersona } from "@/hooks/use-persona";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -94,7 +95,9 @@ function renderStars(rating: number): string {
 // ── Main Component ─────────────────────────────────────────────────
 
 export default function FindProviderPage() {
-  const { code } = useParams<{ code: string }>();
+  const params = useParams<{ code: string }>();
+  const [personaCode] = usePersona("members");
+  const code = params.code || personaCode;
 
   // Filters
   const [specialtyFilter, setSpecialtyFilter] = useState("");

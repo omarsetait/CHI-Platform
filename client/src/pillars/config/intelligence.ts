@@ -1,4 +1,4 @@
-import { Brain, LayoutDashboard, Award, FileCode, Activity, BarChart, ClipboardCheck } from "lucide-react";
+import { Brain, LayoutDashboard, Award, FileCode, Activity, BarChart, ClipboardCheck, User, AlertCircle } from "lucide-react";
 import type { PillarConfig } from "../types";
 
 export const intelligencePillarConfig: PillarConfig = {
@@ -13,6 +13,14 @@ export const intelligencePillarConfig: PillarConfig = {
       title: "Overview",
       items: [
         { label: "Dashboard", href: "/intelligence/dashboard", icon: LayoutDashboard },
+      ],
+    },
+    {
+      title: "My Hospital",
+      items: [
+        { label: "Provider Profile", href: "/intelligence/my-hospital", icon: User },
+        { label: "Rejection Analysis", href: "/intelligence/my-hospital/rejections", icon: AlertCircle },
+        { label: "DRG Readiness", href: "/intelligence/my-hospital/drg", icon: Activity },
       ],
     },
     {
