@@ -1,6 +1,5 @@
 import { useState, useCallback } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
 import {
   Dialog,
   DialogContent,
@@ -20,7 +19,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
 import { useToast } from "@/hooks/use-toast";
 import {
   Upload,
@@ -28,24 +26,21 @@ import {
   Image,
   File,
   X,
-  CheckCircle,
-  AlertCircle,
   Loader2,
 } from "lucide-react";
 
 interface DocumentUploadDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onUploadQueued?: (jobId: string) => void;
 }
 
 const documentCategories = [
-  { value: "medical_guideline", label: "Medical Guideline", labelAr: "دليل طبي" },
-  { value: "clinical_pathway", label: "Clinical Pathway", labelAr: "مسار سريري" },
-  { value: "policy_violation", label: "Policy Violation", labelAr: "مخالفة سياسة" },
-  { value: "regulation", label: "Regulation", labelAr: "لائحة" },
-  { value: "circular", label: "Circular", labelAr: "تعميم" },
-  { value: "contract", label: "Contract", labelAr: "عقد" },
-  { value: "procedure_manual", label: "Procedure Manual", labelAr: "دليل إجراءات" },
+  { value: "law_regulation", label: "Law & Regulation", labelAr: "نظام ولائحة" },
+  { value: "resolution_circular", label: "Resolution & Circular", labelAr: "قرار وتعميم" },
+  { value: "chi_mandatory_policy", label: "CHI Mandatory Policy", labelAr: "سياسة مجلس الضمان الإلزامية" },
+  { value: "clinical_manual", label: "Clinical Manual", labelAr: "دليل سريري" },
+  { value: "drug_formulary", label: "Drug Formulary", labelAr: "قائمة الأدوية" },
   { value: "training_material", label: "Training Material", labelAr: "مادة تدريبية" },
   { value: "other", label: "Other", labelAr: "أخرى" },
 ];
@@ -63,27 +58,29 @@ const acceptedFileTypes = {
   "application/pdf": { icon: FileText, label: "PDF", color: "text-red-500" },
   "application/msword": { icon: FileText, label: "DOC", color: "text-blue-500" },
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document": { icon: FileText, label: "DOCX", color: "text-blue-500" },
+  "application/vnd.ms-excel": { icon: FileText, label: "XLS", color: "text-emerald-600" },
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": { icon: FileText, label: "XLSX", color: "text-emerald-600" },
+  "text/csv": { icon: FileText, label: "CSV", color: "text-emerald-600" },
   "image/jpeg": { icon: Image, label: "JPEG", color: "text-green-500" },
   "image/png": { icon: Image, label: "PNG", color: "text-green-500" },
   "image/webp": { icon: Image, label: "WEBP", color: "text-green-500" },
   "text/plain": { icon: File, label: "TXT", color: "text-gray-500" },
 };
 
-export function DocumentUploadDialog({ open, onOpenChange }: DocumentUploadDialogProps) {
-  const [file, setFile] = useState<File | null>(null);
+export function DocumentUploadDialog({ open, onOpenChange, onUploadQueued }: DocumentUploadDialogProps) {
+  const [files, setFiles] = useState<File[]>([]);
   const [title, setTitle] = useState("");
   const [titleAr, setTitleAr] = useState("");
   const [category, setCategory] = useState("");
   const [description, setDescription] = useState("");
   const [sourceAuthority, setSourceAuthority] = useState("");
-  const [uploadProgress, setUploadProgress] = useState(0);
   const [dragOver, setDragOver] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
   const uploadMutation = useMutation({
     mutationFn: async (formData: FormData) => {
-      const response = await fetch("/api/knowledge-documents/upload", {
+      const response = await fetch("/api/knowledge-documents/upload-batch", {
         method: "POST",
         body: formData,
       });
@@ -95,11 +92,14 @@ export function DocumentUploadDialog({ open, onOpenChange }: DocumentUploadDialo
     },
     onSuccess: (data) => {
       toast({
-        title: "Document Uploaded",
-        description: data.data.message || "Document is being processed for AI retrieval.",
+        title: "Batch Queued",
+        description: `Queued ${data?.data?.uploaded ?? files.length} document(s) for background processing.`,
       });
       queryClient.invalidateQueries({ queryKey: ["/api/knowledge-documents"] });
       queryClient.invalidateQueries({ queryKey: ["/api/knowledge-documents/stats"] });
+      if (data?.data?.jobId) {
+        onUploadQueued?.(data.data.jobId);
+      }
       resetForm();
       onOpenChange(false);
     },
@@ -113,60 +113,69 @@ export function DocumentUploadDialog({ open, onOpenChange }: DocumentUploadDialo
   });
 
   const resetForm = () => {
-    setFile(null);
+    setFiles([]);
     setTitle("");
     setTitleAr("");
     setCategory("");
     setDescription("");
     setSourceAuthority("");
-    setUploadProgress(0);
   };
 
   const handleDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     setDragOver(false);
-    const droppedFile = e.dataTransfer.files[0];
-    if (droppedFile && Object.keys(acceptedFileTypes).includes(droppedFile.type)) {
-      setFile(droppedFile);
-      if (!title) {
-        setTitle(droppedFile.name.replace(/\.[^/.]+$/, ""));
-      }
-    } else {
+    const droppedFiles = Array.from(e.dataTransfer.files);
+    const validFiles = droppedFiles.filter((candidate) => Object.keys(acceptedFileTypes).includes(candidate.type));
+    if (validFiles.length === 0) {
       toast({
         title: "Invalid File Type",
-        description: "Please upload a PDF, Word document, or image file.",
+        description: "Please upload a PDF, Word, Excel, CSV, text, or image file.",
         variant: "destructive",
       });
+      return;
+    }
+    setFiles((prev) => [...prev, ...validFiles]);
+    if (!title && validFiles.length === 1) {
+      setTitle(validFiles[0].name.replace(/\.[^/.]+$/, ""));
     }
   }, [title, toast]);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFile = e.target.files?.[0];
-    if (selectedFile) {
-      setFile(selectedFile);
-      if (!title) {
-        setTitle(selectedFile.name.replace(/\.[^/.]+$/, ""));
+    const selectedFiles = Array.from(e.target.files || []);
+    if (selectedFiles.length > 0) {
+      setFiles((prev) => [...prev, ...selectedFiles]);
+      if (!title && selectedFiles.length === 1) {
+        setTitle(selectedFiles[0].name.replace(/\.[^/.]+$/, ""));
       }
     }
   };
 
   const handleSubmit = async () => {
-    if (!file || !title || !category) {
+    if (files.length === 0 || !category) {
       toast({
         title: "Missing Required Fields",
-        description: "Please provide a file, title, and category.",
+        description: "Please provide at least one file and a category.",
         variant: "destructive",
       });
       return;
     }
 
     const formData = new FormData();
-    formData.append("file", file);
-    formData.append("title", title);
+    files.forEach((file) => formData.append("files", file));
     formData.append("category", category);
-    if (titleAr) formData.append("titleAr", titleAr);
-    if (description) formData.append("description", description);
     if (sourceAuthority) formData.append("sourceAuthority", sourceAuthority);
+    const metadata = files.map((file, index) => ({
+      title:
+        files.length === 1
+          ? title || file.name.replace(/\.[^/.]+$/, "")
+          : file.name.replace(/\.[^/.]+$/, ""),
+      titleAr: files.length === 1 ? titleAr || undefined : undefined,
+      description: files.length === 1 ? description || undefined : undefined,
+      sourceAuthority: sourceAuthority || undefined,
+      category,
+      index,
+    }));
+    formData.append("metadata", JSON.stringify(metadata));
 
     uploadMutation.mutate(formData);
   };
@@ -179,6 +188,10 @@ export function DocumentUploadDialog({ open, onOpenChange }: DocumentUploadDialo
 
   const getFileInfo = (mimeType: string) => {
     return acceptedFileTypes[mimeType as keyof typeof acceptedFileTypes] || { icon: File, label: "File", color: "text-gray-500" };
+  };
+
+  const removeFileAtIndex = (index: number) => {
+    setFiles((prev) => prev.filter((_, i) => i !== index));
   };
 
   return (
@@ -197,37 +210,46 @@ export function DocumentUploadDialog({ open, onOpenChange }: DocumentUploadDialo
 
         <div className="space-y-4 mt-4">
           <div
-            className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
+            className={`relative border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
               dragOver ? "border-primary bg-primary/5" : "border-muted-foreground/25"
-            } ${file ? "bg-muted/50" : ""}`}
+            } ${files.length > 0 ? "bg-muted/50" : ""}`}
             onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
             onDragLeave={() => setDragOver(false)}
             onDrop={handleDrop}
             data-testid="drop-zone"
           >
-            {file ? (
-              <div className="flex items-center justify-between p-3 bg-background rounded-md border">
-                <div className="flex items-center gap-3">
-                  {(() => {
-                    const fileInfo = getFileInfo(file.type);
-                    const IconComponent = fileInfo.icon;
-                    return <IconComponent className={`w-8 h-8 ${fileInfo.color}`} />;
-                  })()}
-                  <div className="text-left">
-                    <p className="font-medium truncate max-w-[300px]" data-testid="text-filename">{file.name}</p>
-                    <p className="text-sm text-muted-foreground">
-                      {getFileInfo(file.type).label} • {formatFileSize(file.size)}
-                    </p>
-                  </div>
+            {files.length > 0 ? (
+              <div className="space-y-2">
+                <p className="text-sm text-muted-foreground">
+                  {files.length} file{files.length > 1 ? "s" : ""} selected
+                </p>
+                <div className="max-h-48 overflow-y-auto space-y-2">
+                  {files.map((file, index) => (
+                    <div key={`${file.name}-${index}`} className="flex items-center justify-between p-3 bg-background rounded-md border">
+                      <div className="flex items-center gap-3">
+                        {(() => {
+                          const fileInfo = getFileInfo(file.type);
+                          const IconComponent = fileInfo.icon;
+                          return <IconComponent className={`w-8 h-8 ${fileInfo.color}`} />;
+                        })()}
+                        <div className="text-left">
+                          <p className="font-medium truncate max-w-[300px]" data-testid="text-filename">{file.name}</p>
+                          <p className="text-sm text-muted-foreground">
+                            {getFileInfo(file.type).label} • {formatFileSize(file.size)}
+                          </p>
+                        </div>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => removeFileAtIndex(index)}
+                        data-testid="button-remove-file"
+                      >
+                        <X className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  ))}
                 </div>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => setFile(null)}
-                  data-testid="button-remove-file"
-                >
-                  <X className="w-4 h-4" />
-                </Button>
               </div>
             ) : (
               <div>
@@ -239,12 +261,15 @@ export function DocumentUploadDialog({ open, onOpenChange }: DocumentUploadDialo
                 <div className="flex justify-center gap-2 mt-4">
                   <Badge variant="outline">PDF</Badge>
                   <Badge variant="outline">Word</Badge>
+                  <Badge variant="outline">Excel</Badge>
                   <Badge variant="outline">Images</Badge>
+                  <Badge variant="outline">CSV</Badge>
                   <Badge variant="outline">Text</Badge>
                 </div>
                 <input
                   type="file"
-                  accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.webp,.txt"
+                  accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.jpg,.jpeg,.png,.webp,.txt"
+                  multiple
                   onChange={handleFileSelect}
                   className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                   data-testid="input-file"
@@ -256,12 +281,13 @@ export function DocumentUploadDialog({ open, onOpenChange }: DocumentUploadDialo
           <div className="grid gap-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="title">Title (English) *</Label>
+                <Label htmlFor="title">Title (English) {files.length <= 1 ? "*" : "(single-file only)"}</Label>
                 <Input
                   id="title"
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
-                  placeholder="Document title"
+                  placeholder={files.length <= 1 ? "Document title" : "Auto-filled from each filename"}
+                  disabled={files.length > 1}
                   data-testid="input-title"
                 />
               </div>
@@ -274,6 +300,7 @@ export function DocumentUploadDialog({ open, onOpenChange }: DocumentUploadDialo
                   placeholder="عنوان المستند"
                   className="text-right"
                   dir="rtl"
+                  disabled={files.length > 1}
                   data-testid="input-title-ar"
                 />
               </div>
@@ -320,18 +347,18 @@ export function DocumentUploadDialog({ open, onOpenChange }: DocumentUploadDialo
                 onChange={(e) => setDescription(e.target.value)}
                 placeholder="Brief description of the document content..."
                 className="min-h-[80px]"
+                disabled={files.length > 1}
                 data-testid="input-description"
               />
             </div>
           </div>
 
           {uploadMutation.isPending && (
-            <div className="space-y-2">
+            <div className="space-y-2 border rounded-md p-3">
               <div className="flex items-center gap-2">
                 <Loader2 className="w-4 h-4 animate-spin" />
-                <span className="text-sm">Processing document...</span>
+                <span className="text-sm">Queuing documents for background processing...</span>
               </div>
-              <Progress value={uploadProgress} />
             </div>
           )}
 
@@ -345,18 +372,18 @@ export function DocumentUploadDialog({ open, onOpenChange }: DocumentUploadDialo
             </Button>
             <Button
               onClick={handleSubmit}
-              disabled={!file || !title || !category || uploadMutation.isPending}
+              disabled={files.length === 0 || !category || uploadMutation.isPending}
               data-testid="button-upload-submit"
             >
               {uploadMutation.isPending ? (
                 <>
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Uploading...
+                  Queueing...
                 </>
               ) : (
                 <>
                   <Upload className="w-4 h-4 mr-2" />
-                  Upload Document
+                  Upload {files.length > 1 ? "Documents" : "Document"}
                 </>
               )}
             </Button>
