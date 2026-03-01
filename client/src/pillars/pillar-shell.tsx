@@ -1,7 +1,10 @@
 import React from "react";
 import { Link, useLocation } from "wouter";
+import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
+import { PersonaSwitcher, type Persona } from "@/components/portal/persona-switcher";
+import { usePersona } from "@/hooks/use-persona";
 import {
   Sidebar,
   SidebarContent,
@@ -31,9 +34,40 @@ interface PillarLayoutProps {
   children: React.ReactNode;
 }
 
+// Maps pillar IDs → persona API endpoints and portal base paths
+const portalMeta: Record<string, { endpoint: string; basePath: string }> = {
+  intelligence: { endpoint: "/api/intelligence/portal/providers", basePath: "/intelligence/my-hospital" },
+  business:     { endpoint: "/api/business/portal/employers",     basePath: "/business/my-company" },
+  members:      { endpoint: "/api/members/portal/members",        basePath: "/members/my-health" },
+};
+
+function mapPersonas(pillarId: string, items: any[]): Persona[] {
+  return items.map((item) => ({
+    code: item.code,
+    name: item.name,
+    subtitle:
+      pillarId === "intelligence" ? `${item.type} · ${item.city}` :
+      pillarId === "business"     ? `${item.sector} · ${item.employeeCount} employees` :
+                                    `${item.planTier} · ${item.insurerName}`,
+  }));
+}
+
 export function PillarLayout({ config, children }: PillarLayoutProps) {
   const [location] = useLocation();
   const Icon = config.icon;
+
+  const meta = portalMeta[config.id];
+  const isPortalPage = meta && location.startsWith(meta.basePath);
+
+  const [personaCode, setPersonaCode] = usePersona(config.id as "intelligence" | "business" | "members");
+
+  const { data: personaListData } = useQuery<{ data: any[] }>({
+    queryKey: [meta?.endpoint],
+    queryFn: () => fetch(meta!.endpoint).then((r) => r.json()),
+    enabled: !!meta,
+  });
+
+  const personas = personaListData?.data ? mapPersonas(config.id, personaListData.data) : [];
 
   const style = {
     "--sidebar-width": config.sidebarWidth || "17rem",
@@ -54,6 +88,18 @@ export function PillarLayout({ config, children }: PillarLayoutProps) {
           </SidebarHeader>
 
           <SidebarContent>
+            {isPortalPage && personas.length > 0 && (
+              <SidebarGroup>
+                <SidebarGroupContent>
+                  <PersonaSwitcher
+                    personas={personas}
+                    activeCode={personaCode}
+                    onSelect={setPersonaCode}
+                    pillarTheme={config.theme.headerIconClass}
+                  />
+                </SidebarGroupContent>
+              </SidebarGroup>
+            )}
             {config.navSections.map((section) => (
               <SidebarGroup key={section.title}>
                 <SidebarGroupLabel className={config.theme.sectionLabelClass}>{section.title}</SidebarGroupLabel>
