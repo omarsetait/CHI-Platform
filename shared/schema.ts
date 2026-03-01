@@ -756,13 +756,11 @@ export const knowledgeDocumentTypeEnum = pgEnum("knowledge_document_type", [
 
 // Document category enum
 export const knowledgeDocumentCategoryEnum = pgEnum("knowledge_document_category", [
-  "medical_guideline",
-  "clinical_pathway",
-  "policy_violation",
-  "regulation",
-  "circular",
-  "contract",
-  "procedure_manual",
+  "law_regulation",
+  "resolution_circular",
+  "chi_mandatory_policy",
+  "clinical_manual",
+  "drug_formulary",
   "training_material",
   "other"
 ]);
@@ -773,6 +771,21 @@ export const documentProcessingStatusEnum = pgEnum("document_processing_status",
   "extracting_text",
   "chunking",
   "generating_embeddings",
+  "completed",
+  "failed"
+]);
+
+export const knowledgeUploadJobStatusEnum = pgEnum("knowledge_upload_job_status", [
+  "queued",
+  "in_progress",
+  "completed",
+  "completed_with_errors",
+  "failed"
+]);
+
+export const knowledgeUploadJobItemStatusEnum = pgEnum("knowledge_upload_job_item_status", [
+  "queued",
+  "in_progress",
   "completed",
   "failed"
 ]);
@@ -839,6 +852,62 @@ export const insertKnowledgeChunkSchema = createInsertSchema(knowledgeChunks).om
 });
 export type InsertKnowledgeChunk = z.infer<typeof insertKnowledgeChunkSchema>;
 export type KnowledgeChunk = typeof knowledgeChunks.$inferSelect;
+
+export const knowledgeUploadJobs = pgTable("knowledge_upload_jobs", {
+  id: text("id").primaryKey().default(sql`gen_random_uuid()`),
+  status: knowledgeUploadJobStatusEnum("status").default("queued").notNull(),
+  createdBy: text("created_by"),
+  totalFiles: integer("total_files").default(0).notNull(),
+  queuedFiles: integer("queued_files").default(0).notNull(),
+  inProgressFiles: integer("in_progress_files").default(0).notNull(),
+  completedFiles: integer("completed_files").default(0).notNull(),
+  failedFiles: integer("failed_files").default(0).notNull(),
+  metadata: jsonb("metadata").$type<Record<string, unknown>>().default({}),
+  startedAt: timestamp("started_at"),
+  completedAt: timestamp("completed_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow()
+}, (table) => [
+  index("knowledge_upload_jobs_status_created_at_idx").on(table.status, table.createdAt),
+]);
+
+export const insertKnowledgeUploadJobSchema = createInsertSchema(knowledgeUploadJobs).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true
+});
+export type InsertKnowledgeUploadJob = z.infer<typeof insertKnowledgeUploadJobSchema>;
+export type KnowledgeUploadJob = typeof knowledgeUploadJobs.$inferSelect;
+
+export const knowledgeUploadJobItems = pgTable("knowledge_upload_job_items", {
+  id: text("id").primaryKey().default(sql`gen_random_uuid()`),
+  jobId: text("job_id").notNull().references(() => knowledgeUploadJobs.id, { onDelete: "cascade" }),
+  documentId: text("document_id").notNull().references(() => knowledgeDocuments.id, { onDelete: "cascade" }),
+  originalFilename: text("original_filename").notNull(),
+  title: text("title").notNull(),
+  category: knowledgeDocumentCategoryEnum("category").notNull(),
+  sourceAuthority: text("source_authority"),
+  status: knowledgeUploadJobItemStatusEnum("status").default("queued").notNull(),
+  attempts: integer("attempts").default(0).notNull(),
+  maxAttempts: integer("max_attempts").default(3).notNull(),
+  nextRunAt: timestamp("next_run_at").defaultNow().notNull(),
+  lastError: text("last_error"),
+  startedAt: timestamp("started_at"),
+  completedAt: timestamp("completed_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow()
+}, (table) => [
+  index("knowledge_upload_job_items_status_next_run_created_idx").on(table.status, table.nextRunAt, table.createdAt),
+  index("knowledge_upload_job_items_job_status_idx").on(table.jobId, table.status),
+]);
+
+export const insertKnowledgeUploadJobItemSchema = createInsertSchema(knowledgeUploadJobItems).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true
+});
+export type InsertKnowledgeUploadJobItem = z.infer<typeof insertKnowledgeUploadJobItemSchema>;
+export type KnowledgeUploadJobItem = typeof knowledgeUploadJobItems.$inferSelect;
 
 // ============================================
 // CHI Regulatory Knowledge Base Extensions

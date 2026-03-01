@@ -29,6 +29,34 @@
       "when": 1772073007256,
       "tag": "0003_odd_sunfire",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1772240869069,
+      "tag": "0004_clever_zeigeist",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1772288000000,
+      "tag": "0005_rag_grounding_readiness",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1772365772041,
+      "tag": "0006_knowledge_bulk_upload_queue",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1772452172041,
+      "tag": "0007_document_categories_update",
+      "breakpoints": true
     }
   ]
 }
