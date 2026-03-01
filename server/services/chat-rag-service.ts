@@ -3,6 +3,9 @@ import { db } from "../db";
 import { chatMessages, chatConversations } from "@shared/schema";
 import { eq, desc, sql } from "drizzle-orm";
 import type { Response } from "express";
+import { classifyQuery } from "./chat-query-router";
+import { queryPlatformData } from "./chat-data-agent";
+import { mergeResponses } from "./chat-response-merger";
 
 const openai = new OpenAI();
 
@@ -184,6 +187,78 @@ function generateTitle(message: string): string {
 }
 
 /**
+ * Query documents via the RAG pipeline (search + rerank + generate) without streaming.
+ * Used by the response merger for mixed queries, and can also be called independently.
+ */
+export async function queryDocuments(
+  userMessage: string,
+  conversationHistory: Array<{ role: string; content: string }>,
+  pillarId: string,
+  pagePath: string,
+  category?: string
+): Promise<{
+  content: string;
+  sources: Array<{
+    index: number;
+    documentTitle: string;
+    sectionTitle: string;
+    pageNumber: number;
+    similarity: number;
+    chunkId: string;
+    documentId: string;
+  }>;
+}> {
+  // 1. Search with category filter (top 20)
+  const chunks = await searchKnowledgeChunks(userMessage, 20, category);
+
+  // 2. Re-rank to top 5
+  const rankedChunks = (await rerankChunks(userMessage, chunks, 5)) as Array<{
+    id: string;
+    content: string;
+    document_id: string;
+    chunk_index: number;
+    similarity: number;
+    document_title: string;
+    section_title: string;
+    page_number: number;
+    document_category: string;
+  }>;
+
+  // 3. Build system prompt
+  const systemPrompt = buildSystemPrompt(pillarId, pagePath, rankedChunks);
+
+  // 4. Generate response (non-streaming)
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o",
+    temperature: 0.4,
+    max_tokens: 2000,
+    messages: [
+      { role: "system", content: systemPrompt },
+      ...conversationHistory.map((m) => ({
+        role: m.role as "user" | "assistant",
+        content: m.content,
+      })),
+      { role: "user", content: userMessage },
+    ],
+  });
+
+  const sources = rankedChunks.map((c, i) => ({
+    index: i + 1,
+    documentTitle: c.document_title,
+    sectionTitle: c.section_title,
+    pageNumber: c.page_number,
+    similarity: c.similarity,
+    chunkId: c.id,
+    documentId: c.document_id,
+  }));
+
+  return {
+    content: response.choices[0].message.content || "",
+    sources,
+  };
+}
+
+/**
  * Main entry: process a chat message with RAG and stream the response via SSE.
  */
 export async function streamChatResponse(
@@ -222,89 +297,206 @@ export async function streamChatResponse(
       .where(eq(chatConversations.id, conversationId));
   }
 
-  // 4. Embed query & semantic search, then re-rank
-  let rankedChunks: Array<{
-    id: string;
-    content: string;
-    document_id: string;
-    chunk_index: number;
-    similarity: number;
-    document_title: string;
-    section_title: string;
-    page_number: number;
-    document_category: string;
-  }> = [];
-  try {
-    const retrievedChunks = await searchKnowledgeChunks(userMessage, 20);
-    rankedChunks = await rerankChunks(userMessage, retrievedChunks, 5) as typeof rankedChunks;
-  } catch {
-    // If no embeddings exist yet or OpenAI fails, continue without RAG
-  }
-
-  // 5. Build messages array
-  const systemPrompt = buildSystemPrompt(pillarCtx.pillarId, pillarCtx.pagePath, rankedChunks);
+  // 4. Get conversation history for context
   const history = await getConversationHistory(conversationId, 10);
 
-  const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
-    { role: "system", content: systemPrompt },
-    ...history.map((m) => ({
-      role: m.role as "user" | "assistant",
-      content: m.content,
-    })),
-    { role: "user", content: userMessage },
-  ];
+  // 5. Classify query intent via router
+  let routerResult;
+  try {
+    routerResult = await classifyQuery(userMessage, history);
+  } catch {
+    // If router fails, fall back to document intent
+    routerResult = { intent: "document" as const, confidence: 0, reasoning: "Router fallback" };
+  }
 
-  // 6. Set SSE headers
+  // 6. Dispatch to agent(s) based on intent
+  let finalContent = "";
+  let sourcesMetadata: Array<{
+    index: number;
+    documentTitle: string;
+    sectionTitle: string;
+    pageNumber: number;
+    similarity: number;
+    chunkId: string;
+    documentId: string;
+  }> = [];
+  let ragChunkIds: string[] = [];
+  let dataResult: { content: string; toolsUsed: string[] } | undefined;
+
+  try {
+    switch (routerResult.intent) {
+      case "general": {
+        // Direct GPT-4o response — no RAG, no data
+        const generalResponse = await openai.chat.completions.create({
+          model: "gpt-4o",
+          temperature: 0.4,
+          max_tokens: 2000,
+          messages: [
+            {
+              role: "system",
+              content: buildSystemPrompt(pillarCtx.pillarId, pillarCtx.pagePath, []),
+            },
+            ...history.map((m) => ({
+              role: m.role as "user" | "assistant",
+              content: m.content,
+            })),
+            { role: "user", content: userMessage },
+          ],
+        });
+        finalContent = generalResponse.choices[0].message.content || "";
+        break;
+      }
+
+      case "document": {
+        // Document RAG pipeline
+        const docCategory =
+          routerResult.documentSubtype && routerResult.documentSubtype !== "all"
+            ? routerResult.documentSubtype
+            : undefined;
+        const docResult = await queryDocuments(
+          userMessage,
+          history,
+          pillarCtx.pillarId,
+          pillarCtx.pagePath,
+          docCategory
+        );
+        finalContent = docResult.content;
+        sourcesMetadata = docResult.sources;
+        ragChunkIds = docResult.sources.map((s) => s.chunkId);
+        break;
+      }
+
+      case "data": {
+        // Platform data agent
+        dataResult = await queryPlatformData(userMessage, history);
+        finalContent = dataResult.content;
+        break;
+      }
+
+      case "mixed": {
+        // Run document and data agents in parallel, then merge
+        const docCategory =
+          routerResult.documentSubtype && routerResult.documentSubtype !== "all"
+            ? routerResult.documentSubtype
+            : undefined;
+
+        const [docResult, platformResult] = await Promise.all([
+          queryDocuments(
+            userMessage,
+            history,
+            pillarCtx.pillarId,
+            pillarCtx.pagePath,
+            docCategory
+          ).catch(() => null),
+          queryPlatformData(userMessage, history).catch(() => null),
+        ]);
+
+        dataResult = platformResult ?? undefined;
+
+        if (docResult) {
+          sourcesMetadata = docResult.sources;
+          ragChunkIds = docResult.sources.map((s) => s.chunkId);
+        }
+
+        finalContent = await mergeResponses({
+          userMessage,
+          documentResponse: docResult
+            ? { content: docResult.content, sources: docResult.sources }
+            : undefined,
+          dataResponse: platformResult
+            ? { content: platformResult.content, toolsUsed: platformResult.toolsUsed }
+            : undefined,
+        });
+        break;
+      }
+
+      default: {
+        // Fallback: treat as document query
+        const fallbackResult = await queryDocuments(
+          userMessage,
+          history,
+          pillarCtx.pillarId,
+          pillarCtx.pagePath
+        );
+        finalContent = fallbackResult.content;
+        sourcesMetadata = fallbackResult.sources;
+        ragChunkIds = fallbackResult.sources.map((s) => s.chunkId);
+      }
+    }
+  } catch (agentError) {
+    // If all agent dispatch fails, produce a direct GPT response as last-resort fallback
+    try {
+      const fallbackResponse = await openai.chat.completions.create({
+        model: "gpt-4o",
+        temperature: 0.4,
+        max_tokens: 2000,
+        messages: [
+          {
+            role: "system",
+            content: buildSystemPrompt(pillarCtx.pillarId, pillarCtx.pagePath, []),
+          },
+          ...history.map((m) => ({
+            role: m.role as "user" | "assistant",
+            content: m.content,
+          })),
+          { role: "user", content: userMessage },
+        ],
+      });
+      finalContent = fallbackResponse.choices[0].message.content || "";
+    } catch {
+      finalContent = "I'm sorry, I encountered an error processing your request. Please try again.";
+    }
+  }
+
+  // 7. Set SSE headers
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
 
-  // 7. Stream GPT-4o response
-  let fullResponse = "";
-
+  // 8. Stream pre-generated content in word chunks for smooth UI
   try {
-    const stream = await openai.chat.completions.create({
-      model: "gpt-4o",
-      messages,
-      stream: true,
-      temperature: 0.4,
-      max_tokens: 2000,
-    });
-
-    for await (const chunk of stream) {
-      const content = chunk.choices[0]?.delta?.content || "";
-      if (content) {
-        fullResponse += content;
-        res.write(`data: ${JSON.stringify({ content })}\n\n`);
-      }
+    const words = finalContent.split(" ");
+    for (let i = 0; i < words.length; i += 3) {
+      const chunk = words.slice(i, i + 3).join(" ") + (i + 3 < words.length ? " " : "");
+      res.write(`data: ${JSON.stringify({ content: chunk })}\n\n`);
     }
 
-    // 8. Save assistant message
-    const ragChunkIds = rankedChunks.map((c) => c.id);
+    // 9. Save assistant message with retrieval metadata
+    const retrievalMetadata = {
+      usedGrounding: ragChunkIds.length > 0,
+      retrievalCount: ragChunkIds.length,
+      routerIntent: routerResult.intent,
+      routerConfidence: routerResult.confidence,
+      documentSubtype: routerResult.documentSubtype,
+      toolsUsed: dataResult?.toolsUsed,
+      sources: sourcesMetadata.map((s) => ({
+        chunkId: s.chunkId,
+        documentId: s.documentId,
+        documentTitle: s.documentTitle,
+        similarity: s.similarity,
+        chunkIndex: s.index,
+      })),
+      ragStatus: ragChunkIds.length > 0 ? "success" : routerResult.intent === "general" ? "skipped" : null,
+    };
+
     await db.insert(chatMessages).values({
       conversationId,
       role: "assistant",
-      content: fullResponse,
+      content: finalContent,
       ragChunkIds,
+      retrievalMetadata,
     });
 
-    // 9. Update conversation timestamp
+    // 10. Update conversation timestamp
     await db
       .update(chatConversations)
       .set({ updatedAt: new Date() })
       .where(eq(chatConversations.id, conversationId));
 
-    // 10. Send sources metadata before done
-    const sourcesMetadata = rankedChunks.map((c, i) => ({
-      index: i + 1,
-      documentTitle: c.document_title,
-      sectionTitle: c.section_title,
-      pageNumber: c.page_number,
-      similarity: c.similarity,
-      chunkId: c.id,
-      documentId: c.document_id,
-    }));
-    res.write(`data: ${JSON.stringify({ sources: sourcesMetadata })}\n\n`);
+    // 11. Send sources metadata before done
+    if (sourcesMetadata.length > 0) {
+      res.write(`data: ${JSON.stringify({ sources: sourcesMetadata })}\n\n`);
+    }
 
     res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
     res.end();
