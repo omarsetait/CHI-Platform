@@ -21,7 +21,8 @@ Retrieved knowledge:
 
 Instructions:
 - Answer in the same language as the user's question (English or Arabic).
-- Be precise, data-driven, and cite sources when available from retrieved knowledge.
+- Be precise, data-driven, and cite sources using [1], [2], etc. when referencing retrieved knowledge.
+- After your response, include a "Sources:" section listing each cited source with document title and page number.
 - If retrieved knowledge is relevant, prioritize it over general knowledge.
 - If you don't know something, say so honestly rather than guessing.
 - Format responses with markdown for readability (headers, bullet points, tables when appropriate).`;
@@ -35,8 +36,23 @@ const PILLAR_NAMES: Record<string, string> = {
 
 /**
  * Embed a query using text-embedding-ada-002 and search knowledge_chunks via pgvector.
+ * Optionally filter by document category and return enriched metadata from knowledge_documents.
  */
-async function searchKnowledgeChunks(query: string, limit = 5) {
+async function searchKnowledgeChunks(
+  query: string,
+  limit = 20,
+  category?: string
+): Promise<Array<{
+  id: string;
+  content: string;
+  document_id: string;
+  chunk_index: number;
+  similarity: number;
+  document_title: string;
+  section_title: string;
+  page_number: number;
+  document_category: string;
+}>> {
   const embeddingResponse = await openai.embeddings.create({
     model: "text-embedding-ada-002",
     input: query,
@@ -44,12 +60,22 @@ async function searchKnowledgeChunks(query: string, limit = 5) {
   const embedding = embeddingResponse.data[0].embedding;
   const embeddingStr = `[${embedding.join(",")}]`;
 
+  const categoryFilter = category
+    ? sql` AND d.category = ${category}`
+    : sql``;
+
   const results = await db.execute(sql`
-    SELECT id, content, document_id, chunk_index,
-           1 - (embedding <=> ${embeddingStr}::vector) as similarity
-    FROM knowledge_chunks
-    WHERE embedding IS NOT NULL
-    ORDER BY embedding <=> ${embeddingStr}::vector
+    SELECT c.id, c.content, c.document_id, c.chunk_index,
+           c.section_title, c.page_number,
+           1 - (c.embedding <=> ${embeddingStr}::vector) as similarity,
+           d.title as document_title,
+           d.category as document_category
+    FROM knowledge_chunks c
+    JOIN knowledge_documents d ON c.document_id = d.id
+    WHERE c.embedding IS NOT NULL
+      AND d.processing_status = 'completed'
+      ${categoryFilter}
+    ORDER BY c.embedding <=> ${embeddingStr}::vector
     LIMIT ${limit}
   `);
 
@@ -59,7 +85,47 @@ async function searchKnowledgeChunks(query: string, limit = 5) {
     document_id: string;
     chunk_index: number;
     similarity: number;
+    document_title: string;
+    section_title: string;
+    page_number: number;
+    document_category: string;
   }>;
+}
+
+/**
+ * Re-rank retrieved chunks using GPT-4o-mini for improved relevance ordering.
+ */
+async function rerankChunks(
+  query: string,
+  chunks: Array<{ id: string; content: string; similarity: number; [key: string]: any }>,
+  topK = 5
+): Promise<typeof chunks> {
+  if (chunks.length <= topK) return chunks;
+
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    temperature: 0,
+    response_format: { type: "json_object" },
+    messages: [
+      {
+        role: "system",
+        content: `You are a relevance ranker. Given a query and a list of text chunks, score each chunk's relevance to the query from 0-10. Return JSON: {"scores": [{"index": 0, "score": 8}, ...]}`,
+      },
+      {
+        role: "user",
+        content: `Query: "${query}"\n\nChunks:\n${chunks.map((c, i) => `[${i}] ${c.content.slice(0, 300)}`).join("\n\n")}`,
+      },
+    ],
+  });
+
+  const result = JSON.parse(response.choices[0].message.content || "{}");
+  const scores: Array<{ index: number; score: number }> = result.scores || [];
+
+  return scores
+    .sort((a, b) => b.score - a.score)
+    .slice(0, topK)
+    .map((s) => chunks[s.index])
+    .filter(Boolean);
 }
 
 /**
@@ -80,12 +146,18 @@ async function getConversationHistory(conversationId: string, limit = 10) {
 }
 
 /**
- * Build the system prompt with pillar context and RAG chunks.
+ * Build the system prompt with pillar context and RAG chunks formatted with citation references.
  */
 function buildSystemPrompt(
   pillarId: string,
   pagePath: string,
-  chunks: Array<{ content: string; similarity: number }>
+  chunks: Array<{
+    content: string;
+    similarity: number;
+    document_title?: string;
+    section_title?: string;
+    page_number?: number;
+  }>
 ): string {
   const pillarName = PILLAR_NAMES[pillarId] || "General";
   const ragChunks =
@@ -93,7 +165,7 @@ function buildSystemPrompt(
       ? chunks
           .map(
             (c, i) =>
-              `[Source ${i + 1}] (relevance: ${(c.similarity * 100).toFixed(0)}%)\n${c.content}`
+              `[${i + 1}] Document: "${c.document_title || "Unknown"}", Section: ${c.section_title || "N/A"}, Page: ${c.page_number || "N/A"}\n${c.content}`
           )
           .join("\n\n")
       : "No relevant documents found in the knowledge base.";
@@ -150,16 +222,27 @@ export async function streamChatResponse(
       .where(eq(chatConversations.id, conversationId));
   }
 
-  // 4. Embed query & semantic search
-  let chunks: Array<{ id: string; content: string; similarity: number }> = [];
+  // 4. Embed query & semantic search, then re-rank
+  let rankedChunks: Array<{
+    id: string;
+    content: string;
+    document_id: string;
+    chunk_index: number;
+    similarity: number;
+    document_title: string;
+    section_title: string;
+    page_number: number;
+    document_category: string;
+  }> = [];
   try {
-    chunks = await searchKnowledgeChunks(userMessage, 5);
+    const retrievedChunks = await searchKnowledgeChunks(userMessage, 20);
+    rankedChunks = await rerankChunks(userMessage, retrievedChunks, 5) as typeof rankedChunks;
   } catch {
     // If no embeddings exist yet or OpenAI fails, continue without RAG
   }
 
   // 5. Build messages array
-  const systemPrompt = buildSystemPrompt(pillarCtx.pillarId, pillarCtx.pagePath, chunks);
+  const systemPrompt = buildSystemPrompt(pillarCtx.pillarId, pillarCtx.pagePath, rankedChunks);
   const history = await getConversationHistory(conversationId, 10);
 
   const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
@@ -197,7 +280,7 @@ export async function streamChatResponse(
     }
 
     // 8. Save assistant message
-    const ragChunkIds = chunks.map((c) => c.id);
+    const ragChunkIds = rankedChunks.map((c) => c.id);
     await db.insert(chatMessages).values({
       conversationId,
       role: "assistant",
@@ -210,6 +293,18 @@ export async function streamChatResponse(
       .update(chatConversations)
       .set({ updatedAt: new Date() })
       .where(eq(chatConversations.id, conversationId));
+
+    // 10. Send sources metadata before done
+    const sourcesMetadata = rankedChunks.map((c, i) => ({
+      index: i + 1,
+      documentTitle: c.document_title,
+      sectionTitle: c.section_title,
+      pageNumber: c.page_number,
+      similarity: c.similarity,
+      chunkId: c.id,
+      documentId: c.document_id,
+    }));
+    res.write(`data: ${JSON.stringify({ sources: sourcesMetadata })}\n\n`);
 
     res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
     res.end();
