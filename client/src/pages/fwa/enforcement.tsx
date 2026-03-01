@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Progress } from "@/components/ui/progress";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -48,6 +49,10 @@ import {
   DollarSign,
   Ban,
   RefreshCw,
+  Circle,
+  ExternalLink,
+  User,
+  ShieldCheck,
 } from "lucide-react";
 import type { EnforcementCase, ProviderDirectory } from "@shared/schema";
 
@@ -99,10 +104,34 @@ const penaltyIcons: Record<string, any> = {
   exclusion: XCircle,
 };
 
+const insurerCompliance = [
+  { insurer: "Bupa Arabia", responseTimeDays: 3.2, docQuality: 92, cooperation: "Excellent", openCases: 8 },
+  { insurer: "Tawuniya", responseTimeDays: 4.1, docQuality: 88, cooperation: "Good", openCases: 6 },
+  { insurer: "Medgulf", responseTimeDays: 5.8, docQuality: 76, cooperation: "Good", openCases: 4 },
+  { insurer: "GIG Saudi (AXA)", responseTimeDays: 3.5, docQuality: 90, cooperation: "Excellent", openCases: 3 },
+  { insurer: "Gulf Union", responseTimeDays: 7.2, docQuality: 68, cooperation: "Needs Improvement", openCases: 5 },
+  { insurer: "Walaa", responseTimeDays: 4.8, docQuality: 82, cooperation: "Good", openCases: 2 },
+  { insurer: "Arabian Shield", responseTimeDays: 6.1, docQuality: 71, cooperation: "Needs Improvement", openCases: 3 },
+  { insurer: "ACIG", responseTimeDays: 4.5, docQuality: 85, cooperation: "Good", openCases: 2 },
+];
+
+/** Map each workflow stage key to its corresponding date field on EnforcementCase */
+const stageDateFields: Record<string, keyof EnforcementCase> = {
+  finding: "findingDate",
+  warning_issued: "warningIssuedDate",
+  corrective_action: "correctiveActionDueDate",
+  penalty_proposed: "penaltyAppliedDate",    // penalty proposed uses penalty applied date as closest available
+  penalty_applied: "penaltyAppliedDate",
+  appeal_submitted: "appealSubmittedDate",
+  appeal_review: "appealDecisionDate",
+  resolved: "resolutionDate",
+};
+
 export default function Enforcement() {
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [severityFilter, setSeverityFilter] = useState("all");
+  const [selectedStage, setSelectedStage] = useState<string | null>(null);
   const [selectedCase, setSelectedCase] = useState<EnforcementCase | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
@@ -154,7 +183,8 @@ export default function Enforcement() {
       (c.violationTitle || "").toLowerCase().includes(searchQuery.toLowerCase());
     const matchesStatus = statusFilter === "all" || c.status === statusFilter;
     const matchesSeverity = severityFilter === "all" || c.severity === severityFilter;
-    return matchesSearch && matchesStatus && matchesSeverity;
+    const matchesStage = !selectedStage || c.status === selectedStage;
+    return matchesSearch && matchesStatus && matchesSeverity && matchesStage;
   });
 
   const stats = {
@@ -256,15 +286,39 @@ export default function Enforcement() {
             {STATUS_WORKFLOW.map((stage, index) => {
               const Icon = stage.icon;
               const count = cases.filter(c => c.status === stage.key).length;
+              const isSelected = selectedStage === stage.key;
               return (
                 <div key={stage.key} className="flex items-center">
-                  <div className="flex flex-col items-center min-w-[100px]">
-                    <div className={`p-3 rounded-full ${count > 0 ? "bg-primary/10" : "bg-muted"}`}>
-                      <Icon className={`w-5 h-5 ${count > 0 ? "text-primary" : "text-muted-foreground"}`} />
+                  <button
+                    type="button"
+                    className="flex flex-col items-center min-w-[100px] cursor-pointer group"
+                    onClick={() => setSelectedStage(isSelected ? null : stage.key)}
+                    data-testid={`stage-filter-${stage.key}`}
+                  >
+                    <div className={`p-3 rounded-full transition-all border-2 ${
+                      isSelected
+                        ? "bg-blue-100 border-blue-500 dark:bg-blue-900 dark:border-blue-400"
+                        : count > 0
+                          ? "bg-primary/10 border-transparent group-hover:border-primary/30"
+                          : "bg-muted border-transparent group-hover:border-muted-foreground/20"
+                    }`}>
+                      <Icon className={`w-5 h-5 ${
+                        isSelected
+                          ? "text-blue-600 dark:text-blue-400"
+                          : count > 0
+                            ? "text-primary"
+                            : "text-muted-foreground"
+                      }`} />
                     </div>
-                    <p className="text-xs font-medium mt-2">{stage.label}</p>
-                    <Badge variant="outline" className="mt-1" data-testid={`stage-count-${stage.key}`}>{count}</Badge>
-                  </div>
+                    <p className={`text-xs font-medium mt-2 ${isSelected ? "text-blue-600 dark:text-blue-400" : ""}`}>{stage.label}</p>
+                    <Badge
+                      variant={isSelected ? "default" : "outline"}
+                      className={`mt-1 ${isSelected ? "bg-blue-600 text-white" : ""}`}
+                      data-testid={`stage-count-${stage.key}`}
+                    >
+                      {count}
+                    </Badge>
+                  </button>
                   {index < STATUS_WORKFLOW.length - 1 && (
                     <ArrowRight className="w-4 h-4 text-muted-foreground mx-2" />
                   )}
@@ -272,6 +326,14 @@ export default function Enforcement() {
               );
             })}
           </div>
+          {selectedStage && (
+            <div className="mt-3 flex items-center gap-2 text-sm text-muted-foreground">
+              <span>Filtering by: <Badge className="bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">{STATUS_WORKFLOW.find(s => s.key === selectedStage)?.label}</Badge></span>
+              <Button variant="ghost" size="sm" onClick={() => setSelectedStage(null)} className="text-xs h-6 px-2">
+                Clear filter
+              </Button>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -386,74 +448,240 @@ export default function Enforcement() {
         )}
       </Card>
 
+      {/* Insurer Compliance Scorecards */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg flex items-center gap-2">
+            <ShieldCheck className="w-5 h-5 text-primary" />
+            Insurer Compliance Scorecards
+          </CardTitle>
+          <CardDescription>
+            Tracks insurer cooperation with CHI enforcement requests, including response times, documentation quality, and overall compliance ratings.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Insurer</TableHead>
+                <TableHead>Avg Response Time (days)</TableHead>
+                <TableHead>Documentation Quality</TableHead>
+                <TableHead>Cooperation Rating</TableHead>
+                <TableHead className="text-right">Open Cases</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {insurerCompliance.map((row) => (
+                <TableRow key={row.insurer} data-testid={`insurer-row-${row.insurer.replace(/\s+/g, "-").toLowerCase()}`}>
+                  <TableCell className="font-medium">{row.insurer}</TableCell>
+                  <TableCell>
+                    <span className={`inline-flex items-center gap-1.5 font-medium text-sm ${
+                      row.responseTimeDays < 4
+                        ? "text-green-600 dark:text-green-400"
+                        : row.responseTimeDays <= 6
+                          ? "text-amber-600 dark:text-amber-400"
+                          : "text-red-600 dark:text-red-400"
+                    }`}>
+                      <span className={`w-2 h-2 rounded-full ${
+                        row.responseTimeDays < 4
+                          ? "bg-green-500"
+                          : row.responseTimeDays <= 6
+                            ? "bg-amber-500"
+                            : "bg-red-500"
+                      }`} />
+                      {row.responseTimeDays}
+                    </span>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-3">
+                      <Progress value={row.docQuality} className="h-2 flex-1 max-w-[120px]" />
+                      <span className="text-sm text-muted-foreground w-8">{row.docQuality}</span>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <Badge className={
+                      row.cooperation === "Excellent"
+                        ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
+                        : row.cooperation === "Good"
+                          ? "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
+                          : "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200"
+                    }>
+                      {row.cooperation}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="text-right font-medium">{row.openCases}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+
       <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
-        <DialogContent className="max-w-2xl">
-          {selectedCase && (
-            <>
-              <DialogHeader>
-                <DialogTitle className="flex items-center gap-2">
-                  <Scale className="w-5 h-5" />
-                  {selectedCase.caseNumber}
-                </DialogTitle>
-                <DialogDescription>
-                  Enforcement case against {selectedCase.providerName}
-                </DialogDescription>
-              </DialogHeader>
-              <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <p className="text-sm text-muted-foreground">Violation</p>
-                    <p className="font-medium">{selectedCase.violationCode} - {selectedCase.violationTitle}</p>
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+          {selectedCase && (() => {
+            // Determine which stages are completed, current, or future
+            const currentStageIndex = STATUS_WORKFLOW.findIndex(s => s.key === selectedCase.status);
+            return (
+              <>
+                <DialogHeader>
+                  <DialogTitle className="flex items-center gap-3">
+                    <Scale className="w-5 h-5" />
+                    <span className="font-mono">{selectedCase.caseNumber}</span>
+                  </DialogTitle>
+                  <DialogDescription>
+                    Enforcement case against {selectedCase.providerName}
+                  </DialogDescription>
+                </DialogHeader>
+
+                <div className="space-y-5">
+                  {/* Case narrative header */}
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <h3 className="text-lg font-semibold">{selectedCase.violationTitle || selectedCase.violationCode}</h3>
+                      <p className="text-sm text-muted-foreground mt-1">{selectedCase.violationCode}</p>
+                    </div>
+                    <Badge className={`text-sm px-3 py-1 ${severityColors[selectedCase.severity || "minor"]}`}>
+                      {(selectedCase.severity || "N/A").toUpperCase()}
+                    </Badge>
                   </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">Severity</p>
-                    <Badge className={severityColors[selectedCase.severity || "minor"]}>{selectedCase.severity || "N/A"}</Badge>
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">Status</p>
-                    <Badge className={statusColors[selectedCase.status || "finding"]}>{(selectedCase.status || "finding").replace("_", " ")}</Badge>
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">Finding Date</p>
-                    <p className="font-medium">
-                      {selectedCase.findingDate ? new Date(selectedCase.findingDate).toLocaleDateString() : "-"}
-                    </p>
-                  </div>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Description</p>
-                  <p className="text-sm mt-1">{selectedCase.description}</p>
-                </div>
-                {selectedCase.fineAmount && (
-                  <div className="p-4 bg-muted rounded-lg">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm text-muted-foreground">Penalty Applied</p>
-                        <p className="text-lg font-bold">SAR {Number(selectedCase.fineAmount).toLocaleString()}</p>
-                      </div>
-                      {(selectedCase.metadata as any)?.suspensionDays && (
-                        <div>
-                          <p className="text-sm text-muted-foreground">Suspension</p>
-                          <p className="text-lg font-bold">{(selectedCase.metadata as any).suspensionDays} days</p>
+
+                  {/* SAR fine amount card */}
+                  {selectedCase.fineAmount && (
+                    <Card className="border-orange-200 dark:border-orange-800">
+                      <CardContent className="p-5">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="text-sm text-muted-foreground mb-1">Penalty Amount</p>
+                            <p className="text-2xl font-bold text-orange-600 dark:text-orange-400">
+                              SAR {Number(selectedCase.fineAmount).toLocaleString()}
+                            </p>
+                          </div>
+                          <DollarSign className="w-8 h-8 text-orange-400 opacity-60" />
                         </div>
-                      )}
+                        {(selectedCase.metadata as any)?.suspensionDays && (
+                          <div className="mt-3 pt-3 border-t">
+                            <p className="text-sm text-muted-foreground">Suspension Period</p>
+                            <p className="text-lg font-semibold">{(selectedCase.metadata as any).suspensionDays} days</p>
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+                  )}
+
+                  {/* Description */}
+                  <div>
+                    <p className="text-sm font-medium text-muted-foreground mb-1">Description</p>
+                    <p className="text-sm">{selectedCase.description}</p>
+                  </div>
+
+                  {/* Evidence summary */}
+                  {selectedCase.evidenceSummary && (
+                    <div className="p-4 bg-muted/50 rounded-lg border">
+                      <p className="text-sm font-medium text-muted-foreground mb-1">Evidence Summary</p>
+                      <p className="text-sm">{selectedCase.evidenceSummary}</p>
+                    </div>
+                  )}
+
+                  {/* Case progression timeline */}
+                  <div>
+                    <p className="text-sm font-medium text-muted-foreground mb-3">Case Progression</p>
+                    <div className="relative pl-6">
+                      {STATUS_WORKFLOW.map((stage, index) => {
+                        const dateField = stageDateFields[stage.key];
+                        const dateValue = dateField ? (selectedCase as any)[dateField] : null;
+                        const isCompleted = index < currentStageIndex;
+                        const isCurrent = index === currentStageIndex;
+                        const isFuture = index > currentStageIndex;
+                        const isLast = index === STATUS_WORKFLOW.length - 1;
+
+                        return (
+                          <div key={stage.key} className="relative flex items-start gap-3 pb-4" data-testid={`timeline-stage-${stage.key}`}>
+                            {/* Vertical line connecting stages */}
+                            {!isLast && (
+                              <div className={`absolute left-[11px] top-6 w-0.5 h-[calc(100%-12px)] ${
+                                isCompleted ? "bg-green-400" : isCurrent ? "bg-blue-400" : "bg-gray-200 dark:bg-gray-700"
+                              }`} />
+                            )}
+                            {/* Stage icon */}
+                            <div className="relative z-10 flex-shrink-0">
+                              {isCompleted ? (
+                                <CheckCircle className="w-6 h-6 text-green-500" />
+                              ) : isCurrent ? (
+                                <div className="w-6 h-6 rounded-full bg-blue-500 flex items-center justify-center">
+                                  <Circle className="w-3 h-3 text-white fill-white" />
+                                </div>
+                              ) : (
+                                <Circle className="w-6 h-6 text-gray-300 dark:text-gray-600" />
+                              )}
+                            </div>
+                            {/* Stage details */}
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <p className={`text-sm font-medium ${
+                                  isCompleted ? "text-green-700 dark:text-green-400" :
+                                  isCurrent ? "text-blue-700 dark:text-blue-400" :
+                                  "text-muted-foreground"
+                                }`}>
+                                  {stage.label}
+                                </p>
+                                {isCurrent && (
+                                  <Badge className="bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300 text-xs px-2 py-0">
+                                    Current
+                                  </Badge>
+                                )}
+                              </div>
+                              {(isCompleted || isCurrent) && dateValue && (
+                                <p className="text-xs text-muted-foreground mt-0.5">
+                                  {new Date(dateValue).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" })}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
-                )}
-                <div className="flex items-center gap-2">
-                  <p className="text-sm text-muted-foreground">Assigned to:</p>
-                  <Badge variant="outline">{selectedCase.assignedInvestigator || "Unassigned"}</Badge>
+
+                  {/* Assigned investigator */}
+                  <div className="flex items-center gap-3 p-3 bg-muted/50 rounded-lg">
+                    <User className="w-5 h-5 text-muted-foreground" />
+                    <div>
+                      <p className="text-xs text-muted-foreground">Assigned Investigator</p>
+                      <p className="text-sm font-medium">{selectedCase.assignedInvestigator || "Unassigned"}</p>
+                    </div>
+                  </div>
+
+                  {/* Related links */}
+                  <div className="flex flex-wrap gap-3">
+                    <Button variant="outline" size="sm" asChild>
+                      <a href="/fwa/high-risk-entities" data-testid="link-view-provider">
+                        <Building2 className="w-4 h-4 mr-2" />
+                        View Provider
+                        <ExternalLink className="w-3 h-3 ml-1.5 opacity-60" />
+                      </a>
+                    </Button>
+                    <Button variant="outline" size="sm" asChild>
+                      <a href="/fwa/flagged-claims" data-testid="link-view-flagged-claims">
+                        <AlertTriangle className="w-4 h-4 mr-2" />
+                        View Flagged Claims
+                        <ExternalLink className="w-3 h-3 ml-1.5 opacity-60" />
+                      </a>
+                    </Button>
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex justify-end gap-2 pt-2 border-t">
+                    <Button variant="outline" onClick={() => setDetailOpen(false)} data-testid="button-close-dialog">Close</Button>
+                    <Button data-testid="button-advance-stage">
+                      <ArrowRight className="w-4 h-4 mr-2" />
+                      Advance Stage
+                    </Button>
+                  </div>
                 </div>
-                <div className="flex justify-end gap-2">
-                  <Button variant="outline" onClick={() => setDetailOpen(false)} data-testid="button-close-dialog">Close</Button>
-                  <Button data-testid="button-advance-stage">
-                    <ArrowRight className="w-4 h-4 mr-2" />
-                    Advance Stage
-                  </Button>
-                </div>
-              </div>
-            </>
-          )}
+              </>
+            );
+          })()}
         </DialogContent>
       </Dialog>
 
