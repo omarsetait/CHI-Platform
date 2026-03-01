@@ -4,6 +4,7 @@ import type { InsertClaimDocument, InsertWeightUpdateProposal } from "@shared/sc
 import OpenAI from "openai";
 import multer from "multer";
 import { documentIngestionService, DocumentCategory } from "../services/document-ingestion-service";
+import { knowledgeUploadQueueService } from "../services/knowledge-upload-queue-service";
 import { z } from "zod";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -13,19 +14,20 @@ const uploadMiddleware = multer({
   storage,
   limits: {
     fileSize: 50 * 1024 * 1024, // 50MB
-    files: 10
+    files: 50
   },
   fileFilter: (req, file, cb) => {
     const allowedTypes = [
       "application/pdf",
       "application/msword",
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "application/vnd.ms-excel",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "text/csv",
       "image/jpeg",
       "image/png",
-      "image/gif",
       "image/webp",
       "text/plain",
-      "text/html"
     ];
     if (allowedTypes.includes(file.mimetype)) {
       cb(null, true);
@@ -39,13 +41,11 @@ const uploadMetadataSchema = z.object({
   title: z.string().min(1, "Title is required"),
   titleAr: z.string().optional(),
   category: z.enum([
-    "medical_guideline",
-    "clinical_pathway",
-    "policy_violation",
-    "regulation",
-    "circular",
-    "contract",
-    "procedure_manual",
+    "law_regulation",
+    "resolution_circular",
+    "chi_mandatory_policy",
+    "clinical_manual",
+    "drug_formulary",
     "training_material",
     "other"
   ]),
@@ -56,11 +56,36 @@ const uploadMetadataSchema = z.object({
   expiryDate: z.string().optional()
 });
 
+const batchUploadMetadataItemSchema = uploadMetadataSchema.partial().extend({
+  title: z.string().min(1, "Title is required").optional(),
+  category: uploadMetadataSchema.shape.category.optional(),
+});
+
+const uploadJobStatusSchema = z.enum([
+  "queued",
+  "in_progress",
+  "completed",
+  "completed_with_errors",
+  "failed",
+]);
+
 export function registerDocumentRoutes(
   app: Express,
   storage: IStorage,
   handleRouteError: (res: any, error: unknown, routePath: string, operation?: string) => void
 ) {
+  const ensureKnowledgeQueueReady = async (res: Response): Promise<boolean> => {
+    const ready = await knowledgeUploadQueueService.isSchemaReady();
+    if (ready) return true;
+
+    res.status(503).json({
+      success: false,
+      error: "Knowledge upload queue is not ready",
+      details: "Run migration 0006_knowledge_bulk_upload_queue.sql and restart the server.",
+    });
+    return false;
+  };
+
   app.get("/api/documents", async (req, res) => {
     try {
       const { claimId } = req.query;
@@ -426,9 +451,11 @@ Only return valid JSON, no other text.`;
   // Knowledge Document Upload & Vector Storage API
   // =============================================
 
-  // Upload a single knowledge document (PDF, Word, Image)
+  // Upload a single knowledge document (queue-backed)
   app.post("/api/knowledge-documents/upload", uploadMiddleware.single("file"), async (req: Request, res: Response) => {
     try {
+      if (!(await ensureKnowledgeQueueReady(res))) return;
+
       if (!req.file) {
         return res.status(400).json({
           success: false,
@@ -449,7 +476,7 @@ Only return valid JSON, no other text.`;
 
       const metadata = metadataValidation.data;
 
-      const result = await documentIngestionService.uploadDocument({
+      const queued = await knowledgeUploadQueueService.enqueueSingle({
         file: req.file,
         title: metadata.title,
         titleAr: metadata.titleAr,
@@ -460,20 +487,34 @@ Only return valid JSON, no other text.`;
         effectiveDate: metadata.effectiveDate ? new Date(metadata.effectiveDate) : undefined,
         expiryDate: metadata.expiryDate ? new Date(metadata.expiryDate) : undefined,
         uploadedBy: (req as any).user?.id
-      });
+      }, (req as any).user?.id);
 
-      res.status(201).json({
+      const result = queued.documents[0];
+
+      res.status(202).json({
         success: true,
-        data: result
+        data: {
+          ...result,
+          jobId: queued.jobId,
+          jobItemId: queued.jobItemId,
+          queue: {
+            status: queued.status,
+            totalFiles: queued.totalFiles,
+            queuedFiles: queued.queuedFiles,
+            progressPercent: queued.progressPercent,
+          },
+        }
       });
     } catch (error) {
       handleRouteError(res, error, "/api/knowledge-documents/upload", "upload knowledge document");
     }
   });
 
-  // Upload multiple knowledge documents
-  app.post("/api/knowledge-documents/upload-batch", uploadMiddleware.array("files", 10), async (req: Request, res: Response) => {
+  // Upload multiple knowledge documents (queue-backed batch)
+  app.post("/api/knowledge-documents/upload-batch", uploadMiddleware.array("files", 50), async (req: Request, res: Response) => {
     try {
+      if (!(await ensureKnowledgeQueueReady(res))) return;
+
       const files = req.files as Express.Multer.File[];
       if (!files || files.length === 0) {
         return res.status(400).json({
@@ -483,39 +524,181 @@ Only return valid JSON, no other text.`;
         });
       }
 
-      const metadataList = JSON.parse(req.body.metadata || "[]");
-      const results = [];
+      if (files.length > 50) {
+        return res.status(400).json({
+          success: false,
+          error: "Maximum batch size is 50 files",
+          errorAr: "الحد الأقصى للرفع الجماعي هو 50 ملفًا"
+        });
+      }
+
+      let metadataList: unknown[] = [];
+      if (typeof req.body.metadata === "string" && req.body.metadata.trim()) {
+        try {
+          metadataList = JSON.parse(req.body.metadata);
+        } catch {
+          return res.status(400).json({
+            success: false,
+            error: "Invalid metadata JSON",
+            errorAr: "تنسيق بيانات metadata غير صالح"
+          });
+        }
+      }
+
+      if (!Array.isArray(metadataList)) {
+        return res.status(400).json({
+          success: false,
+          error: "metadata must be an array",
+          errorAr: "يجب أن تكون metadata مصفوفة"
+        });
+      }
+
+      const batchCategory = req.body.category as DocumentCategory | undefined;
+      const hasPerFileCategories = files.every((_, index) => {
+        const rawItem = metadataList[index] as { category?: unknown } | undefined;
+        return typeof rawItem?.category === "string" && rawItem.category.length > 0;
+      });
+
+      if (!batchCategory && !hasPerFileCategories) {
+        return res.status(400).json({
+          success: false,
+          error: "Category is required for bulk upload",
+          errorAr: "الفئة مطلوبة للرفع الجماعي"
+        });
+      }
+
+      const batchSourceAuthority = typeof req.body.sourceAuthority === "string" ? req.body.sourceAuthority : undefined;
+      const uploadRequests = [];
 
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
-        const metadata = metadataList[i] || {
-          title: file.originalname,
-          category: "other"
-        };
+        const rawMetadata = metadataList[i] ?? {};
+        const metadataValidation = batchUploadMetadataItemSchema.safeParse(rawMetadata);
+        if (!metadataValidation.success) {
+          return res.status(400).json({
+            success: false,
+            error: `Invalid metadata at index ${i}`,
+            details: metadataValidation.error.errors,
+          });
+        }
 
-        const result = await documentIngestionService.uploadDocument({
+        const metadata = metadataValidation.data;
+        const category = (metadata.category || batchCategory) as DocumentCategory | undefined;
+        if (!category) {
+          return res.status(400).json({
+            success: false,
+            error: `Category is missing for file index ${i}`,
+          });
+        }
+
+        const title = metadata.title || file.originalname.replace(/\.[^/.]+$/, "");
+        uploadRequests.push({
           file,
-          title: metadata.title || file.originalname,
+          title,
           titleAr: metadata.titleAr,
-          category: metadata.category || "other",
+          category,
           description: metadata.description,
           descriptionAr: metadata.descriptionAr,
-          sourceAuthority: metadata.sourceAuthority,
+          sourceAuthority: metadata.sourceAuthority || batchSourceAuthority,
+          effectiveDate: metadata.effectiveDate ? new Date(metadata.effectiveDate) : undefined,
+          expiryDate: metadata.expiryDate ? new Date(metadata.expiryDate) : undefined,
           uploadedBy: (req as any).user?.id
         });
-
-        results.push(result);
       }
 
-      res.status(201).json({
+      const queuedBatch = await knowledgeUploadQueueService.enqueueBatch(
+        uploadRequests,
+        (req as any).user?.id
+      );
+
+      res.status(202).json({
         success: true,
         data: {
-          uploaded: results.length,
-          documents: results
+          jobId: queuedBatch.jobId,
+          status: queuedBatch.status,
+          totalFiles: queuedBatch.totalFiles,
+          queuedFiles: queuedBatch.queuedFiles,
+          progressPercent: queuedBatch.progressPercent,
+          uploaded: queuedBatch.documents.length,
+          documents: queuedBatch.documents,
+          items: queuedBatch.items,
+          enqueueMs: queuedBatch.enqueueMs,
         }
       });
     } catch (error) {
       handleRouteError(res, error, "/api/knowledge-documents/upload-batch", "batch upload knowledge documents");
+    }
+  });
+
+  // List bulk upload jobs
+  app.get("/api/knowledge-documents/upload-jobs", async (req: Request, res: Response) => {
+    try {
+      if (!(await ensureKnowledgeQueueReady(res))) return;
+
+      const limitRaw = req.query.limit as string | undefined;
+      const limit = limitRaw ? parseInt(limitRaw, 10) : 20;
+      const statusRaw = req.query.status as string | undefined;
+      const status = statusRaw ? uploadJobStatusSchema.parse(statusRaw) : undefined;
+
+      const jobs = await knowledgeUploadQueueService.listJobs(limit, status);
+      res.json({
+        success: true,
+        data: {
+          jobs,
+        },
+      });
+    } catch (error) {
+      handleRouteError(res, error, "/api/knowledge-documents/upload-jobs", "list upload jobs");
+    }
+  });
+
+  // Get upload job details with per-file item status
+  app.get("/api/knowledge-documents/upload-jobs/:jobId", async (req: Request, res: Response) => {
+    try {
+      if (!(await ensureKnowledgeQueueReady(res))) return;
+
+      const job = await knowledgeUploadQueueService.getJob(req.params.jobId);
+      if (!job) {
+        return res.status(404).json({
+          success: false,
+          error: "Upload job not found",
+        });
+      }
+
+      res.json({
+        success: true,
+        data: job,
+      });
+    } catch (error) {
+      handleRouteError(res, error, "/api/knowledge-documents/upload-jobs/:jobId", "get upload job");
+    }
+  });
+
+  // Retry only failed items for a completed/failed batch
+  app.post("/api/knowledge-documents/upload-jobs/:jobId/retry-failed", async (req: Request, res: Response) => {
+    try {
+      if (!(await ensureKnowledgeQueueReady(res))) return;
+
+      const existingJob = await knowledgeUploadQueueService.getJob(req.params.jobId);
+      if (!existingJob) {
+        return res.status(404).json({
+          success: false,
+          error: "Upload job not found",
+        });
+      }
+
+      const retryResult = await knowledgeUploadQueueService.retryFailedItems(req.params.jobId);
+      const refreshedJob = await knowledgeUploadQueueService.getJob(req.params.jobId);
+
+      res.json({
+        success: true,
+        data: {
+          ...retryResult,
+          job: refreshedJob,
+        },
+      });
+    } catch (error) {
+      handleRouteError(res, error, "/api/knowledge-documents/upload-jobs/:jobId/retry-failed", "retry failed upload items");
     }
   });
 

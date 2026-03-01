@@ -4,6 +4,8 @@ import OpenAI from "openai";
 import fs from "fs";
 import path from "path";
 import { createRequire } from "module";
+import * as XLSX from "xlsx";
+import { withRetry } from "../utils/openai-utils";
 
 const require = createRequire(import.meta.url);
 const pdfParse = require("pdf-parse");
@@ -21,14 +23,12 @@ if (!fs.existsSync(UPLOAD_DIR)) {
   fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 }
 
-export type DocumentCategory = 
-  | "medical_guideline"
-  | "clinical_pathway"
-  | "policy_violation"
-  | "regulation"
-  | "circular"
-  | "contract"
-  | "procedure_manual"
+export type DocumentCategory =
+  | "law_regulation"
+  | "resolution_circular"
+  | "chi_mandatory_policy"
+  | "clinical_manual"
+  | "drug_formulary"
   | "training_material"
   | "other";
 
@@ -72,8 +72,8 @@ function getFileType(mimeType: string): FileType {
   if (mimeType === "application/pdf") return "pdf";
   if (mimeType.includes("word") || mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") return "word";
   if (mimeType.startsWith("image/")) return "image";
+  if (mimeType === "text/csv" || mimeType.includes("spreadsheet") || mimeType.includes("excel")) return "excel";
   if (mimeType === "text/plain" || mimeType === "text/html") return "text";
-  if (mimeType.includes("spreadsheet") || mimeType.includes("excel")) return "excel";
   return "text";
 }
 
@@ -99,31 +99,49 @@ async function extractTextFromImage(filePath: string): Promise<{ text: string; p
   const base64Image = fs.readFileSync(filePath).toString('base64');
   const mimeType = path.extname(filePath) === '.png' ? 'image/png' : 'image/jpeg';
   
-  const response = await openai.chat.completions.create({
-    model: "gpt-4o",
-    messages: [
-      {
-        role: "user",
-        content: [
+  const response = await withRetry(
+    () =>
+      openai.chat.completions.create({
+        model: "gpt-4o",
+        messages: [
           {
-            type: "text",
-            text: "Extract all text content from this image. Include all visible text, maintaining the structure and formatting as much as possible. If there is Arabic text, include it as well. Return only the extracted text, no explanations."
-          },
-          {
-            type: "image_url",
-            image_url: {
-              url: `data:${mimeType};base64,${base64Image}`
-            }
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: "Extract all text content from this image. Include all visible text, maintaining the structure and formatting as much as possible. If there is Arabic text, include it as well. Return only the extracted text, no explanations."
+              },
+              {
+                type: "image_url",
+                image_url: {
+                  url: `data:${mimeType};base64,${base64Image}`
+                }
+              }
+            ]
           }
-        ]
-      }
-    ],
-    max_tokens: 4096
-  });
+        ],
+        max_tokens: 4096
+      }),
+    { timeoutMs: 90000 }
+  );
 
   return {
     text: response.choices[0]?.message?.content || "",
     pageCount: 1
+  };
+}
+
+async function extractTextFromExcel(filePath: string): Promise<{ text: string; pageCount: number }> {
+  const workbook = XLSX.readFile(filePath);
+  const sheetTexts = workbook.SheetNames.map((sheetName) => {
+    const worksheet = workbook.Sheets[sheetName];
+    const csv = XLSX.utils.sheet_to_csv(worksheet, { blankrows: false });
+    return `Sheet: ${sheetName}\n${csv}`;
+  }).filter((sheetText) => sheetText.trim().length > 0);
+
+  return {
+    text: sheetTexts.join("\n\n"),
+    pageCount: Math.max(workbook.SheetNames.length, 1)
   };
 }
 
@@ -155,19 +173,27 @@ function chunkText(text: string, maxTokens: number = MAX_CHUNK_TOKENS, overlap: 
 }
 
 async function generateEmbedding(text: string): Promise<number[]> {
-  const response = await openai.embeddings.create({
-    model: EMBEDDING_MODEL,
-    input: text.slice(0, 8000)
-  });
+  const response = await withRetry(
+    () =>
+      openai.embeddings.create({
+        model: EMBEDDING_MODEL,
+        input: text.slice(0, 8000)
+      }),
+    { timeoutMs: 60000 }
+  );
   return response.data[0].embedding;
 }
 
 async function generateEmbeddingsBatch(texts: string[]): Promise<number[][]> {
   const truncatedTexts = texts.map(t => t.slice(0, 8000));
-  const response = await openai.embeddings.create({
-    model: EMBEDDING_MODEL,
-    input: truncatedTexts
-  });
+  const response = await withRetry(
+    () =>
+      openai.embeddings.create({
+        model: EMBEDDING_MODEL,
+        input: truncatedTexts
+      }),
+    { timeoutMs: 60000 }
+  );
   return response.data.map(d => d.embedding);
 }
 
@@ -196,24 +222,43 @@ export class DocumentIngestionService {
     `);
     
     const documentId = (result.rows[0] as any).id;
-    
-    this.processDocumentAsync(documentId, filePath, fileType);
-    
+
     return {
       documentId,
       filename,
       status: "pending",
-      message: "Document uploaded successfully. Processing started in background.",
-      messageAr: "تم رفع المستند بنجاح. بدأت المعالجة في الخلفية."
+      message: "Document uploaded successfully. Queued for background processing.",
+      messageAr: "تم رفع المستند بنجاح. تمت إضافته إلى قائمة المعالجة في الخلفية."
     };
   }
-  
-  private async processDocumentAsync(documentId: string, filePath: string, fileType: FileType): Promise<void> {
+
+  async processDocument(documentId: string): Promise<number> {
+    const documentResult = await db.execute(sql`
+      SELECT file_path, file_type
+      FROM knowledge_documents
+      WHERE id = ${documentId}
+      LIMIT 1
+    `);
+
+    const documentRow = documentResult.rows[0] as { file_path?: string; file_type?: FileType } | undefined;
+    if (!documentRow?.file_path || !documentRow?.file_type) {
+      throw new Error(`Document ${documentId} not found or missing file metadata`);
+    }
+
+    const filePath = documentRow.file_path;
+    const fileType = documentRow.file_type;
+
     try {
       await db.execute(sql`
         UPDATE knowledge_documents 
-        SET processing_status = 'extracting_text', updated_at = NOW()
+        SET processing_status = 'extracting_text', processing_error = NULL, updated_at = NOW()
         WHERE id = ${documentId}
+      `);
+
+      // Ensure retries don't duplicate chunks.
+      await db.execute(sql`
+        DELETE FROM knowledge_chunks
+        WHERE document_id = ${documentId}
       `);
       
       let extractedText: string;
@@ -229,6 +274,10 @@ export class DocumentIngestionService {
         pageCount = result.pageCount;
       } else if (fileType === "image") {
         const result = await extractTextFromImage(filePath);
+        extractedText = result.text;
+        pageCount = result.pageCount;
+      } else if (fileType === "excel") {
+        const result = await extractTextFromExcel(filePath);
         extractedText = result.text;
         pageCount = result.pageCount;
       } else {
@@ -253,6 +302,7 @@ export class DocumentIngestionService {
       
       const BATCH_SIZE = 20;
       let processedChunks = 0;
+      const embeddingsStart = Date.now();
       
       for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
         const batchChunks = chunks.slice(i, i + BATCH_SIZE);
@@ -275,15 +325,17 @@ export class DocumentIngestionService {
           processedChunks++;
         }
       }
+
+      console.info(`[RAG][Ingestion] Generated embeddings for ${processedChunks} chunks in ${Date.now() - embeddingsStart}ms`);
       
       await db.execute(sql`
         UPDATE knowledge_documents 
-        SET processing_status = 'completed', chunk_count = ${processedChunks}, updated_at = NOW()
+        SET processing_status = 'completed', chunk_count = ${processedChunks}, processing_error = NULL, updated_at = NOW()
         WHERE id = ${documentId}
       `);
       
       console.log(`Document ${documentId} processed successfully: ${processedChunks} chunks created`);
-      
+      return processedChunks;
     } catch (error) {
       console.error(`Error processing document ${documentId}:`, error);
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
@@ -292,35 +344,52 @@ export class DocumentIngestionService {
         SET processing_status = 'failed', processing_error = ${errorMessage}, updated_at = NOW()
         WHERE id = ${documentId}
       `);
+      throw error instanceof Error ? error : new Error(errorMessage);
     }
   }
   
   async semanticSearch(query: string, limit: number = 10, category?: DocumentCategory): Promise<SemanticSearchResult[]> {
     const queryEmbedding = await generateEmbedding(query);
     const embeddingStr = `[${queryEmbedding.join(",")}]`;
-    
-    let categoryFilter = "";
-    if (category) {
-      categoryFilter = `AND d.category = '${category}'`;
-    }
-    
-    const results = await db.execute(sql.raw(`
-      SELECT 
-        c.id,
-        c.document_id,
-        c.content,
-        c.content_ar,
-        c.section_title,
-        c.page_number,
-        1 - (c.embedding <=> '${embeddingStr}'::vector) as similarity,
-        d.title as document_title,
-        d.category as document_category
-      FROM knowledge_chunks c
-      JOIN knowledge_documents d ON c.document_id = d.id
-      WHERE d.processing_status = 'completed' ${categoryFilter}
-      ORDER BY c.embedding <=> '${embeddingStr}'::vector
-      LIMIT ${limit}
-    `));
+
+    const sqlQuery = category
+      ? sql`
+          SELECT 
+            c.id,
+            c.document_id,
+            c.content,
+            c.content_ar,
+            c.section_title,
+            c.page_number,
+            1 - (c.embedding <=> ${embeddingStr}::vector) as similarity,
+            d.title as document_title,
+            d.category as document_category
+          FROM knowledge_chunks c
+          JOIN knowledge_documents d ON c.document_id = d.id
+          WHERE d.processing_status = 'completed'
+            AND d.category = ${category}
+          ORDER BY c.embedding <=> ${embeddingStr}::vector
+          LIMIT ${Math.min(limit, 50)}
+        `
+      : sql`
+          SELECT 
+            c.id,
+            c.document_id,
+            c.content,
+            c.content_ar,
+            c.section_title,
+            c.page_number,
+            1 - (c.embedding <=> ${embeddingStr}::vector) as similarity,
+            d.title as document_title,
+            d.category as document_category
+          FROM knowledge_chunks c
+          JOIN knowledge_documents d ON c.document_id = d.id
+          WHERE d.processing_status = 'completed'
+          ORDER BY c.embedding <=> ${embeddingStr}::vector
+          LIMIT ${Math.min(limit, 50)}
+        `;
+
+    const results = await db.execute(sqlQuery);
     
     return (results.rows as any[]).map(row => ({
       id: row.id,
