@@ -1,9 +1,17 @@
-import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMemo, useState, useEffect } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Progress } from "@/components/ui/progress";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -21,6 +29,7 @@ import {
   FileType,
   Clock,
   Layers,
+  RefreshCcw,
 } from "lucide-react";
 
 type KnowledgeDocumentRow = {
@@ -67,6 +76,53 @@ type KnowledgeStatsResponse = {
   };
 };
 
+type UploadJobItemRow = {
+  id: string;
+  documentId: string;
+  originalFilename: string;
+  title: string;
+  category: string;
+  sourceAuthority: string | null;
+  status: "queued" | "in_progress" | "completed" | "failed";
+  attempts: number;
+  maxAttempts: number;
+  lastError: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+};
+
+type UploadJobRow = {
+  id: string;
+  status: "queued" | "in_progress" | "completed" | "completed_with_errors" | "failed";
+  createdBy: string | null;
+  totalFiles: number;
+  queuedFiles: number;
+  inProgressFiles: number;
+  completedFiles: number;
+  failedFiles: number;
+  progressPercent: number;
+  metadata: Record<string, unknown>;
+  createdAt: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  updatedAt: string | null;
+  items?: UploadJobItemRow[];
+};
+
+type UploadJobsResponse = {
+  success: boolean;
+  data: {
+    jobs: UploadJobRow[];
+  };
+};
+
+type UploadJobResponse = {
+  success: boolean;
+  data: UploadJobRow;
+};
+
 const STATUS_BADGES: Record<
   string,
   { label: string; variant: "default" | "secondary" | "destructive" | "outline" }
@@ -89,9 +145,49 @@ const FILE_TYPE_LABELS: Record<string, string> = {
   excel: "XLS",
 };
 
+const JOB_STATUS_BADGES: Record<
+  UploadJobRow["status"],
+  { label: string; variant: "default" | "secondary" | "destructive" | "outline" }
+> = {
+  queued: { label: "Queued", variant: "outline" },
+  in_progress: { label: "In Progress", variant: "secondary" },
+  completed: { label: "Completed", variant: "default" },
+  completed_with_errors: { label: "Completed with Errors", variant: "destructive" },
+  failed: { label: "Failed", variant: "destructive" },
+};
+
+const JOB_ITEM_STATUS_BADGES: Record<
+  UploadJobItemRow["status"],
+  { label: string; variant: "default" | "secondary" | "destructive" | "outline" }
+> = {
+  queued: { label: "Queued", variant: "outline" },
+  in_progress: { label: "Processing", variant: "secondary" },
+  completed: { label: "Completed", variant: "default" },
+  failed: { label: "Failed", variant: "destructive" },
+};
+
+const TERMINAL_JOB_STATUSES = new Set<UploadJobRow["status"]>([
+  "completed",
+  "completed_with_errors",
+  "failed",
+]);
+
+const categoryLabels: Record<string, string> = {
+  law_regulation: "Law & Regulation",
+  resolution_circular: "Resolution & Circular",
+  chi_mandatory_policy: "CHI Mandatory Policy",
+  clinical_manual: "Clinical Manual",
+  drug_formulary: "Drug Formulary",
+  training_material: "Training Material",
+  other: "Other",
+};
+
 export default function KnowledgeHub() {
   const [uploadOpen, setUploadOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState<string>("all");
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const queryClient = useQueryClient();
 
   const {
     data: documentsResponse,
@@ -105,20 +201,83 @@ export default function KnowledgeHub() {
     queryKey: ["/api/knowledge-documents/stats"],
   });
 
+  const {
+    data: jobsResponse,
+    refetch: refetchJobs,
+  } = useQuery<UploadJobsResponse>({
+    queryKey: ["/api/knowledge-documents/upload-jobs"],
+    refetchInterval: 5000,
+  });
+
+  const activeJobQueryKey = activeJobId
+    ? [`/api/knowledge-documents/upload-jobs/${activeJobId}`]
+    : ["/api/knowledge-documents/upload-jobs/none"];
+  const { data: activeJobResponse } = useQuery<UploadJobResponse>({
+    queryKey: activeJobQueryKey,
+    enabled: Boolean(activeJobId),
+    refetchInterval: 2000,
+  });
+
+  useEffect(() => {
+    if (!activeJobId) {
+      const latestJobId = jobsResponse?.data?.jobs?.[0]?.id;
+      if (latestJobId) {
+        setActiveJobId(latestJobId);
+      }
+    }
+  }, [jobsResponse, activeJobId]);
+
+  useEffect(() => {
+    const status = activeJobResponse?.data?.status;
+    if (status && TERMINAL_JOB_STATUSES.has(status)) {
+      queryClient.invalidateQueries({ queryKey: ["/api/knowledge-documents"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/knowledge-documents/stats"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/knowledge-documents/upload-jobs"] });
+    }
+  }, [activeJobResponse?.data?.status, queryClient]);
+
+  const retryFailedMutation = useMutation({
+    mutationFn: async () => {
+      if (!activeJobId) throw new Error("No active job selected");
+      const response = await fetch(`/api/knowledge-documents/upload-jobs/${activeJobId}/retry-failed`, {
+        method: "POST",
+      });
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || "Retry failed");
+      }
+      return response.json();
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/knowledge-documents/upload-jobs"] });
+      if (activeJobId) {
+        await queryClient.invalidateQueries({ queryKey: [`/api/knowledge-documents/upload-jobs/${activeJobId}`] });
+      }
+    },
+  });
+
   const documents = documentsResponse?.data?.documents ?? [];
 
   const filteredDocs = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase();
-    if (!query) return documents;
+    let filtered = documents;
 
-    return documents.filter((doc) => {
-      const searchable = [doc.filename, doc.original_filename, doc.title, doc.category]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
-      return searchable.includes(query);
-    });
-  }, [documents, searchQuery]);
+    if (categoryFilter !== "all") {
+      filtered = filtered.filter((doc) => doc.category === categoryFilter);
+    }
+
+    const query = searchQuery.trim().toLowerCase();
+    if (query) {
+      filtered = filtered.filter((doc) => {
+        const searchable = [doc.filename, doc.original_filename, doc.title, doc.category]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        return searchable.includes(query);
+      });
+    }
+
+    return filtered;
+  }, [documents, searchQuery, categoryFilter]);
 
   const stats = {
     totalDocs: statsResponse?.data?.total ?? documents.length,
@@ -128,6 +287,7 @@ export default function KnowledgeHub() {
     indexed: statsResponse?.data?.completed ?? 0,
     processing: statsResponse?.data?.processing ?? 0,
   };
+  const activeJob = activeJobResponse?.data;
 
   return (
     <div className="space-y-6" data-testid="page-knowledge-hub">
@@ -181,6 +341,107 @@ export default function KnowledgeHub() {
         </Card>
       </div>
 
+      {activeJob && (
+        <Card data-testid="card-upload-job-progress">
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-base">Latest Upload Queue Job</CardTitle>
+              <div className="flex items-center gap-2">
+                <Badge variant={JOB_STATUS_BADGES[activeJob.status].variant}>
+                  {JOB_STATUS_BADGES[activeJob.status].label}
+                </Badge>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => refetchJobs()}
+                  data-testid="button-refresh-upload-jobs"
+                >
+                  <RefreshCcw className="h-3.5 w-3.5 mr-2" />
+                  Refresh
+                </Button>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3 text-sm">
+              <div>
+                <p className="text-muted-foreground">Total</p>
+                <p className="font-semibold">{activeJob.totalFiles}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">Queued</p>
+                <p className="font-semibold">{activeJob.queuedFiles}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">In Progress</p>
+                <p className="font-semibold">{activeJob.inProgressFiles}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">Completed</p>
+                <p className="font-semibold">{activeJob.completedFiles}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">Failed</p>
+                <p className="font-semibold">{activeJob.failedFiles}</p>
+              </div>
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between mb-2 text-sm">
+                <span>Progress</span>
+                <span className="font-mono">{activeJob.progressPercent}%</span>
+              </div>
+              <Progress value={activeJob.progressPercent} />
+            </div>
+
+            <div className="flex justify-end">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => retryFailedMutation.mutate()}
+                disabled={activeJob.failedFiles === 0 || retryFailedMutation.isPending}
+                data-testid="button-retry-failed-files"
+              >
+                {retryFailedMutation.isPending ? "Retrying..." : "Retry Failed Files"}
+              </Button>
+            </div>
+
+            {activeJob.items && activeJob.items.length > 0 && (
+              <div className="border rounded-md">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>File</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Attempts</TableHead>
+                      <TableHead>Error</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {activeJob.items.map((item) => (
+                      <TableRow key={item.id}>
+                        <TableCell className="text-sm">{item.originalFilename}</TableCell>
+                        <TableCell>
+                          <Badge variant={JOB_ITEM_STATUS_BADGES[item.status].variant}>
+                            {JOB_ITEM_STATUS_BADGES[item.status].label}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="font-mono text-sm">
+                          {item.attempts}/{item.maxAttempts}
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground">
+                          {item.lastError || "-"}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
@@ -202,6 +463,19 @@ export default function KnowledgeHub() {
               className="max-w-sm"
               data-testid="input-search-documents"
             />
+            <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+              <SelectTrigger className="w-[200px]" data-testid="select-category-filter">
+                <SelectValue placeholder="All Categories" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Categories</SelectItem>
+                {Object.entries(categoryLabels).map(([value, label]) => (
+                  <SelectItem key={value} value={value}>
+                    {label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
         </CardHeader>
 
@@ -244,7 +518,7 @@ export default function KnowledgeHub() {
                         </Badge>
                       </TableCell>
                       <TableCell>
-                        <span className="text-sm">{doc.category || "-"}</span>
+                        <span className="text-sm">{categoryLabels[doc.category] || doc.category || "-"}</span>
                       </TableCell>
                       <TableCell>
                         <Badge variant={statusInfo.variant}>{statusInfo.label}</Badge>
@@ -266,10 +540,16 @@ export default function KnowledgeHub() {
 
       <DocumentUploadDialog
         open={uploadOpen}
+        onUploadQueued={(jobId) => {
+          setActiveJobId(jobId);
+          void queryClient.invalidateQueries({ queryKey: ["/api/knowledge-documents/upload-jobs"] });
+          void queryClient.invalidateQueries({ queryKey: [`/api/knowledge-documents/upload-jobs/${jobId}`] });
+        }}
         onOpenChange={(open) => {
           setUploadOpen(open);
           if (!open) {
             void refetchDocuments();
+            void refetchJobs();
           }
         }}
       />
