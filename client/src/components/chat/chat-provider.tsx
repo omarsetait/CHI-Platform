@@ -5,6 +5,13 @@ interface ChatMessage {
   role: "user" | "assistant" | "system";
   content: string;
   createdAt: string;
+  sources?: Array<{
+    index: number;
+    documentTitle: string;
+    sectionTitle: string;
+    pageNumber: number;
+    similarity: number;
+  }>;
 }
 
 interface ChatContextType {
@@ -131,7 +138,6 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
             if (line.startsWith("data: ")) {
               try {
                 const data = JSON.parse(line.slice(6));
-                if (data.done) break;
                 if (data.content) {
                   accumulated += data.content;
                   setMessages((prev) =>
@@ -142,6 +148,16 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
                     )
                   );
                 }
+                if (data.sources) {
+                  setMessages((prev) =>
+                    prev.map((m) =>
+                      m.id === assistantMsgId
+                        ? { ...m, sources: data.sources }
+                        : m
+                    )
+                  );
+                }
+                if (data.done) break;
                 if (data.error) {
                   throw new Error(data.error);
                 }

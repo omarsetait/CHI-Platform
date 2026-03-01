@@ -178,6 +178,18 @@ export function ChatPanel({ pillarId }: ChatPanelProps) {
                         </span>
                       )}
                     </div>
+                    {msg.role === "assistant" && msg.sources && msg.sources.length > 0 && (
+                      <div className="mt-2 border-t border-gray-200 pt-2">
+                        <p className="text-xs font-medium text-gray-500 mb-1">Sources</p>
+                        {msg.sources.map((src) => (
+                          <div key={src.index} className="text-xs text-gray-400 flex items-center gap-1">
+                            <span className="font-mono text-blue-500">[{src.index}]</span>
+                            <span>{src.documentTitle}</span>
+                            {src.pageNumber && <span>· p.{src.pageNumber}</span>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                   {msg.role === "user" && (
                     <div className="w-7 h-7 rounded-full bg-primary flex-shrink-0 flex items-center justify-center mt-0.5">
