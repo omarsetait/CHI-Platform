@@ -22,6 +22,12 @@ import {
 } from "@/components/ui/table";
 import { DocumentUploadDialog } from "@/components/document-upload-dialog";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   Upload,
   FileText,
   Search,
@@ -30,7 +36,11 @@ import {
   Clock,
   Layers,
   RefreshCcw,
+  MoreHorizontal,
+  Trash2,
+  RotateCcw,
 } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 
 type KnowledgeDocumentRow = {
   id: string;
@@ -253,6 +263,50 @@ export default function KnowledgeHub() {
       if (activeJobId) {
         await queryClient.invalidateQueries({ queryKey: [`/api/knowledge-documents/upload-jobs/${activeJobId}`] });
       }
+    },
+  });
+
+  const { toast } = useToast();
+
+  const deleteDocumentMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const response = await fetch(`/api/knowledge-documents/${id}`, {
+        method: "DELETE",
+      });
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || "Delete failed");
+      }
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/knowledge-documents"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/knowledge-documents/stats"] });
+      toast({ title: "Document deleted", description: "The document has been removed from the knowledge base." });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Delete failed", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const reprocessDocumentMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const response = await fetch(`/api/knowledge-documents/${id}/reprocess`, {
+        method: "POST",
+      });
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || "Reprocess failed");
+      }
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/knowledge-documents"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/knowledge-documents/stats"] });
+      toast({ title: "Reprocessing queued", description: "The document has been queued for reprocessing." });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Reprocess failed", description: error.message, variant: "destructive" });
     },
   });
 
@@ -496,6 +550,7 @@ export default function KnowledgeHub() {
                   <TableHead>Status</TableHead>
                   <TableHead className="text-right">Chunks</TableHead>
                   <TableHead>Uploaded</TableHead>
+                  <TableHead className="w-[50px]"></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -528,6 +583,36 @@ export default function KnowledgeHub() {
                       </TableCell>
                       <TableCell className="text-sm text-muted-foreground">
                         {doc.created_at ? new Date(doc.created_at).toLocaleDateString() : "-"}
+                      </TableCell>
+                      <TableCell>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon" className="h-8 w-8" data-testid={`button-doc-actions-${doc.id}`}>
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem
+                              onClick={() => reprocessDocumentMutation.mutate(doc.id)}
+                              disabled={reprocessDocumentMutation.isPending}
+                            >
+                              <RotateCcw className="h-4 w-4 mr-2" />
+                              Re-process
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              className="text-destructive focus:text-destructive"
+                              onClick={() => {
+                                if (window.confirm(`Delete "${doc.title || doc.original_filename}"? This cannot be undone.`)) {
+                                  deleteDocumentMutation.mutate(doc.id);
+                                }
+                              }}
+                              disabled={deleteDocumentMutation.isPending}
+                            >
+                              <Trash2 className="h-4 w-4 mr-2" />
+                              Delete
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </TableCell>
                     </TableRow>
                   );

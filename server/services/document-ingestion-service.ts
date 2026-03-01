@@ -446,6 +446,23 @@ export class DocumentIngestionService {
     return result.rows[0];
   }
   
+  async resetDocumentForReprocessing(id: string): Promise<void> {
+    // Clear existing chunks
+    await db.execute(sql`
+      DELETE FROM knowledge_chunks WHERE document_id = ${id}
+    `);
+
+    // Reset document status to pending so the queue worker picks it up
+    await db.execute(sql`
+      UPDATE knowledge_documents
+      SET processing_status = 'pending',
+          processing_error = NULL,
+          chunk_count = 0,
+          updated_at = NOW()
+      WHERE id = ${id}
+    `);
+  }
+
   async deleteDocument(id: string): Promise<boolean> {
     const docResult = await db.execute(sql`
       SELECT file_path FROM knowledge_documents WHERE id = ${id}

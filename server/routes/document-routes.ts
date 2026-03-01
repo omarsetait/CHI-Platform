@@ -809,4 +809,32 @@ Only return valid JSON, no other text.`;
       handleRouteError(res, error, "/api/knowledge-documents/:id", "delete knowledge document");
     }
   });
+
+  // Re-process a knowledge document (clear chunks, reset status, re-run ingestion)
+  app.post("/api/knowledge-documents/:id/reprocess", async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+
+      // Verify the document exists
+      const doc = await documentIngestionService.getDocumentById(id);
+      if (!doc) {
+        return res.status(404).json({
+          success: false,
+          error: "Document not found",
+          errorAr: "المستند غير موجود"
+        });
+      }
+
+      // Reset to pending — the queue worker (or processDocument) will pick it up
+      await documentIngestionService.resetDocumentForReprocessing(id);
+
+      res.json({
+        success: true,
+        message: "Document queued for reprocessing",
+        messageAr: "تمت إعادة المستند إلى قائمة المعالجة"
+      });
+    } catch (error) {
+      handleRouteError(res, error, "/api/knowledge-documents/:id/reprocess", "reprocess knowledge document");
+    }
+  });
 }
