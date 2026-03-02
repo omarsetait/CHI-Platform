@@ -118,7 +118,7 @@ const FWA_ENTITY_TYPE_VALUES = new Set(["provider", "doctor", "patient"]);
 const DRG_GROUP_COLUMNS = new Set(["drg_code", "provider", "specialty"]);
 
 function sanitizeLimit(limit: unknown): number {
-  return Math.min(Math.max(1, Number(limit) || 10), 100);
+  return Math.min(Math.max(1, Math.floor(Number(limit)) || 10), 100);
 }
 
 async function executeDataTool(name: string, args: Record<string, unknown>): Promise<string> {
