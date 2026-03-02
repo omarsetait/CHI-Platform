@@ -134,30 +134,40 @@ async function rerankChunks(
 ): Promise<typeof chunks> {
   if (chunks.length <= topK) return chunks;
 
-  const response = await openai.chat.completions.create({
-    model: "gpt-4o-mini",
-    temperature: 0,
-    response_format: { type: "json_object" },
-    messages: [
-      {
-        role: "system",
-        content: `You are a relevance ranker. Given a query and a list of text chunks, score each chunk's relevance to the query from 0-10. Return JSON: {"scores": [{"index": 0, "score": 8}, ...]}`,
-      },
-      {
-        role: "user",
-        content: `Query: "${query}"\n\nChunks:\n${chunks.map((c, i) => `[${i}] ${c.content.slice(0, 300)}`).join("\n\n")}`,
-      },
-    ],
-  });
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      temperature: 0,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content: `You are a relevance ranker. Given a query and a list of text chunks, score each chunk's relevance to the query from 0-10. Return JSON: {"scores": [{"index": 0, "score": 8}, ...]}`,
+        },
+        {
+          role: "user",
+          content: `Query: "${query}"\n\nChunks:\n${chunks.map((c, i) => `[${i}] ${c.content.slice(0, 300)}`).join("\n\n")}`,
+        },
+      ],
+    });
 
-  const result = JSON.parse(response.choices[0].message.content || "{}");
-  const scores: Array<{ index: number; score: number }> = result.scores || [];
+    const parsed = JSON.parse(response.choices[0].message.content || "{}");
+    const scores: Array<{ index: number; score: number }> = parsed.scores || [];
 
-  return scores
-    .sort((a, b) => b.score - a.score)
-    .slice(0, topK)
-    .map((s) => chunks[s.index])
-    .filter(Boolean);
+    if (scores.length === 0) {
+      console.info("[Chat][RAG] Reranker returned empty scores, falling back to vector sort");
+      return chunks.slice(0, topK);
+    }
+
+    return scores
+      .sort((a, b) => b.score - a.score)
+      .slice(0, topK)
+      .map((s) => chunks[s.index])
+      .filter(Boolean);
+  } catch (error) {
+    console.error("[Chat][Error] stage=reranker error=" + JSON.stringify((error as Error).message) + " fallback=vector_sort");
+    return chunks.slice(0, topK);
+  }
 }
 
 /**
