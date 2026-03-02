@@ -12,7 +12,8 @@
     "test:contracts": "vitest run server/routes/pillar-routes.test.ts",
     "test:e2e": "playwright test",
     "test:e2e:smoke": "playwright test e2e/pillars-smoke.spec.ts",
-    "db:push": "drizzle-kit push"
+    "db:push": "drizzle-kit push",
+    "seed:knowledge": "tsx --env-file=.env server/seeds/seed-knowledge-document.ts"
   },
   "dependencies": {
     "@faker-js/faker": "^10.2.0",
