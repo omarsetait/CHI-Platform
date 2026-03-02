@@ -18,10 +18,20 @@ export async function mergeResponses(input: MergerInput): Promise<string> {
   const { userMessage, documentResponse, dataResponse } = input;
 
   // If only one source has content, return it directly
-  if (documentResponse && !dataResponse) return documentResponse.content;
-  if (dataResponse && !documentResponse) return dataResponse.content;
-  if (!documentResponse && !dataResponse) return "I couldn't find relevant information to answer your question.";
+  if (documentResponse && !dataResponse) {
+    console.info("[Chat][Merger] doc_available=true data_available=false passthrough=doc");
+    return documentResponse.content;
+  }
+  if (dataResponse && !documentResponse) {
+    console.info("[Chat][Merger] doc_available=false data_available=true passthrough=data");
+    return dataResponse.content;
+  }
+  if (!documentResponse && !dataResponse) {
+    console.info("[Chat][Merger] doc_available=false data_available=false passthrough=empty");
+    return "I couldn't find relevant information to answer your question.";
+  }
 
+  const start = Date.now();
   const response = await openai.chat.completions.create({
     model: "gpt-4o",
     temperature: 0.3,
@@ -49,5 +59,6 @@ Merge these into a single, well-structured response.`
     ]
   });
 
+  console.info(`[Chat][Merger] doc_available=true data_available=true latency=${Date.now() - start}ms`);
   return response.choices[0].message.content || "Unable to merge responses.";
 }

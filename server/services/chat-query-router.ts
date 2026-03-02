@@ -34,6 +34,7 @@ export async function classifyQuery(
   userMessage: string,
   recentMessages: Array<{role: string; content: string}> = []
 ): Promise<RouterResult> {
+  const start = Date.now();
   const contextMessages = recentMessages.slice(-3).map(m =>
     `${m.role}: ${m.content}`
   ).join("\n");
@@ -56,10 +57,16 @@ export async function classifyQuery(
 
   const result = JSON.parse(response.choices[0].message.content || "{}");
 
-  return {
+  const routerResult = {
     intent: result.intent || "general",
     documentSubtype: result.documentSubtype || undefined,
     confidence: result.confidence || 0.5,
     reasoning: result.reasoning || ""
   };
+
+  console.info(
+    `[Chat][Router] intent=${routerResult.intent} subtype=${routerResult.documentSubtype || "none"} confidence=${routerResult.confidence} latency=${Date.now() - start}ms`
+  );
+
+  return routerResult;
 }

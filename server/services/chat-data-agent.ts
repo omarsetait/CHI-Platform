@@ -231,6 +231,7 @@ export async function queryPlatformData(
   userMessage: string,
   conversationHistory: Array<{role: string; content: string}> = []
 ): Promise<{ content: string; toolsUsed: string[] }> {
+  const start = Date.now();
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
     { role: "system", content: DATA_AGENT_SYSTEM_PROMPT },
     ...conversationHistory.slice(-5).map(m => ({
@@ -274,6 +275,9 @@ export async function queryPlatformData(
         });
       }
     } else {
+      console.info(
+        `[Chat][DataAgent] tools_called=${toolsUsed.join(",") || "none"} iterations=${iterations} latency=${Date.now() - start}ms`
+      );
       return {
         content: choice.message.content || "I couldn't find the data to answer that question.",
         toolsUsed
@@ -281,6 +285,9 @@ export async function queryPlatformData(
     }
   }
 
+  console.info(
+    `[Chat][DataAgent] tools_called=${toolsUsed.join(",") || "none"} iterations=${iterations} hit_limit=true latency=${Date.now() - start}ms`
+  );
   return {
     content: "I attempted to query the data but reached the processing limit. Please try a more specific question.",
     toolsUsed

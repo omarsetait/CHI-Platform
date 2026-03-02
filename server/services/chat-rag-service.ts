@@ -462,6 +462,10 @@ export async function streamChatResponse(
         ragChunkIds = fallbackResult.sources.map((s) => s.chunkId);
       }
     }
+
+    console.info(
+      `[Chat][Pipeline] intent=${routerResult.intent} sources=${sourcesMetadata.length} chunks=${ragChunkIds.length} tools=${dataResult?.toolsUsed?.join(",") || "none"}`
+    );
   } catch (agentError) {
     // If all agent dispatch fails, produce a direct GPT response as last-resort fallback
     try {
