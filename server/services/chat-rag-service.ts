@@ -37,6 +37,8 @@ const PILLAR_NAMES: Record<string, string> = {
   members: "Daman Members",
 };
 
+const MIN_SIMILARITY_THRESHOLD = 0.3;
+
 /**
  * Embed a query using text-embedding-ada-002 and search knowledge_chunks via pgvector.
  * Optionally filter by document category and return enriched metadata from knowledge_documents.
@@ -56,6 +58,22 @@ async function searchKnowledgeChunks(
   page_number: number;
   document_category: string;
 }>> {
+  // Short-circuit: check if knowledge base has any completed chunks
+  const countFilter = category
+    ? sql`AND d.category = ${category}`
+    : sql``;
+  const countResult = await db.execute(sql`
+    SELECT COUNT(*) as cnt FROM knowledge_chunks c
+    JOIN knowledge_documents d ON c.document_id = d.id
+    WHERE c.embedding IS NOT NULL AND d.processing_status = 'completed'
+    ${countFilter}
+  `);
+  const chunkCount = parseInt((countResult.rows[0] as any).cnt, 10);
+  if (chunkCount === 0) {
+    console.info(`[Chat][RAG] Empty knowledge base (category=${category || "all"}), skipping embedding`);
+    return [];
+  }
+
   const embeddingResponse = await openai.embeddings.create({
     model: "text-embedding-ada-002",
     input: query,
@@ -82,7 +100,18 @@ async function searchKnowledgeChunks(
     LIMIT ${limit}
   `);
 
-  return results.rows as Array<{
+  // Filter by minimum similarity threshold
+  const filtered = (results.rows as any[]).filter(
+    (r) => parseFloat(r.similarity) >= MIN_SIMILARITY_THRESHOLD
+  );
+
+  if (filtered.length < results.rows.length) {
+    console.info(
+      `[Chat][RAG] Similarity filter: ${results.rows.length} raw → ${filtered.length} above threshold (${MIN_SIMILARITY_THRESHOLD})`
+    );
+  }
+
+  return filtered as Array<{
     id: string;
     content: string;
     document_id: string;
