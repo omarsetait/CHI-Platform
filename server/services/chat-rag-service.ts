@@ -343,9 +343,9 @@ export async function streamChatResponse(
   let routerResult;
   try {
     routerResult = await classifyQuery(userMessage, history);
-  } catch {
-    // If router fails, fall back to document intent
-    routerResult = { intent: "document" as const, confidence: 0, reasoning: "Router fallback" };
+  } catch (routerError) {
+    console.error("[Chat][Error] stage=router error=" + JSON.stringify((routerError as Error).message) + " fallback=general");
+    routerResult = { intent: "general" as const, confidence: 0, reasoning: "Router fallback" };
   }
 
   // 6. Dispatch to agent(s) based on intent
