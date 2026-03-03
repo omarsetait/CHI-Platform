@@ -227,15 +227,18 @@ function generateTitle(message: string): string {
 }
 
 /**
- * Query documents via the RAG pipeline (search + rerank + generate) without streaming.
- * Used by the response merger for mixed queries, and can also be called independently.
+ * Query documents via the RAG pipeline (search + rerank + generate).
+ * When `sseRes` is provided, tokens are streamed directly via SSE as they arrive.
+ * Used by the response merger for mixed queries (non-streaming), and by the
+ * document intent handler (streaming).
  */
 export async function queryDocuments(
   userMessage: string,
   conversationHistory: Array<{ role: string; content: string }>,
   pillarId: string,
   pagePath: string,
-  category?: string
+  category?: string,
+  sseRes?: Response
 ): Promise<{
   content: string;
   sources: Array<{
@@ -267,20 +270,14 @@ export async function queryDocuments(
   // 3. Build system prompt
   const systemPrompt = buildSystemPrompt(pillarId, pagePath, rankedChunks);
 
-  // 4. Generate response (non-streaming)
-  const response = await openai.chat.completions.create({
-    model: "gpt-4o",
-    temperature: 0.4,
-    max_tokens: 2000,
-    messages: [
-      { role: "system", content: systemPrompt },
-      ...conversationHistory.map((m) => ({
-        role: m.role as "user" | "assistant",
-        content: m.content,
-      })),
-      { role: "user", content: userMessage },
-    ],
-  });
+  const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
+    { role: "system", content: systemPrompt },
+    ...conversationHistory.map((m) => ({
+      role: m.role as "user" | "assistant",
+      content: m.content,
+    })),
+    { role: "user", content: userMessage },
+  ];
 
   const sources = rankedChunks.map((c, i) => ({
     index: i + 1,
@@ -291,6 +288,34 @@ export async function queryDocuments(
     chunkId: c.id,
     documentId: c.document_id,
   }));
+
+  // 4. Generate response — streaming when sseRes is provided, non-streaming otherwise
+  if (sseRes) {
+    let content = "";
+    const stream = await openai.chat.completions.create({
+      model: "gpt-4o",
+      temperature: 0.4,
+      max_tokens: 2000,
+      stream: true,
+      messages,
+    });
+    for await (const chunk of stream) {
+      const delta = chunk.choices[0]?.delta?.content || "";
+      if (delta) {
+        content += delta;
+        sseRes.write(`data: ${JSON.stringify({ content: delta })}\n\n`);
+      }
+    }
+    return { content, sources };
+  }
+
+  // Non-streaming path (used by mixed intent and response merger)
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o",
+    temperature: 0.4,
+    max_tokens: 2000,
+    messages,
+  });
 
   return {
     content: response.choices[0].message.content || "",
@@ -349,8 +374,14 @@ export async function streamChatResponse(
     routerResult = { intent: "general" as const, confidence: 0, reasoning: "Router fallback" };
   }
 
-  // 6. Dispatch to agent(s) based on intent
+  // 6. Set SSE headers early so we can stream as tokens arrive
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+
+  // 7. Dispatch to agent(s) based on intent
   let finalContent = "";
+  let contentAlreadyStreamed = false;
   let sourcesMetadata: Array<{
     index: number;
     documentTitle: string;
@@ -366,11 +397,12 @@ export async function streamChatResponse(
   try {
     switch (routerResult.intent) {
       case "general": {
-        // Direct GPT-4o response — no RAG, no data
-        const generalResponse = await openai.chat.completions.create({
+        // Direct GPT-4o response — no RAG, no data — streamed in real time
+        const generalStream = await openai.chat.completions.create({
           model: "gpt-4o",
           temperature: 0.4,
           max_tokens: 2000,
+          stream: true,
           messages: [
             {
               role: "system",
@@ -383,12 +415,19 @@ export async function streamChatResponse(
             { role: "user", content: userMessage },
           ],
         });
-        finalContent = generalResponse.choices[0].message.content || "";
+        for await (const chunk of generalStream) {
+          const delta = chunk.choices[0]?.delta?.content || "";
+          if (delta) {
+            finalContent += delta;
+            res.write(`data: ${JSON.stringify({ content: delta })}\n\n`);
+          }
+        }
+        contentAlreadyStreamed = true;
         break;
       }
 
       case "document": {
-        // Document RAG pipeline
+        // Document RAG pipeline — streamed in real time
         const docCategory =
           routerResult.documentSubtype && routerResult.documentSubtype !== "all"
             ? routerResult.documentSubtype
@@ -398,11 +437,13 @@ export async function streamChatResponse(
           history,
           pillarCtx.pillarId,
           pillarCtx.pagePath,
-          docCategory
+          docCategory,
+          res
         );
         finalContent = docResult.content;
         sourcesMetadata = docResult.sources;
         ragChunkIds = docResult.sources.map((s) => s.chunkId);
+        contentAlreadyStreamed = true;
         break;
       }
 
@@ -492,17 +533,10 @@ export async function streamChatResponse(
     }
   }
 
-  // 7. Set SSE headers
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache");
-  res.setHeader("Connection", "keep-alive");
-
-  // 8. Stream pre-generated content in word chunks for smooth UI
+  // 8. Send content for non-streamed cases (data, mixed, default, error fallback)
   try {
-    const words = finalContent.split(" ");
-    for (let i = 0; i < words.length; i += 3) {
-      const chunk = words.slice(i, i + 3).join(" ") + (i + 3 < words.length ? " " : "");
-      res.write(`data: ${JSON.stringify({ content: chunk })}\n\n`);
+    if (!contentAlreadyStreamed && finalContent) {
+      res.write(`data: ${JSON.stringify({ content: finalContent })}\n\n`);
     }
 
     // 9. Save assistant message with retrieval metadata
@@ -546,11 +580,7 @@ export async function streamChatResponse(
     res.end();
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : "Stream failed";
-    if (!res.headersSent) {
-      res.status(500).json({ error: errMsg });
-    } else {
-      res.write(`data: ${JSON.stringify({ error: errMsg })}\n\n`);
-      res.end();
-    }
+    res.write(`data: ${JSON.stringify({ error: errMsg })}\n\n`);
+    res.end();
   }
 }
