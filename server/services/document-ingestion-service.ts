@@ -6,6 +6,7 @@ import path from "path";
 import { createRequire } from "module";
 import * as XLSX from "xlsx";
 import { withRetry } from "../utils/openai-utils";
+import { EMBEDDING_MODEL, EMBEDDING_DIMENSIONS } from "./embedding-config";
 
 const require = createRequire(import.meta.url);
 const pdfParse = require("pdf-parse");
@@ -13,8 +14,6 @@ const mammoth = require("mammoth");
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-const EMBEDDING_MODEL = "text-embedding-ada-002";
-const EMBEDDING_DIMENSIONS = 1536;
 const MAX_CHUNK_TOKENS = 500;
 const CHUNK_OVERLAP = 50;
 const UPLOAD_DIR = "./uploads/documents";

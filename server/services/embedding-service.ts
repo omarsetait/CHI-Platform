@@ -1,13 +1,14 @@
 import OpenAI from "openai";
 import { db } from "../db";
 import { sql } from "drizzle-orm";
+import { EMBEDDING_MODEL } from "./embedding-config";
 
 const openai = new OpenAI();
 
 // Generate embedding for text using OpenAI
 export async function generateEmbedding(text: string): Promise<number[]> {
   const response = await openai.embeddings.create({
-    model: "text-embedding-3-small",
+    model: EMBEDDING_MODEL,
     input: text.slice(0, 8000), // Limit input length
   });
   return response.data[0].embedding;

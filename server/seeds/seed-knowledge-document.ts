@@ -16,12 +16,12 @@
 import { db, closePool } from "../db";
 import { sql } from "drizzle-orm";
 import OpenAI from "openai";
+import { EMBEDDING_MODEL } from "../services/embedding-config";
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-const EMBEDDING_MODEL = "text-embedding-ada-002";
 const MAX_CHUNK_TOKENS = 500; // estimated as chars / 4
 const CHUNK_OVERLAP_WORDS = 50;
 const EMBEDDING_BATCH_SIZE = 20;

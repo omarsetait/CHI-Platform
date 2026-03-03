@@ -1952,11 +1952,11 @@ const DEFAULT_DETECTION_CONFIGS = [
     threshold: "0.70",
     algorithmName: "ICD-10/CPT Vector Similarity",
     algorithmType: "Semantic Embedding Model",
-    description: "Validates procedure-diagnosis relationships using vector embeddings. CPT codes (~9,800) and ICD-10 codes (~72,000) are embedded using OpenAI's text-embedding-3-small model and stored in pgvector for cosine similarity matching.",
+    description: "Validates procedure-diagnosis relationships using vector embeddings. CPT codes (~9,800) and ICD-10 codes (~72,000) are embedded using OpenAI's text-embedding-ada-002 model and stored in pgvector for cosine similarity matching.",
     howItWorks: "Each procedure code (CPT) and diagnosis code (ICD-10) is embedded into a 1536-dimensional vector space. When a claim is analyzed, the system computes cosine similarity between the procedure and diagnosis embeddings to determine clinical compatibility. Similarity scores are converted to risk levels: 70%+ = Low Risk, 50-69% = Medium Risk, 30-49% = High Risk, <30% = Critical mismatch.",
     strengths: "Catches clinically implausible procedure-diagnosis combinations; no rules needed; adapts to medical coding nuances; provides quantitative similarity scores; works across all specialties.",
     limitations: "Requires embedding generation for code databases; may miss context-dependent valid combinations; depends on quality of code descriptions.",
-    dataSources: ["CPT Embeddings Database (~9,800 codes)", "ICD-10 Embeddings Database (~72,000 codes)", "OpenAI text-embedding-3-small"],
+    dataSources: ["CPT Embeddings Database (~9,800 codes)", "ICD-10 Embeddings Database (~72,000 codes)", "OpenAI text-embedding-ada-002"],
     outputMetrics: ["Similarity Score (%)", "Risk Level", "Matched CPT Description", "Matched ICD-10 Description", "Clinical Compatibility Assessment"]
   }
 ];

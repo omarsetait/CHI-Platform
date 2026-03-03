@@ -5,11 +5,10 @@ import OpenAI from "openai";
 import * as XLSX from "xlsx";
 import * as fs from "fs";
 import * as path from "path";
+import { EMBEDDING_MODEL, EMBEDDING_DIMENSIONS } from "./embedding-config";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-const EMBEDDING_MODEL = "text-embedding-3-small";
-const EMBEDDING_DIMENSIONS = 1536;
 const BATCH_SIZE = 100;
 
 interface CptRecord {

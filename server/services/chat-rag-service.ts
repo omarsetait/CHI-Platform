@@ -6,6 +6,7 @@ import type { Response } from "express";
 import { classifyQuery } from "./chat-query-router";
 import { queryPlatformData } from "./chat-data-agent";
 import { mergeResponses } from "./chat-response-merger";
+import { EMBEDDING_MODEL } from "./embedding-config";
 
 const openai = new OpenAI();
 
@@ -75,7 +76,7 @@ async function searchKnowledgeChunks(
   }
 
   const embeddingResponse = await openai.embeddings.create({
-    model: "text-embedding-ada-002",
+    model: EMBEDDING_MODEL,
     input: query,
   });
   const embedding = embeddingResponse.data[0].embedding;
