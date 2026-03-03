@@ -39,23 +39,29 @@ import {
   providerDirectory,
   enforcementCases,
   fwaCases,
+  fwaCategories as fwaCategoriesTable,
+  fwaActions as fwaActionsTable,
   preAuthClaims,
+  agentPerformanceMetrics,
+  fwaHighRiskProviders,
   type InsertFwaAgentConfig,
 } from "@shared/schema";
 import { mlEngine, FeatureEngineeringService } from "../services/ml-unsupervised-engine";
 import { getEntityData } from "../services/demo-data-seeder";
 import { populationStatsService, featureWeightsService, statisticalLearningEngine } from "../services/statistical-learning-engine";
 import { aggregateProviderDetection } from "../services/fwa-detection-engine";
-import { 
-  runRegulatoryOversight, 
-  runRegulatoryOversightBatch, 
+import {
+  runRegulatoryOversight,
+  runRegulatoryOversightBatch,
   getClaimHistoryPatterns,
-  type RegulatoryOversightResult 
+  type RegulatoryOversightResult
 } from "../services/regulatory-oversight-engine";
-import { 
-  runEnhancedFWAAnalysis, 
-  seedEnhancedFWARules 
+import {
+  runEnhancedFWAAnalysis,
+  seedEnhancedFWARules
 } from "../services/enhanced-fwa-rules";
+import { EnforcementWorkflowOrchestrator } from "../services/enforcement/workflow-orchestrator";
+import { getDefaultProvider } from "../services/llm";
 
 const letterGenerationSchema = z.object({
   providers: z.array(z.object({
@@ -106,29 +112,29 @@ export function registerFwaRoutes(
       // Strict token-based authentication - requires ADMIN_SEED_TOKEN env var
       const authToken = req.headers["x-admin-token"] || req.query.token;
       const expectedToken = process.env.ADMIN_SEED_TOKEN;
-      
+
       if (!expectedToken || authToken !== expectedToken) {
         return res.status(401).json({ error: "Unauthorized. ADMIN_SEED_TOKEN must be configured and x-admin-token header must match." });
       }
 
       console.log("[Admin] Manual database seeding triggered...");
-      
+
       // Import and run the seeder
       const { seedDatabaseWithDemoData } = await import("../services/demo-data-seeder");
       await seedDatabaseWithDemoData();
-      
+
       // Get counts after seeding
       const { fwaAnalyzedClaims, fwaCases } = await import("@shared/schema");
       const { count } = await import("drizzle-orm");
-      
+
       const claimsResult = await db.select({ count: count() }).from(fwaAnalyzedClaims);
       const casesResult = await db.select({ count: count() }).from(fwaCases);
-      
+
       const claimCount = claimsResult[0]?.count || 0;
       const caseCount = casesResult[0]?.count || 0;
-      
+
       console.log(`[Admin] Seeding complete. Claims: ${claimCount}, Cases: ${caseCount}`);
-      
+
       res.json({
         success: true,
         message: "Database seeding completed",
@@ -141,24 +147,24 @@ export function registerFwaRoutes(
       handleRouteError(res, error, "/api/admin/seed-database", "seed database");
     }
   });
-  
+
   // Admin endpoint to verify database state (for debugging production)
   app.get("/api/admin/verify-database", async (req, res) => {
     try {
       const authToken = req.headers["x-admin-token"] || req.query.token;
       const expectedToken = process.env.ADMIN_SEED_TOKEN;
-      
+
       if (!expectedToken || authToken !== expectedToken) {
         return res.status(401).json({ error: "Unauthorized. ADMIN_SEED_TOKEN must be configured." });
       }
 
-      const { 
+      const {
         fwaAnalyzedClaims, fwaCases, enforcementCases,
-        fwaProviderDetectionResults, fwaDoctorDetectionResults, 
-        fwaPatientDetectionResults, fwaDetectionResults 
+        fwaProviderDetectionResults, fwaDoctorDetectionResults,
+        fwaPatientDetectionResults, fwaDetectionResults
       } = await import("@shared/schema");
       const { count } = await import("drizzle-orm");
-      
+
       // Get counts from all relevant tables
       const [claims, cases, enforcement, providers, doctors, patients, detections] = await Promise.all([
         db.select({ count: count() }).from(fwaAnalyzedClaims),
@@ -169,12 +175,12 @@ export function registerFwaRoutes(
         db.select({ count: count() }).from(fwaPatientDetectionResults),
         db.select({ count: count() }).from(fwaDetectionResults),
       ]);
-      
+
       // Get database connection info (safe - no credentials)
       const dbUrl = process.env.DATABASE_URL || "";
       const dbHost = dbUrl.includes("@") ? dbUrl.split("@")[1]?.split("/")[0] : "unknown";
       const dbName = dbUrl.split("/").pop()?.split("?")[0] || "unknown";
-      
+
       res.json({
         database: { host: dbHost, name: dbName },
         counts: {
@@ -199,17 +205,17 @@ export function registerFwaRoutes(
     try {
       const authToken = req.headers["x-admin-token"] || req.query.token;
       const expectedToken = process.env.ADMIN_SEED_TOKEN;
-      
+
       if (!expectedToken || authToken !== expectedToken) {
         return res.status(401).json({ error: "Unauthorized. ADMIN_SEED_TOKEN must be configured." });
       }
 
       const { sql } = await import("drizzle-orm");
-      
+
       // Clean up existing data first
       await db.execute(sql`DELETE FROM audit_findings WHERE audit_session_id IN ('as-001', 'as-002', 'as-003')`);
       await db.execute(sql`DELETE FROM audit_sessions WHERE id IN ('as-001', 'as-002', 'as-003')`);
-      
+
       // Seed audit sessions
       await db.execute(sql`
         INSERT INTO audit_sessions (id, audit_number, provider_id, provider_name, type, status, risk_score, risk_factors, scheduled_date, location, audit_scope, audit_team, findings, recommendations)
@@ -219,7 +225,7 @@ export function registerFwaRoutes(
           ('as-003', 'AUD-2025-003', 'PRV-003', 'Dr. Sulaiman Al Habib', 'complaint_investigation', 'completed', '0.85', ARRAY['Patient complaints', 'Overbilling allegations'], NOW() - INTERVAL '45 days', 'Riyadh', ARRAY['billing', 'clinical', 'documentation'], '[{"name":"Mr. Khalid Al-Otaibi","role":"Senior Auditor","department":"CHI Enforcement"}]'::jsonb, '[{"category":"compliance","severity":"critical","description":"Prior authorization bypass"},{"category":"billing","severity":"high","description":"Upcoding pattern"}]'::jsonb, ARRAY['Formal warning', 'Recovery of overpayments', 'Compliance monitoring'])
         ON CONFLICT (id) DO NOTHING
       `);
-      
+
       // Seed audit findings
       await db.execute(sql`
         INSERT INTO audit_findings (id, audit_session_id, finding_number, category, severity, status, title, description, evidence, recommendation)
@@ -231,7 +237,7 @@ export function registerFwaRoutes(
           ('af-005', 'as-001', 'FND-2025-005', 'administrative', 'low', 'draft', 'Credentialing Documentation Gap', 'Provider credentialing files missing updated certifications.', '3 physicians have expired certifications', 'Request updated credentials within 30 days')
         ON CONFLICT (id) DO NOTHING
       `);
-      
+
       res.json({ success: true, message: "Audit sessions and findings seeded" });
     } catch (error) {
       handleRouteError(res, error, "/api/admin/seed-audit-sessions", "seed audit sessions");
@@ -243,13 +249,13 @@ export function registerFwaRoutes(
     try {
       const authToken = req.headers["x-admin-token"] || req.query.token;
       const expectedToken = process.env.ADMIN_SEED_TOKEN;
-      
+
       if (!expectedToken || authToken !== expectedToken) {
         return res.status(401).json({ error: "Unauthorized. ADMIN_SEED_TOKEN must be configured." });
       }
 
       const { sql } = await import("drizzle-orm");
-      
+
       // Update critical/high risk claims with billing violations
       const highRiskResult = await db.execute(sql`
         UPDATE fwa_detection_results 
@@ -277,7 +283,7 @@ export function registerFwaRoutes(
         )
         WHERE composite_risk_level IN ('critical', 'high')
       `);
-      
+
       // Update medium risk claims with upcoding violations
       const mediumResult = await db.execute(sql`
         UPDATE fwa_detection_results 
@@ -297,7 +303,7 @@ export function registerFwaRoutes(
         )
         WHERE composite_risk_level = 'medium'
       `);
-      
+
       res.json({
         success: true,
         message: "Rule violations populated",
@@ -315,7 +321,7 @@ export function registerFwaRoutes(
   app.post("/api/fwa/enhanced-analysis/:claimId", async (req, res) => {
     try {
       const { claimId } = req.params;
-      
+
       if (!claimId) {
         return res.status(400).json({ error: "Claim ID is required" });
       }
@@ -335,11 +341,11 @@ export function registerFwaRoutes(
       // Admin authorization required for database seeding
       const authToken = req.headers["x-admin-token"] || req.query.token;
       const expectedToken = process.env.ADMIN_SEED_TOKEN;
-      
+
       if (!expectedToken || authToken !== expectedToken) {
         return res.status(401).json({ error: "Unauthorized. ADMIN_SEED_TOKEN must be configured." });
       }
-      
+
       const insertedCount = await seedEnhancedFWARules();
       res.json({
         success: true,
@@ -398,7 +404,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       }));
 
       const letter = response.choices[0]?.message?.content || "Unable to generate letter.";
-      
+
       res.json({ letter });
     } catch (error) {
       handleRouteError(res, error, "/api/generate-letter", "generate letter");
@@ -416,17 +422,17 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       const actionPendingCases = cases.filter((c) => c.status === "action_pending").length;
       const resolvedCases = cases.filter((c) => c.status === "resolved").length;
       const escalatedCases = cases.filter((c) => c.status === "escalated").length;
-      
+
       const criticalCases = cases.filter((c) => c.priority === "critical").length;
       const highPriorityCases = cases.filter((c) => c.priority === "high").length;
-      
+
       let totalAmount = 0;
       let totalRecovery = 0;
       for (const c of cases) {
         totalAmount += parseFloat(c.totalAmount || "0");
         totalRecovery += parseFloat(c.recoveryAmount || "0");
       }
-      
+
       res.json({
         totalCases,
         draftCases,
@@ -450,7 +456,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
     try {
       const { db } = await import("../db");
       const { sql } = await import("drizzle-orm");
-      
+
       // Get case statistics - actual recovery amounts from resolved cases
       const cases = await storage.getFwaCases();
       const resolvedCases = cases.filter(c => c.status === "resolved").length;
@@ -460,7 +466,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         totalRecovery += parseFloat(c.recoveryAmount || "0");
         totalFlaggedAmount += parseFloat(c.totalAmount || "0");
       }
-      
+
       // Get detection results statistics with actual amounts flagged
       const detectionStats = await db.execute(sql`
         SELECT 
@@ -478,7 +484,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           END), 0) as preventive_savings
         FROM fwa_detection_results
       `);
-      
+
       // Get category breakdown from FWA cases
       const categoryBreakdown = await db.execute(sql`
         SELECT 
@@ -487,7 +493,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         FROM fwa_cases
         GROUP BY category
       `);
-      
+
       // Get monthly trends (last 6 months) 
       const monthlyTrends = await db.execute(sql`
         SELECT 
@@ -501,7 +507,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         GROUP BY TO_CHAR(created_at, 'Mon'), EXTRACT(MONTH FROM created_at)
         ORDER BY month_num
       `);
-      
+
       // Get top flagged providers - aggregate by provider and sort by highest risk
       const topProviders = await db.execute(sql`
         WITH provider_stats AS (
@@ -531,28 +537,28 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         ORDER BY ps.risk_score DESC NULLS LAST
         LIMIT 5
       `);
-      
+
       const stats = detectionStats.rows?.[0] || {};
       const avgDetectionTimeHours = (parseFloat(String(stats.avg_detection_time_ms || 0)) / 1000 / 60 / 60).toFixed(2);
       const preventiveSavings = parseFloat(String(stats.preventive_savings || 0));
-      
+
       // Format category breakdown - no mock fallback
       const categories = (categoryBreakdown.rows || []).map((row: any) => ({
         name: String(row.category || "unknown").charAt(0).toUpperCase() + String(row.category || "unknown").slice(1),
         value: parseInt(String(row.count || 0)),
-        color: row.category === "coding" ? "#f43f5e" : 
-               row.category === "management" ? "#f59e0b" : 
-               row.category === "physician" ? "#3b82f6" : 
-               row.category === "patient" ? "#a855f7" : "#6b7280"
+        color: row.category === "coding" ? "#f43f5e" :
+          row.category === "management" ? "#f59e0b" :
+            row.category === "physician" ? "#3b82f6" :
+              row.category === "patient" ? "#a855f7" : "#6b7280"
       }));
-      
+
       // Format monthly data
       const monthlyData = (monthlyTrends.rows || []).map((row: any) => ({
         month: String(row.month || ""),
         preventive: parseFloat(String(row.flagged_amount || 0)),
         recovery: parseFloat(String(row.recovered_amount || 0))
       }));
-      
+
       // Format top providers - unique, with proper names
       const seenProviders = new Set<string>();
       const providers = (topProviders.rows || [])
@@ -568,10 +574,10 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           riskScore: parseFloat(String(row.risk_score || 0)),
           flaggedClaims: parseInt(String(row.flagged_claims || 0)),
           totalAmount: parseFloat(String(row.total_amount || 0)),
-          status: row.risk_level === "critical" ? "Investigation" : 
-                  row.risk_level === "high" ? "Under Review" : "Monitoring"
+          status: row.risk_level === "critical" ? "Investigation" :
+            row.risk_level === "high" ? "Under Review" : "Monitoring"
         }));
-      
+
       // Calculate actual impact from real data
       // prospectiveImpact = flagged amounts from high/medium risk detections (live claims)
       // retrospectiveFindings = actual recovered amounts from resolved cases (historical)
@@ -594,12 +600,97 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
     }
   });
 
+  const defaultDetectionConfigs = [
+    {
+      method: "rule_engine",
+      name: "Rule Engine",
+      description: "Deterministic pattern matching against curated FWA policy and billing rules.",
+      isEnabled: true,
+      weight: "0.35",
+      threshold: "0.70",
+    },
+    {
+      method: "statistical_learning",
+      name: "Statistical Learning",
+      description: "Peer comparison and z-score based outlier detection across provider and claim behavior.",
+      isEnabled: true,
+      weight: "0.25",
+      threshold: "0.70",
+    },
+    {
+      method: "unsupervised_learning",
+      name: "Unsupervised Learning",
+      description: "Anomaly detection using clustering and isolation techniques without labeled data.",
+      isEnabled: true,
+      weight: "0.20",
+      threshold: "0.70",
+    },
+    {
+      method: "rag_llm",
+      name: "RAG/LLM Analysis",
+      description: "Contextual risk analysis using retrieval-augmented generation over regulatory and clinical knowledge.",
+      isEnabled: true,
+      weight: "0.20",
+      threshold: "0.70",
+    },
+    {
+      method: "semantic_validation",
+      name: "Semantic Validation",
+      description: "ICD-10/CPT semantic similarity checks for clinical plausibility validation.",
+      isEnabled: true,
+      weight: "0.15",
+      threshold: "0.70",
+    },
+  ] as const;
+
+  const ensureDetectionConfigsSeeded = async () => {
+    const { db } = await import("../db");
+    const { fwaDetectionConfigs } = await import("@shared/schema");
+
+    const existingConfigs = await db.select().from(fwaDetectionConfigs);
+    const existingMethods = new Set(existingConfigs.map((config) => config.method));
+    const missingConfigs = defaultDetectionConfigs.filter((config) => !existingMethods.has(config.method));
+
+    if (missingConfigs.length > 0) {
+      await db.insert(fwaDetectionConfigs).values(
+        missingConfigs.map((config) => ({
+          method: config.method,
+          name: config.name,
+          description: config.description,
+          isEnabled: config.isEnabled,
+          weight: config.weight,
+          threshold: config.threshold,
+        }))
+      );
+    }
+
+    const seededConfigs = missingConfigs.length > 0
+      ? await db.select().from(fwaDetectionConfigs)
+      : existingConfigs;
+
+    // Deduplicate by method and prefer the latest updated record.
+    const dedupedByMethod = new Map<string, typeof seededConfigs[number]>();
+    for (const config of seededConfigs) {
+      const current = dedupedByMethod.get(config.method);
+      if (!current) {
+        dedupedByMethod.set(config.method, config);
+        continue;
+      }
+
+      const currentUpdated = current.updatedAt ? new Date(current.updatedAt).getTime() : 0;
+      const nextUpdated = config.updatedAt ? new Date(config.updatedAt).getTime() : 0;
+      if (nextUpdated >= currentUpdated) {
+        dedupedByMethod.set(config.method, config);
+      }
+    }
+
+    return defaultDetectionConfigs.map((defaultConfig) => dedupedByMethod.get(defaultConfig.method)).filter(Boolean);
+  };
+
   // GET /api/fwa/detection/configs - Get all detection method configurations
   app.get("/api/fwa/detection/configs", async (req, res) => {
     try {
-      const { db } = await import("../db");
-      const { fwaDetectionConfigs } = await import("@shared/schema");
-      const configs = await db.select().from(fwaDetectionConfigs);
+      const configs = await ensureDetectionConfigsSeeded();
       res.json(configs);
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/detection/configs", "fetch detection configs");
@@ -611,21 +702,28 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
     try {
       const { method } = req.params;
       const { isEnabled, weight, threshold } = req.body;
-      
+      const validMethods = new Set(defaultDetectionConfigs.map((config) => config.method));
+      if (!validMethods.has(method as (typeof defaultDetectionConfigs)[number]["method"])) {
+        return res.status(400).json({ error: "Invalid detection method" });
+      }
+      const typedMethod = method as (typeof defaultDetectionConfigs)[number]["method"];
+
       const { db } = await import("../db");
       const { fwaDetectionConfigs } = await import("@shared/schema");
       const { eq } = await import("drizzle-orm");
-      
+
+      await ensureDetectionConfigsSeeded();
+
       const updates: any = { updatedAt: new Date() };
       if (isEnabled !== undefined) updates.isEnabled = isEnabled;
-      if (weight !== undefined) updates.weight = weight.toString();
-      if (threshold !== undefined) updates.threshold = threshold.toString();
-      
+      if (weight !== undefined) updates.weight = String(weight);
+      if (threshold !== undefined) updates.threshold = String(threshold);
+
       await db.update(fwaDetectionConfigs)
         .set(updates)
-        .where(eq(fwaDetectionConfigs.method, method));
-      
-      const updated = await db.select().from(fwaDetectionConfigs).where(eq(fwaDetectionConfigs.method, method));
+        .where(eq(fwaDetectionConfigs.method, typedMethod));
+
+      const updated = await db.select().from(fwaDetectionConfigs).where(eq(fwaDetectionConfigs.method, typedMethod)).limit(1);
       res.json(updated[0] || { message: "Config not found" });
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/detection/configs/:method", "update detection config");
@@ -745,7 +843,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       const { status, priority, phase, includeDetection } = req.query;
       const { db } = await import("../db");
       const { sql } = await import("drizzle-orm");
-      
+
       // Get cases with latest detection results joined
       const casesWithDetection = await db.execute(sql`
         SELECT 
@@ -773,7 +871,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         ) dr ON true
         ORDER BY c.created_at DESC
       `);
-      
+
       let cases = casesWithDetection.rows.map((row: any) => ({
         id: row.id,
         caseId: row.case_id,
@@ -805,7 +903,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         unsupervisedFindings: row.unsupervised_findings,
         ragLlmFindings: row.rag_llm_findings
       }));
-      
+
       if (status && typeof status === "string") {
         cases = cases.filter((c: any) => c.status === status);
       }
@@ -815,7 +913,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       if (phase && typeof phase === "string") {
         cases = cases.filter((c: any) => c.phase === phase);
       }
-      
+
       res.json(cases);
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/cases", "fetch FWA cases");
@@ -861,10 +959,10 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       if (!parsed.success) {
         return res.status(400).json({ error: "Invalid request body", details: parsed.error.errors });
       }
-      
+
       // First try to update by the provided id
       let fwaCase = await storage.updateFwaCase(req.params.id, parsed.data);
-      
+
       // If not found, try to find the case by caseId or claimId and update using its UUID
       if (!fwaCase) {
         let existingCase = await storage.getFwaCaseById(req.params.id);
@@ -880,7 +978,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           fwaCase = await storage.updateFwaCase(existingCase.id, parsed.data);
         }
       }
-      
+
       if (!fwaCase) {
         return res.status(404).json({ error: "FWA case not found" });
       }
@@ -906,8 +1004,8 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         return res.status(404).json({ error: "FWA case not found" });
       }
 
-      const entityType = fwaCase.providerId && fwaCase.providerId !== "N/A" ? "provider" : 
-                         fwaCase.patientId && fwaCase.patientId !== "N/A" ? "patient" : "provider";
+      const entityType = fwaCase.providerId && fwaCase.providerId !== "N/A" ? "provider" :
+        fwaCase.patientId && fwaCase.patientId !== "N/A" ? "patient" : "provider";
       const entityId = entityType === "provider" ? fwaCase.providerId : fwaCase.patientId;
       const entityData = getEntityData(entityType, entityId || "unknown");
 
@@ -958,10 +1056,10 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           createdItems.push(created);
         }
       } else if (targetPhase === "a3_action") {
-        const baseRecovery = typeof agentResult.metrics.recoveryPotential === 'number' 
-          ? agentResult.metrics.recoveryPotential 
+        const baseRecovery = typeof agentResult.metrics.recoveryPotential === 'number'
+          ? agentResult.metrics.recoveryPotential
           : parseFloat(String(agentResult.metrics.recoveryPotential).replace(/[^0-9.]/g, '')) || 0;
-        
+
         for (const rec of agentResult.recommendations) {
           const isRecovery = rec.action.toLowerCase().includes("recover") || rec.action.toLowerCase().includes("payment") || rec.action.toLowerCase().includes("refund");
           const created = await storage.createFwaAction({
@@ -983,7 +1081,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         "a3_action": "action_pending"
       };
 
-      await storage.updateFwaCase(fwaCase.id, { 
+      await storage.updateFwaCase(fwaCase.id, {
         phase: targetPhase as any,
         status: statusMap[targetPhase] as any
       });
@@ -1131,18 +1229,18 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       if (!fwaCase) {
         return res.json([]);
       }
-      
+
       // Try multiple strategies to find claim and services
       let services: any[] = [];
-      
+
       // Strategy 1: Look up claim by claimNumber
       let claim = await db.select().from(claims).where(eq(claims.claimNumber, fwaCase.claimId)).limit(1);
-      
+
       // Strategy 2: Look up claim by id if claimNumber didn't match
       if (claim.length === 0) {
         claim = await db.select().from(claims).where(eq(claims.id, fwaCase.claimId)).limit(1);
       }
-      
+
       // Strategy 3: Try to find services directly by the case's claimId
       if (claim.length === 0) {
         services = await db.select().from(fwaClaimServices).where(eq(fwaClaimServices.claimId, fwaCase.claimId));
@@ -1150,19 +1248,19 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         // Found the claim, get services by claim.id
         services = await db.select().from(fwaClaimServices).where(eq(fwaClaimServices.claimId, claim[0].id));
       }
-      
+
       // Strategy 4: If still no services found, generate realistic mock services based on case data
       if (services.length === 0 && fwaCase) {
         const totalAmount = parseFloat(fwaCase.totalAmount as string) || 5000;
         const claimType = fwaCase.claimType || "Outpatient";
         const flagReason = fwaCase.flagReason || "";
-        
+
         // Generate 2-5 services based on claim type and amount
         const serviceCount = Math.min(5, Math.max(2, Math.floor(totalAmount / 2000)));
         const baseAmount = totalAmount / serviceCount;
-        
+
         const serviceTemplates = getServiceTemplatesForClaimType(claimType, flagReason);
-        
+
         for (let i = 0; i < serviceCount; i++) {
           const template = serviceTemplates[i % serviceTemplates.length];
           const variance = 0.8 + Math.random() * 0.4; // 80-120% of base amount
@@ -1183,19 +1281,19 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           });
         }
       }
-      
+
       res.json(services);
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/cases/:id/services", "fetch claim services");
     }
   });
-  
+
   // Helper function to generate realistic service templates based on claim type
-  function getServiceTemplatesForClaimType(claimType: string, flagReason: string): Array<{code: string; name: string; quantity?: number; diagnosisCode: string; modifiers?: string; notes?: string}> {
+  function getServiceTemplatesForClaimType(claimType: string, flagReason: string): Array<{ code: string; name: string; quantity?: number; diagnosisCode: string; modifiers?: string; notes?: string }> {
     const isUpcoding = flagReason.toLowerCase().includes("upcod");
     const isDuplicate = flagReason.toLowerCase().includes("duplicate");
     const isUnbundling = flagReason.toLowerCase().includes("unbundl");
-    
+
     if (claimType === "Inpatient") {
       return [
         { code: "99223", name: "Hospital admission - high severity", diagnosisCode: "I21.9", notes: isUpcoding ? "High-level E/M code - verify medical necessity" : null },
@@ -1279,10 +1377,22 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
     try {
       const { db } = await import("../db");
       const { sql } = await import("drizzle-orm");
-      
-      // Use pre-computed provider detection results for fast query
+
+      // Use pre-computed provider detection results for fast query,
+      // enriched with actual claims data from fwa_analyzed_claims
       const providers = await db.execute(sql`
-        SELECT 
+        WITH claim_aggs AS (
+          SELECT
+            provider_id,
+            COUNT(*)::int as claim_count,
+            COUNT(DISTINCT patient_id)::int as patient_count,
+            COALESCE(SUM(amount::numeric), 0) as total_exposure,
+            COALESCE(AVG(amount::numeric), 0) as avg_amount
+          FROM claims
+          WHERE provider_id IS NOT NULL
+          GROUP BY provider_id
+        )
+        SELECT
           pdr.provider_id,
           COALESCE(pdr.composite_score, 0) as avg_risk_score,
           COALESCE(pdr.composite_score, 0) as max_risk_score,
@@ -1290,21 +1400,22 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           pdr.rule_engine_score,
           pdr.statistical_score,
           pdr.unsupervised_score,
-          pdr.rag_score,
+          pdr.rag_llm_score as rag_score,
           pdr.semantic_score,
           pdr.analyzed_at as last_detection_date,
-          COALESCE((pdr.aggregated_metrics->>'totalClaims')::integer, fs.claim_count, 0) as total_claims,
-          COALESCE(fs.unique_patients, 0) as unique_patients,
-          COALESCE((pdr.aggregated_metrics->>'totalExposure')::numeric, fs.total_amount, 0) as total_exposure,
+          COALESCE((pdr.aggregated_metrics->>'totalClaims')::integer, ca.claim_count, fs.claim_count, 0) as total_claims,
+          COALESCE(ca.patient_count, fs.unique_patients, 0) as unique_patients,
+          COALESCE((pdr.aggregated_metrics->>'totalExposure')::numeric, ca.total_exposure, fs.total_amount, 0) as total_exposure,
           pd.name as provider_name,
           pd.specialty
         FROM fwa_provider_detection_results pdr
+        LEFT JOIN claim_aggs ca ON ca.provider_id = pdr.provider_id
         LEFT JOIN fwa_feature_store fs ON fs.entity_id = pdr.provider_id AND fs.entity_type = 'provider'
         LEFT JOIN provider_directory pd ON pd.id = pdr.provider_id
         ORDER BY pdr.composite_score DESC NULLS LAST
         LIMIT 20
       `);
-      
+
       // Helper to safely parse numeric values
       const safeNum = (val: any, fallback: number = 0): number => {
         if (val === null || val === undefined) return fallback;
@@ -1345,11 +1456,11 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         const uniquePatients = parseInt(p.unique_patients) || 0;
         // Calculate risk level dynamically from score instead of using stored value
         const riskLevel = calculateRiskLevel(avgRiskScore);
-        
+
         // Determine flagged status from pre-computed risk level
         const isHighRisk = riskLevel === 'high' || riskLevel === 'critical';
         const isCritical = riskLevel === 'critical';
-        
+
         // Generate meaningful reasons based on actual data
         const reasons: string[] = [];
         if (isCritical) reasons.push("Critical risk level detected");
@@ -1361,9 +1472,9 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         if (reasons.length === 0) reasons.push("Routine monitoring - no significant concerns");
 
         // Get provider name from mapping or generate from ID
-        const providerName = p.provider_name || providerNames[providerId] || 
-          (providerId.startsWith('PRV-GEN') ? `Saudi Healthcare Provider ${providerId.replace('PRV-GEN-', '')}` : 
-           `Provider ${providerId.substring(0, 8)}`);
+        const providerName = p.provider_name || providerNames[providerId] ||
+          (providerId.startsWith('PRV-GEN') ? `Saudi Healthcare Provider ${providerId.replace('PRV-GEN-', '')}` :
+            `Provider ${providerId.substring(0, 8)}`);
 
         return {
           id: `p${idx + 1}`,
@@ -1390,7 +1501,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           updatedAt: new Date()
         };
       });
-      
+
       res.json(formattedProviders);
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/high-risk-providers", "fetch high-risk providers");
@@ -1403,7 +1514,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       const { providerId } = req.params;
       const { db } = await import("../db");
       const { sql } = await import("drizzle-orm");
-      
+
       // Provider name mapping
       const providerNames: Record<string, string> = {
         'PRV-GEN-0001': 'مستشفى الحبيب (Al Habib Hospital)',
@@ -1417,7 +1528,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         'PRV-GEN-0009': 'مركز جدة الطبي (Jeddah Medical Center)',
         'PRV-GEN-0010': 'مستشفى الدمام المركزي (Dammam Central Hospital)',
       };
-      
+
       // Get provider summary from detection results directly (not feature store)
       const providerStats = await db.execute(sql`
         SELECT 
@@ -1435,7 +1546,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         WHERE provider_id = ${providerId}
         GROUP BY provider_id
       `);
-      
+
       // Get claim amounts from provider detection results (aggregated_metrics) or fallback to analyzed claims
       const providerExposure = await db.execute(sql`
         SELECT 
@@ -1445,7 +1556,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         FROM fwa_provider_detection_results
         WHERE provider_id = ${providerId}
       `);
-      
+
       // Fallback to analyzed claims if aggregated_metrics not available
       const claimAmounts = await db.execute(sql`
         SELECT 
@@ -1455,7 +1566,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         LEFT JOIN fwa_analyzed_claims ac ON dr.claim_id = ac.id
         WHERE dr.provider_id = ${providerId}
       `);
-      
+
       // Get all claims for this provider with detection results
       const providerClaims = await db.execute(sql`
         SELECT 
@@ -1484,7 +1595,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         ORDER BY dr.analyzed_at DESC
         LIMIT 50
       `);
-      
+
       // Get rule hit summary for this provider - use 'description' field (actual field name in data)
       const ruleHits = await db.execute(sql`
         WITH expanded_rules AS (
@@ -1518,34 +1629,34 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         ORDER BY hit_count DESC
         LIMIT 20
       `);
-      
+
       const stats = providerStats.rows[0] as any;
       const exposure = providerExposure.rows[0] as any;
       const amounts = claimAmounts.rows[0] as any;
-      
+
       // Safely parse numeric values
       const safeNum = (val: any, fallback: number = 0): number => {
         if (val === null || val === undefined) return fallback;
         const num = parseFloat(String(val));
         return Number.isFinite(num) ? num : fallback;
       };
-      
+
       // Calculate computed statistics - prefer aggregated_metrics over fallback
       const avgRiskScore = stats ? safeNum(stats.avg_risk_score, 0) : 0;
       const maxRiskScore = stats ? safeNum(stats.max_risk_score, 0) : 0;
       const highRiskCount = stats ? parseInt(stats.high_risk_count) || 0 : 0;
       const criticalCount = stats ? parseInt(stats.critical_count) || 0 : 0;
       // Use aggregated_metrics first, then fallback to stats
-      const claimCount = exposure?.total_claims > 0 
-        ? parseInt(exposure.total_claims) 
+      const claimCount = exposure?.total_claims > 0
+        ? parseInt(exposure.total_claims)
         : (stats ? parseInt(stats.claim_count) || 0 : 0);
-      const totalAmount = exposure?.total_exposure > 0 
-        ? safeNum(exposure.total_exposure, 0) 
+      const totalAmount = exposure?.total_exposure > 0
+        ? safeNum(exposure.total_exposure, 0)
         : (amounts ? safeNum(amounts.total_amount, 0) : 0);
-      const avgClaimAmount = exposure?.avg_claim_amount > 0 
-        ? safeNum(exposure.avg_claim_amount, 0) 
+      const avgClaimAmount = exposure?.avg_claim_amount > 0
+        ? safeNum(exposure.avg_claim_amount, 0)
         : (amounts ? safeNum(amounts.avg_claim_amount, 0) : 0);
-      
+
       // Generate risk explanation summary based on real data
       const riskExplanation: string[] = [];
       if (stats) {
@@ -1570,12 +1681,12 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       } else {
         riskExplanation.push("No detection data available for this provider");
       }
-      
+
       // Get provider name
-      const providerName = providerNames[providerId] || 
-        (providerId.startsWith('PRV-GEN') ? `Saudi Healthcare Provider ${providerId.replace('PRV-GEN-', '')}` : 
-         `Provider ${providerId.substring(0, 8)}`);
-      
+      const providerName = providerNames[providerId] ||
+        (providerId.startsWith('PRV-GEN') ? `Saudi Healthcare Provider ${providerId.replace('PRV-GEN-', '')}` :
+          `Provider ${providerId.substring(0, 8)}`);
+
       res.json({
         providerId,
         providerName,
@@ -1591,8 +1702,8 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           firstDetection: stats.first_detection,
           lastDetection: stats.last_detection,
           riskLevel: avgRiskScore >= 40 || criticalCount >= 3 ? 'critical' :
-                     avgRiskScore >= 30 || highRiskCount >= 5 ? 'high' :
-                     avgRiskScore >= 20 || highRiskCount >= 2 ? 'medium' : 'low'
+            avgRiskScore >= 30 || highRiskCount >= 5 ? 'high' :
+              avgRiskScore >= 20 || highRiskCount >= 2 ? 'medium' : 'low'
         } : null,
         riskExplanation,
         claims: providerClaims.rows.map((c: any) => ({
@@ -1639,7 +1750,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       const { memberId } = req.params;
       const { db } = await import("../db");
       const { sql } = await import("drizzle-orm");
-      
+
       // Get patient stats from feature store
       const patientStats = await db.execute(sql`
         SELECT 
@@ -1656,7 +1767,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         WHERE entity_type = 'patient' AND entity_id = ${memberId}
         LIMIT 1
       `);
-      
+
       // Get all detection results for this patient
       const patientClaims = await db.execute(sql`
         SELECT 
@@ -1680,15 +1791,15 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         ORDER BY dr.analyzed_at DESC
         LIMIT 50
       `);
-      
+
       const stats = patientStats.rows[0] as any;
-      
+
       // Generate patient-specific risk explanation
       const riskExplanation: string[] = [];
       if (stats) {
         const zScore = parseFloat(stats.z_score) || 0;
         const claimCount = parseInt(stats.claim_count) || 0;
-        
+
         if (claimCount > 50) {
           riskExplanation.push(`HIGH claim frequency: ${claimCount} claims on record. This is significantly above average patient utilization.`);
         }
@@ -1696,13 +1807,13 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           riskExplanation.push(`Statistical anomaly detected in utilization patterns (z-score: ${zScore.toFixed(2)}).`);
         }
       }
-      
+
       // Analyze provider diversity
       const uniqueProviders = new Set(patientClaims.rows.map((c: any) => c.provider_id)).size;
       if (uniqueProviders > 10) {
         riskExplanation.push(`Doctor shopping indicator: Patient has visited ${uniqueProviders} different providers.`);
       }
-      
+
       res.json({
         memberId,
         summary: stats ? {
@@ -1743,7 +1854,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       const { doctorId } = req.params;
       const { db } = await import("../db");
       const { sql } = await import("drizzle-orm");
-      
+
       // Get doctor stats from doctor_360 table (most complete data)
       const doctorStats = await db.execute(sql`
         SELECT 
@@ -1771,7 +1882,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         WHERE d.doctor_id = ${doctorId}
         LIMIT 1
       `);
-      
+
       // Get detection results for this doctor (join via practitioner_license)
       const doctorClaims = await db.execute(sql`
         SELECT 
@@ -1795,13 +1906,13 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         ORDER BY dr.analyzed_at DESC
         LIMIT 50
       `);
-      
+
       const stats = doctorStats.rows[0] as any;
-      
+
       // Parse claims_summary from doctor_360
       const claimsSummary = stats?.claims_summary || {};
       const practicePatterns = stats?.practice_patterns || {};
-      
+
       // Generate doctor-specific risk explanation
       const riskExplanation: string[] = [];
       if (stats) {
@@ -1809,7 +1920,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         const zScore = parseFloat(stats.z_score) || 0;
         const avgClaim = parseFloat(stats.avg_claim_amount) || claimsSummary.avg_amount || 0;
         const rejectionRate = parseFloat(stats.rejection_rate) || 0;
-        
+
         if (riskScore > 50) {
           riskExplanation.push(`Elevated risk score (${riskScore.toFixed(1)}%). This doctor has been flagged for further review.`);
         }
@@ -1823,7 +1934,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           riskExplanation.push(`Elevated rejection rate (${(rejectionRate * 100).toFixed(1)}%): Claims are frequently denied.`);
         }
       }
-      
+
       res.json({
         doctorId,
         doctorName: stats?.doctor_name || `Dr. ${doctorId}`,
@@ -1878,7 +1989,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       const { providerId } = req.params;
       const { db } = await import("../db");
       const { sql } = await import("drizzle-orm");
-      
+
       // 1. Get provider summary from detection_results (same source as high-risk entities)
       const providerStats = await db.execute(sql`
         SELECT 
@@ -1894,7 +2005,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         WHERE provider_id = ${providerId}
         GROUP BY provider_id
       `);
-      
+
       // Get total exposure and 5-method scores from provider detection results
       const providerExposure = await db.execute(sql`
         SELECT 
@@ -1907,7 +2018,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           statistical_score,
           unsupervised_score,
           rag_llm_score,
-          rag_score,
+          rag_llm_score,
           semantic_score,
           risk_factors,
           matched_rules,
@@ -1918,7 +2029,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         FROM fwa_provider_detection_results
         WHERE provider_id = ${providerId}
       `);
-      
+
       // Fallback to analyzed claims if aggregated_metrics not available
       const claimAmounts = await db.execute(sql`
         SELECT 
@@ -1928,7 +2039,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         LEFT JOIN fwa_analyzed_claims ac ON dr.claim_id = ac.id
         WHERE dr.provider_id = ${providerId}
       `);
-      
+
       // 2. Get ALL claims with detection results for this provider (fix JOIN to use ac.id)
       const allClaims = await db.execute(sql`
         SELECT 
@@ -1963,7 +2074,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         ORDER BY dr.composite_score DESC NULLS LAST
         LIMIT 100
       `);
-      
+
       // 3. Get rule violation summary - use 'description' field (actual field name in data)
       const ruleViolations = await db.execute(sql`
         WITH expanded_rules AS (
@@ -2006,7 +2117,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           )
         ORDER BY hit_count DESC
       `);
-      
+
       // 4. Get enforcement history if any
       const enforcements = await db.execute(sql`
         SELECT 
@@ -2018,7 +2129,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         ORDER BY created_at DESC
         LIMIT 10
       `);
-      
+
       // 5. Get provider complaints if any
       const complaints = await db.execute(sql`
         SELECT 
@@ -2030,31 +2141,31 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         ORDER BY received_date DESC
         LIMIT 10
       `);
-      
+
       const stats = providerStats.rows[0] as any;
       const exposure = providerExposure.rows[0] as any;
       const amounts = claimAmounts.rows[0] as any;
-      
+
       // Calculate values - prefer aggregated_metrics over detection_results
-      const claimCount = exposure?.total_claims > 0 
-        ? parseInt(exposure.total_claims) 
+      const claimCount = exposure?.total_claims > 0
+        ? parseInt(exposure.total_claims)
         : (parseInt(stats?.claim_count) || 0);
-      const totalAmount = exposure?.total_exposure > 0 
-        ? parseFloat(exposure.total_exposure) 
+      const totalAmount = exposure?.total_exposure > 0
+        ? parseFloat(exposure.total_exposure)
         : (parseFloat(amounts?.total_amount) || 0);
-      
+
       // Use provider-level composite score (this is the accurate risk score)
       const providerCompositeScore = parseFloat(exposure?.composite_score) || 0;
-      const avgRiskScore = providerCompositeScore > 0 
-        ? providerCompositeScore 
+      const avgRiskScore = providerCompositeScore > 0
+        ? providerCompositeScore
         : (parseFloat(stats?.avg_risk_score) || 0);
       const maxRiskScore = parseFloat(stats?.max_risk_score) || 0;
       const highRiskCount = parseInt(stats?.high_risk_count) || 0;
       const criticalCount = parseInt(stats?.critical_count) || 0;
-      
+
       // Use provider composite score as the risk score (correct value from fwa_provider_detection_results)
       let riskScore = avgRiskScore;
-      
+
       // Calculate dynamic risk level based on adjusted thresholds (matching actual score distribution ~45% max)
       const calculateDynamicRiskLevel = (score: number): string => {
         if (score >= 40) return 'CRITICAL';
@@ -2063,7 +2174,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         if (score >= 10) return 'LOW';
         return 'MINIMAL';
       };
-      
+
       // Parse provider-level 5-method scores for the report
       const providerMethodScores = {
         ruleEngine: parseFloat(exposure?.rule_engine_score) || 0,
@@ -2072,18 +2183,18 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         ragLlm: parseFloat(exposure?.rag_llm_score || exposure?.rag_score) || 0,
         semantic: parseFloat(exposure?.semantic_score) || 0
       };
-      
+
       // Parse provider risk factors from detection results
-      const providerRiskFactors = Array.isArray(exposure?.risk_factors) 
-        ? exposure.risk_factors 
+      const providerRiskFactors = Array.isArray(exposure?.risk_factors)
+        ? exposure.risk_factors
         : [];
-      const providerAnomalyIndicators = Array.isArray(exposure?.anomaly_indicators) 
-        ? exposure.anomaly_indicators 
+      const providerAnomalyIndicators = Array.isArray(exposure?.anomaly_indicators)
+        ? exposure.anomaly_indicators
         : [];
-      const providerFlaggedIndicators = Array.isArray(exposure?.flagged_indicators) 
-        ? exposure.flagged_indicators 
+      const providerFlaggedIndicators = Array.isArray(exposure?.flagged_indicators)
+        ? exposure.flagged_indicators
         : [];
-      
+
       // Get claims with elevated risk (include medium since most are minimal)
       // Sort by composite_score descending and take top claims
       const elevatedRiskClaims = allClaims.rows.filter((c: any) => {
@@ -2091,12 +2202,12 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         const level = c.composite_risk_level?.toLowerCase();
         return level === 'critical' || level === 'high' || level === 'medium' || score >= 10;
       });
-      
+
       // If no elevated claims, just take the top-scoring claims
-      const highRiskClaims = elevatedRiskClaims.length > 0 
-        ? elevatedRiskClaims 
+      const highRiskClaims = elevatedRiskClaims.length > 0
+        ? elevatedRiskClaims
         : allClaims.rows.slice(0, 20);
-      
+
       // Generate executive summary with dynamic risk level
       const dynamicRiskLevel = calculateDynamicRiskLevel(riskScore);
       const executiveSummary = {
@@ -2112,10 +2223,10 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         // Add 5-method scores at executive summary level
         methodScores: providerMethodScores
       };
-      
+
       // Generate risk factors summary with explanations (based on detection results)
-      const riskFactorsSummary: Array<{factor: string; severity: string; explanation: string}> = [];
-      
+      const riskFactorsSummary: Array<{ factor: string; severity: string; explanation: string }> = [];
+
       // First, add provider-level risk factors from detection results (actual stored data)
       providerRiskFactors.forEach((factor: string) => {
         if (factor && typeof factor === 'string') {
@@ -2126,7 +2237,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           });
         }
       });
-      
+
       // Add anomaly indicators from provider detection
       providerAnomalyIndicators.forEach((indicator: string) => {
         if (indicator && typeof indicator === 'string') {
@@ -2137,7 +2248,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           });
         }
       });
-      
+
       // Add flagged indicators from provider detection
       providerFlaggedIndicators.forEach((indicator: string) => {
         if (indicator && typeof indicator === 'string') {
@@ -2148,7 +2259,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           });
         }
       });
-      
+
       // Add risk score based factors
       if (riskScore >= 40) {
         riskFactorsSummary.push({
@@ -2163,7 +2274,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           explanation: `Provider has a composite risk score of ${riskScore.toFixed(1)}%, exceeding the high-risk threshold of 30%. Review recommended.`
         });
       }
-      
+
       if (criticalCount > 0) {
         riskFactorsSummary.push({
           factor: 'Critical Risk Claims',
@@ -2171,7 +2282,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           explanation: `${criticalCount} claim(s) flagged as critical risk requiring immediate review. These claims show significant anomalies in billing patterns, amounts, or documentation.`
         });
       }
-      
+
       if (highRiskCount > 0) {
         riskFactorsSummary.push({
           factor: 'High Risk Claims',
@@ -2179,7 +2290,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           explanation: `${highRiskCount} claim(s) flagged as high risk with potential FWA indicators. These claims require detailed investigation.`
         });
       }
-      
+
       // Add 5-method score based factors
       if (providerMethodScores.ruleEngine > 0) {
         riskFactorsSummary.push({
@@ -2188,7 +2299,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           explanation: `Rule engine score: ${providerMethodScores.ruleEngine.toFixed(1)}%. Policy violations detected based on CHI regulatory rules and billing pattern analysis.`
         });
       }
-      
+
       if (providerMethodScores.statistical > 0) {
         riskFactorsSummary.push({
           factor: 'Statistical Anomaly',
@@ -2196,7 +2307,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           explanation: `Statistical score: ${providerMethodScores.statistical.toFixed(1)}%. Billing patterns deviate significantly from peer providers in the same specialty.`
         });
       }
-      
+
       if (providerMethodScores.unsupervised > 0) {
         riskFactorsSummary.push({
           factor: 'Unsupervised Learning Detection',
@@ -2204,7 +2315,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           explanation: `Unsupervised score: ${providerMethodScores.unsupervised.toFixed(1)}%. Anomaly detection identified unusual claim patterns using clustering analysis.`
         });
       }
-      
+
       if (providerMethodScores.ragLlm > 0) {
         riskFactorsSummary.push({
           factor: 'AI/LLM Analysis',
@@ -2212,7 +2323,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           explanation: `RAG/LLM score: ${providerMethodScores.ragLlm.toFixed(1)}%. AI analysis found contextual risk indicators from knowledge base comparison.`
         });
       }
-      
+
       if (providerMethodScores.semantic > 0) {
         riskFactorsSummary.push({
           factor: 'Semantic Validation',
@@ -2220,7 +2331,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           explanation: `Semantic score: ${providerMethodScores.semantic.toFixed(1)}%. Diagnosis-procedure code matching identified potential clinical inconsistencies.`
         });
       }
-      
+
       // Add top rule violations to risk factors
       ruleViolations.rows.slice(0, 3).forEach((r: any) => {
         riskFactorsSummary.push({
@@ -2229,7 +2340,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           explanation: r.explanation || `Triggered ${r.hit_count} times. Category: ${r.category || 'General'}`
         });
       });
-      
+
       // Generate recommended actions
       const recommendedActions: string[] = [];
       if (executiveSummary.providerRiskLevel === 'CRITICAL') {
@@ -2248,7 +2359,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         recommendedActions.push('Continue routine monitoring');
         recommendedActions.push('No immediate action required');
       }
-      
+
       // Build comprehensive report
       const auditReport = {
         reportMetadata: {
@@ -2332,7 +2443,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           resolution: c.resolution
         }))
       };
-      
+
       res.json(auditReport);
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/providers/:providerId/audit-report", "generate provider audit report");
@@ -2343,7 +2454,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
   app.get("/api/fwa/agent-configs", async (req, res) => {
     try {
       let configs = await storage.getFwaAgentConfigs();
-      
+
       if (configs.length === 0) {
         const defaultConfigs = [
           { agentName: "A1: Analysis Agent", agentType: "analysis" as const, enabled: true, threshold: "0.75", parameters: { description: "Performs root cause analysis on flagged claims, providers, and denial patterns", autoAction: true } as Record<string, any> },
@@ -2354,7 +2465,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         await Promise.all(defaultConfigs.map(c => storage.createFwaAgentConfig(c as InsertFwaAgentConfig)));
         configs = await storage.getFwaAgentConfigs();
       }
-      
+
       res.json(configs);
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/agent-configs", "fetch FWA agent configs");
@@ -2366,7 +2477,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
     try {
       const { enabled, parameters, threshold } = req.body;
       const updateData: Partial<InsertFwaAgentConfig> = {};
-      
+
       if (enabled !== undefined) {
         updateData.enabled = Boolean(enabled);
       }
@@ -2379,7 +2490,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           updateData.threshold = thresholdNum.toFixed(2);
         }
       }
-      
+
       const config = await storage.updateFwaAgentConfigByType(req.params.agentType, updateData);
       if (!config) {
         return res.status(404).json({ error: "FWA agent config not found" });
@@ -2396,7 +2507,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       const { db } = await import("../db");
       const { fwaDetectionResults, fwaAnalyzedClaims } = await import("@shared/schema");
       const { eq, sql, desc, inArray } = await import("drizzle-orm");
-      
+
       // Get high-scoring detection results as work queue items
       // Optimized: Use index on composite_score with simple WHERE/ORDER
       const results = await db.execute(sql`
@@ -2421,7 +2532,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         ORDER BY dr.composite_score DESC NULLS LAST
         LIMIT 50
       `);
-      
+
       const workQueue = results.rows.map((r: any, idx: number) => ({
         id: `wq${idx + 1}`,
         claimId: r.claim_id,
@@ -2442,7 +2553,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         createdAt: r.analyzed_at || new Date(),
         updatedAt: r.analyzed_at || new Date()
       }));
-      
+
       res.json(workQueue);
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/workqueue", "fetch work queue");
@@ -2454,7 +2565,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
     try {
       const { db } = await import("../db");
       const { sql } = await import("drizzle-orm");
-      
+
       // Get patients directly from detection results
       const patients = await db.execute(sql`
         WITH detection_stats AS (
@@ -2474,14 +2585,13 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           HAVING COUNT(*) >= 1
         ),
         claim_amounts AS (
-          SELECT 
-            dr.patient_id,
-            COALESCE(SUM(CASE WHEN ac.total_amount IS NOT NULL THEN ac.total_amount::decimal ELSE 0 END), 0) as total_amount,
-            COALESCE(AVG(CASE WHEN ac.total_amount IS NOT NULL THEN ac.total_amount::decimal ELSE 0 END), 0) as avg_claim_amount
-          FROM fwa_detection_results dr
-          LEFT JOIN fwa_analyzed_claims ac ON dr.claim_id = ac.id
-          WHERE dr.patient_id IS NOT NULL
-          GROUP BY dr.patient_id
+          SELECT
+            patient_id,
+            COALESCE(SUM(amount::decimal), 0) as total_amount,
+            COALESCE(AVG(amount::decimal), 0) as avg_claim_amount
+          FROM claims
+          WHERE patient_id IS NOT NULL AND amount IS NOT NULL
+          GROUP BY patient_id
         )
         SELECT 
           ds.patient_id,
@@ -2519,7 +2629,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           ds.avg_risk_score DESC
         LIMIT 20
       `);
-      
+
       // Helper to safely parse numeric values
       const safeNum = (val: any, fallback: number = 0): number => {
         if (val === null || val === undefined) return fallback;
@@ -2550,7 +2660,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         const criticalCount = parseInt(p.critical_count) || 0;
         const totalClaims = parseInt(p.total_claims) || 0;
         const uniqueProviders = parseInt(p.unique_providers) || 0;
-        
+
         // Generate meaningful reasons based on actual data
         const reasons: string[] = [];
         if (uniqueProviders > 5) reasons.push("Doctor shopping pattern: Multiple providers visited");
@@ -2580,7 +2690,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           updatedAt: new Date()
         };
       });
-      
+
       res.json(formattedPatients);
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/high-risk-patients", "fetch high-risk patients");
@@ -2591,19 +2701,19 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
   app.get("/api/fwa/behaviors", async (req, res) => {
     try {
       let behaviors = await storage.getFwaBehaviors();
-      
+
       if (behaviors.length === 0) {
         const mockBehaviors = [
           { behaviorCode: "RU32", name: "Impossible Procedures - Gender Mismatch", description: "Detects claims for procedures that are impossible based on patient gender", category: "impossible_procedures" as const, severity: "fraud" as const, priority: "critical" as const, status: "active" as const, decision: "auto_reject" as const, rejectionMessage: "Claim rejected: Procedure is not applicable for patient gender", technicalLogic: "IF procedure IN (gender_specific_list) AND patient_gender != expected_gender THEN flag", dataRequired: ["patient_gender", "procedure_code", "icd10_code"], createdBy: "system" },
           { behaviorCode: "RU35", name: "Duplicate Claims - Same Day Service", description: "Identifies duplicate claims submitted for the same patient, provider, and service on the same day", category: "duplicate_claims" as const, severity: "waste" as const, priority: "high" as const, status: "active" as const, decision: "manual_review" as const, rejectionMessage: "Potential duplicate claim detected", technicalLogic: "IF EXISTS same (patient_id, provider_id, service_code, service_date) THEN flag", dataRequired: ["patient_id", "provider_id", "service_code", "service_date"], createdBy: "system" },
         ];
-        
+
         await Promise.all(mockBehaviors.map((b) => storage.createFwaBehavior(b)));
         behaviors = await storage.getFwaBehaviors();
       }
-      
+
       const { category, severity, status } = req.query;
-      
+
       if (category && typeof category === "string") {
         behaviors = behaviors.filter((b) => b.category === category);
       }
@@ -2613,7 +2723,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       if (status && typeof status === "string") {
         behaviors = behaviors.filter((b) => b.status === status);
       }
-      
+
       res.json(behaviors);
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/behaviors", "fetch FWA behaviors");
@@ -2679,7 +2789,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
     try {
       const { db } = await import("../db");
       const { sql } = await import("drizzle-orm");
-      
+
       // Get doctors from doctor_360 table (real data)
       // Prioritize by BOTH risk score AND exposure amount (weighted)
       // Filter out invalid doctor IDs (procedure names stored incorrectly)
@@ -2716,7 +2826,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           (LEAST(COALESCE((d.claims_summary->>'totalAmount')::numeric, 0) / 50000, 40) * 0.4) DESC
         LIMIT 20
       `);
-      
+
       // Helper to safely parse numeric values
       const safeNum = (val: any, fallback: number = 0): number => {
         if (val === null || val === undefined) return fallback;
@@ -2733,27 +2843,27 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         if (score >= 10) return "low";
         return "minimal";
       };
-      
+
       const formattedDoctors = doctors.rows.map((d: any, idx: number) => {
         const doctorId = d.doctor_id?.trim() || `DOC-${idx + 1}`;
         const riskScore = safeNum(d.risk_score, 0);
-        const claimsSummary = typeof d.claims_summary === 'string' 
-          ? JSON.parse(d.claims_summary) 
+        const claimsSummary = typeof d.claims_summary === 'string'
+          ? JSON.parse(d.claims_summary)
           : (d.claims_summary || {});
-        
+
         const totalClaims = parseInt(claimsSummary.totalClaims) || 0;
         const totalExposure = safeNum(claimsSummary.totalAmount, 0);
         const uniquePatients = parseInt(claimsSummary.uniquePatients) || 0;
         const avgClaimAmount = safeNum(claimsSummary.avgAmount, 0);
-        
+
         // Calculate risk level dynamically from score
         const riskLevel = calculateRiskLevel(riskScore);
-        
+
         // Determine flagged status
         const isHighRisk = riskLevel === 'high' || riskLevel === 'critical';
         const isCritical = riskLevel === 'critical';
         const flaggedClaims = isCritical ? 2 : (isHighRisk ? 1 : 0);
-        
+
         // Generate meaningful reasons based on actual data
         const reasons: string[] = [];
         if (isCritical) reasons.push("Critical risk level detected");
@@ -2785,7 +2895,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           updatedAt: new Date()
         };
       });
-      
+
       res.json(formattedDoctors);
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/high-risk-doctors", "fetch high-risk doctors");
@@ -2834,7 +2944,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       if (!batch) {
         return res.status(404).json({ error: "Batch not found" });
       }
-      
+
       await storage.updateFwaBatch(req.params.id, {
         status: "pending",
         processedClaims: 0,
@@ -2844,7 +2954,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         completedAt: null,
         errorMessage: null,
       });
-      
+
       const updatedBatch = await storage.getFwaBatch(req.params.id);
       res.json({ message: "Batch reset successfully", batch: updatedBatch });
     } catch (error) {
@@ -2895,7 +3005,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
     "90937": { min: 2000, max: 5000, base: 3500 },
     // Default ranges by ICD category
   };
-  
+
   const diagnosisCategoryAmounts: Record<string, { min: number; max: number; base: number }> = {
     "A": { min: 500, max: 5000, base: 2750 },     // Infectious diseases
     "B": { min: 500, max: 5000, base: 2750 },     // Infectious diseases
@@ -2924,7 +3034,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
     try {
       const batchId = req.params.id;
       const batch = await storage.getFwaBatch(batchId);
-      
+
       if (!batch) {
         return res.status(404).json({ error: "Batch not found" });
       }
@@ -2940,11 +3050,11 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
 
       let updated = 0;
       const updates: { id: string; amount: string; oldAmount: string }[] = [];
-      
+
       // Generate realistic amounts based on service codes and diagnosis
       for (const claim of batchClaims) {
         let amountRange = { min: 200, max: 15000, base: 7600 }; // Default range
-        
+
         // First check CPT/service codes if available
         const cptCodes = claim.cptCodes || [];
         for (const code of cptCodes) {
@@ -2953,7 +3063,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
             break;
           }
         }
-        
+
         // If no CPT match, use ICD diagnosis category
         if (amountRange.base === 7600 && claim.icd) {
           const diagCategory = claim.icd.charAt(0).toUpperCase();
@@ -2961,12 +3071,12 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
             amountRange = diagnosisCategoryAmounts[diagCategory];
           }
         }
-        
+
         // Generate amount with some variance
         // Use a realistic distribution: most claims are near base, some outliers
         const variance = Math.random();
         let amount: number;
-        
+
         if (variance < 0.6) {
           // 60% of claims: near base amount (+/- 20%)
           amount = amountRange.base * (0.8 + Math.random() * 0.4);
@@ -2980,14 +3090,14 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           // 5% of claims: suspicious outliers (very high for FWA detection)
           amount = amountRange.max * (1.2 + Math.random() * 2.0);
         }
-        
+
         // Round to 2 decimal places
         const newAmount = Math.round(amount * 100) / 100;
-        
+
         await storage.updateClaim(claim.id, {
           amount: newAmount.toFixed(2)
         });
-        
+
         updates.push({
           id: claim.id,
           oldAmount: claim.amount,
@@ -2995,15 +3105,15 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         });
         updated++;
       }
-      
+
       // Calculate stats for response
       const amounts = updates.map(u => parseFloat(u.amount));
       const totalAmount = amounts.reduce((sum, a) => sum + a, 0);
       const avgAmount = totalAmount / amounts.length;
       const highValueClaims = amounts.filter(a => a > 50000).length;
       const suspiciousClaims = amounts.filter(a => a > 100000).length;
-      
-      res.json({ 
+
+      res.json({
         message: `Generated realistic amounts for ${updated} claims`,
         updated,
         stats: {
@@ -3090,7 +3200,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         uploadedBy: "Current User",
         progress: "0",
         // Store AI-confirmed field mappings in metadata for audit trail (as JSONB object)
-        metadata: fieldMappings ? { 
+        metadata: fieldMappings ? {
           aiFieldMappings: fieldMappings,
           mappingConfirmedAt: new Date().toISOString()
         } : undefined,
@@ -3100,14 +3210,14 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       const createdClaims: any[] = [];
       for (const claim of claims) {
         const claimId = `CLM-${batch.id.slice(0, 8)}-${String(createdClaims.length + 1).padStart(4, "0")}`;
-        
+
         // Handle various field name formats from different Excel files
         const claimRef = claim.claimReference || claim.claimNumber || claimId;
         const policyNum = claim.policyNo || claim.policyNumber || "UNKNOWN";
         const providerInfo = claim.providerId || claim.providerName || claim.hospital || "UNKNOWN";
         const diagnosisCode = claim.principalDiagnosisCode || claim.icd || null;
         const occurrenceDate = claim.claimOccurrenceDate || claim.serviceDate || claim.batchDate;
-        
+
         // Parse amount - handle string or number formats
         let amountValue = "0.00";
         if (claim.amount != null) {
@@ -3115,7 +3225,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           const parsed = parseFloat(amountStr);
           amountValue = isNaN(parsed) ? "0.00" : parsed.toFixed(2);
         }
-        
+
         try {
           const createdClaim = await storage.createClaim({
             id: claimId,
@@ -3167,13 +3277,13 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
     try {
       const batchId = req.params.id;
       const batch = await storage.getFwaBatch(batchId);
-      
+
       if (!batch) {
         return res.status(404).json({ error: "Batch not found" });
       }
 
       const { claims: allClaims } = await storage.getClaims({ limit: 100000 });
-      const batchClaims = allClaims.filter(c => 
+      const batchClaims = allClaims.filter(c =>
         c.id.startsWith(`CLM-${batchId.slice(0, 8)}`)
       );
 
@@ -3251,16 +3361,16 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
     entityName: z.string().min(1).max(200),
     historyData: z.any().optional(),
   });
-  
+
   app.post("/api/fwa/history-agent", async (req, res) => {
     try {
       const validatedData = historyAgentInputSchema.parse(req.body);
       const sanitizedEntityName = sanitizeForAI(validatedData.entityName);
       const sanitizedAgentName = sanitizeForAI(validatedData.agentName);
-      
+
       const { runHistoryAgent } = await import("../services/agent-orchestrator");
       const result = await runHistoryAgent(
-        validatedData.agentType, 
+        validatedData.agentType,
         sanitizedAgentName,
         validatedData.entityId,
         sanitizedEntityName,
@@ -3278,19 +3388,19 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
     query: z.string().min(1).max(2000),
     context: z.any().optional(),
   });
-  
+
   app.post("/api/fwa/knowledge-base-query", async (req, res) => {
     try {
       const validatedData = kbQueryInputSchema.parse(req.body);
       const sanitizedQuery = sanitizeForAI(validatedData.query);
-      
+
       // Use RAG-powered query for semantic search
       if (validatedData.kbType === "rag") {
         const { ragKnowledgeBaseQuery } = await import("../services/embedding-service");
         const result = await ragKnowledgeBaseQuery(sanitizedQuery);
         return res.json(result);
       }
-      
+
       // Fallback to existing agent-based query
       const { runKnowledgeBaseAgent } = await import("../services/agent-orchestrator");
       const result = await runKnowledgeBaseAgent(validatedData.kbType, sanitizedQuery, validatedData.context);
@@ -3331,7 +3441,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
     try {
       const { db } = await import("../db");
       const { sql } = await import("drizzle-orm");
-      
+
       // Get rule hit counts from detection results
       const ruleHits = await db.execute(sql`
         SELECT 
@@ -3351,7 +3461,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         ORDER BY hit_count DESC
         LIMIT 50
       `);
-      
+
       // Get total detection stats
       const totals = await db.execute(sql`
         SELECT 
@@ -3361,9 +3471,9 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           MAX(analyzed_at) as last_detection_at
         FROM fwa_detection_results
       `);
-      
+
       const stats = totals.rows[0] as any;
-      
+
       res.json({
         totalDetections: parseInt(stats?.total_detections || "0"),
         detectionsWithRules: parseInt(stats?.detections_with_rules || "0"),
@@ -3507,24 +3617,24 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
     try {
       const validatedData = newsSearchSchema.parse(req.body);
       const { keywords } = validatedData;
-      
+
       const newsApiKey = process.env.NEWS_API_KEY;
       if (!newsApiKey) {
-        return res.status(400).json({ 
-          error: "NewsAPI key not configured", 
-          message: "Please add NEWS_API_KEY to your environment secrets" 
+        return res.status(400).json({
+          error: "NewsAPI key not configured",
+          message: "Please add NEWS_API_KEY to your environment secrets"
         });
       }
 
       console.log("[Online Listening] Fetching news with keywords:", keywords);
-      
+
       const results: any[] = [];
       const errors: string[] = [];
-      
+
       // Get enabled sources from database configuration
       const enabledConfigs = await storage.getListeningSourceConfigs();
       const enabledSources = enabledConfigs.filter(s => s.enabled);
-      
+
       // Map source IDs to domains
       const sourceDomainMap: Record<string, string> = {
         alriyadh: "alriyadh.com",
@@ -3538,15 +3648,15 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         aleqt: "aleqt.com",
         alwatan: "alwatan.com.sa",
       };
-      
+
       // Build domains list from enabled sources only
       const saudiDomains = enabledSources
         .map(s => sourceDomainMap[s.sourceId])
         .filter(d => d)
         .join(",");
-      
+
       console.log("[Online Listening] Using domains:", saudiDomains || "none configured");
-      
+
       // 1. Search Arabic healthcare news (broader search - NewsAPI has limited Saudi coverage)
       const arabicKeywords = ["السعودية مستشفى", "صحة السعودية", "تأمين صحي سعودي", "وزارة الصحة السعودية"];
       for (const keyword of arabicKeywords.slice(0, 3)) {
@@ -3568,7 +3678,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           console.log("[Online Listening] Fetch error:", e.message);
         }
       }
-      
+
       // 2. Saudi Arabia top headlines (general - health category often empty)
       try {
         const saResponse = await fetch(
@@ -3581,15 +3691,15 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           // Filter for healthcare-related content
           const healthArticles = (saData.articles || []).filter((a: any) => {
             const text = `${a.title || ""} ${a.description || ""}`.toLowerCase();
-            return text.includes("صح") || text.includes("مستشف") || text.includes("طب") || 
-                   text.includes("health") || text.includes("hospital") || text.includes("medical");
+            return text.includes("صح") || text.includes("مستشف") || text.includes("طب") ||
+              text.includes("health") || text.includes("hospital") || text.includes("medical");
           });
           results.push(...healthArticles.map((a: any) => ({ ...a, sourceType: 'sa_headlines' })));
         }
-      } catch (e: any) { 
-        console.log("[Online Listening] SA headlines error:", e.message); 
+      } catch (e: any) {
+        console.log("[Online Listening] SA headlines error:", e.message);
       }
-      
+
       // 3. English healthcare news about Saudi Arabia
       try {
         const enUrl = `https://newsapi.org/v2/everything?q=${encodeURIComponent("Saudi Arabia healthcare OR Saudi hospital OR Saudi health ministry")}&language=en&sortBy=publishedAt&pageSize=10`;
@@ -3604,7 +3714,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       } catch (e: any) {
         console.log("[Online Listening] English news error:", e.message);
       }
-      
+
       // Deduplicate by URL and filter for Saudi healthcare relevance
       const seenUrls = new Set<string>();
       const saudiHealthKeywords = [
@@ -3613,17 +3723,17 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         /تأمين|insurance|ضمان|وزارة الصحة|ministry.*health/i,
         /الحبيب|المواساة|السعودي الألماني|دله|فيصل التخصصي/i,
       ];
-      
+
       const articles = results.filter(article => {
         if (!article?.url || seenUrls.has(article.url)) return false;
         seenUrls.add(article.url);
-        
+
         // Check if article is relevant to Saudi healthcare
         const content = `${article.title || ""} ${article.description || ""}`.toLowerCase();
         const isSaudiRelated = saudiHealthKeywords[0].test(content);
         const isHealthRelated = saudiHealthKeywords[1].test(content) || saudiHealthKeywords[2].test(content);
         const isProviderMentioned = saudiHealthKeywords[3].test(content);
-        
+
         // Must be Saudi-related AND (health-related OR mention a provider)
         const isRelevant = isSaudiRelated && (isHealthRelated || isProviderMentioned);
         if (!isRelevant) {
@@ -3631,12 +3741,12 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         }
         return isRelevant;
       });
-      
+
       console.log(`[Online Listening] Total relevant articles after dedup: ${articles.length}`);
-      
+
       if (articles.length === 0) {
-        return res.json({ 
-          mentions: [], 
+        return res.json({
+          mentions: [],
           message: "No articles found for the given keywords",
           errors: errors.length > 0 ? errors : undefined
         });
@@ -3660,7 +3770,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         { pattern: /التعاونية للتأمين|Tawuniya/i, name: "التعاونية للتأمين", nameEn: "Tawuniya Insurance" },
         { pattern: /ميدغلف|MedGulf/i, name: "ميدغلف", nameEn: "MedGulf Insurance" },
       ];
-      
+
       // Function to extract healthcare provider from content
       const extractHealthcareProvider = (content: string): { name: string; nameEn: string } | null => {
         for (const provider of saudiHealthcareProviders) {
@@ -3670,20 +3780,20 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         }
         return null;
       };
-      
+
       // Store articles directly first (fast) - no waiting for AI analysis
       const savedMentions = [];
-      
+
       for (const article of articles.slice(0, 30)) { // Save up to 30 articles
         try {
           // Detect if content contains Arabic characters
           const content = article.title + (article.description ? ` - ${article.description}` : "");
           const hasArabic = /[\u0600-\u06FF]/.test(content);
           const detectedLanguage = hasArabic ? 'ar' : 'en';
-          
+
           // Extract healthcare provider from content (not news source)
           const extractedProvider = extractHealthcareProvider(content);
-          
+
           // Create mention record immediately without AI (fast)
           const mention = {
             providerId: null,
@@ -3701,13 +3811,13 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
             requiresAction: false,
             publishedAt: article.publishedAt ? new Date(article.publishedAt) : new Date(),
             capturedAt: new Date(),
-            metadata: { 
+            metadata: {
               newsSource: article.source?.name || "Unknown",
               articleTitle: article.title,
               language: detectedLanguage,
               searchKeyword: article.searchKeyword,
               providerNameEn: extractedProvider?.nameEn || null,
-              needsAnalysis: true 
+              needsAnalysis: true
             },
             createdAt: new Date()
           };
@@ -3725,9 +3835,9 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       }
 
       console.log(`[Online Listening] Saved ${savedMentions.length} new mentions to database`);
-      
-      res.json({ 
-        mentions: savedMentions, 
+
+      res.json({
+        mentions: savedMentions,
         totalFetched: articles.length,
         saved: savedMentions.length,
         message: `Found ${articles.length} articles, saved ${savedMentions.length} new mentions`
@@ -3746,9 +3856,9 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
   app.post("/api/fwa/chi/online-listening/twitter", async (req, res) => {
     try {
       const { searchTwitterForHealthcareProviders, isGrokConfigured } = await import("../services/grok-twitter-service");
-      
+
       if (!isGrokConfigured()) {
-        return res.status(400).json({ 
+        return res.status(400).json({
           error: "Grok AI not configured",
           message: "OpenRouter AI integration not available"
         });
@@ -3758,14 +3868,14 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       const { keywords, providers } = validatedData;
 
       console.log("[Grok Twitter] Analyzing Twitter/X for:", keywords);
-      
+
       const result = await searchTwitterForHealthcareProviders(keywords, providers || []);
-      
+
       // Get existing mentions to avoid duplicates
       const existingMentions = await storage.getOnlineListeningMentions();
       const existingUrls = new Set(existingMentions.map(m => m.sourceUrl).filter(Boolean));
       const existingContents = new Set(existingMentions.map(m => m.content?.substring(0, 50)).filter(Boolean));
-      
+
       // Save mentions to database (skip duplicates)
       const savedMentions: any[] = [];
       for (const mention of result.mentions) {
@@ -3780,7 +3890,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           console.log("[Grok Twitter] Skipping duplicate content");
           continue;
         }
-        
+
         const saved = await storage.createOnlineListeningMention({
           source: "twitter",
           sourceUrl: mention.sourceUrl || null,
@@ -3802,7 +3912,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       }
 
       console.log(`[Grok Twitter] Saved ${savedMentions.length} mentions`);
-      
+
       res.json({
         mentions: savedMentions,
         summary: result.summary,
@@ -3819,14 +3929,14 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
   app.get("/api/fwa/chi/online-listening/reputation/:providerName", async (req, res) => {
     try {
       const { analyzeProviderReputation, isGrokConfigured } = await import("../services/grok-twitter-service");
-      
+
       if (!isGrokConfigured()) {
         return res.status(400).json({ error: "Grok AI not configured" });
       }
 
       const { providerName } = req.params;
       const result = await analyzeProviderReputation(providerName);
-      
+
       res.json(result);
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/chi/online-listening/reputation", "analyze provider reputation");
@@ -3834,7 +3944,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
   });
 
   // ========== ENFORCEMENT CASES CRUD ==========
-  
+
   // Seed CHI demo data if empty (with per-table caching to avoid repeated DB checks)
   // NOTE: Enforcement cases are NOT seeded - they must be created by users linked to real Provider Directory
   const seededTables = new Set<string>();
@@ -4334,18 +4444,18 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         contractStatus: providerDirectory.contractStatus,
       }).from(providerDirectory)
         .orderBy(providerDirectory.name);
-      
+
       // Filter by search query if provided
       let filteredProviders = providers;
       if (search && typeof search === 'string') {
         const searchLower = search.toLowerCase();
-        filteredProviders = providers.filter(p => 
+        filteredProviders = providers.filter(p =>
           p.name.toLowerCase().includes(searchLower) ||
           (p.npi && p.npi.toLowerCase().includes(searchLower)) ||
           (p.organization && p.organization.toLowerCase().includes(searchLower))
         );
       }
-      
+
       res.json(filteredProviders);
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/chi/providers", "get providers for enforcement");
@@ -4391,7 +4501,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         updatedAt: enforcementCases.updatedAt,
       }).from(enforcementCases)
         .leftJoin(providerDirectory, eq(enforcementCases.providerId, providerDirectory.id));
-      
+
       res.json(cases);
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/chi/enforcement-cases", "get enforcement cases");
@@ -4439,11 +4549,11 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         .leftJoin(providerDirectory, eq(enforcementCases.providerId, providerDirectory.id))
         .where(eq(enforcementCases.id, req.params.id))
         .limit(1);
-      
+
       if (caseResult.length === 0) {
         return res.status(404).json({ message: "Enforcement case not found" });
       }
-      
+
       res.json(caseResult[0]);
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/chi/enforcement-cases/:id", "get enforcement case");
@@ -4464,27 +4574,115 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
   app.post("/api/fwa/chi/enforcement-cases", async (req, res) => {
     try {
       const validatedData = enforcementCaseInputSchema.parse(req.body);
-      
+
       // Lookup provider from provider_directory to get name
       const provider = await db.select({ id: providerDirectory.id, name: providerDirectory.name })
         .from(providerDirectory)
         .where(eq(providerDirectory.id, validatedData.providerId))
         .limit(1);
-      
+
       if (provider.length === 0) {
-        return res.status(400).json({ 
+        return res.status(400).json({
           message: "Invalid provider ID. Provider must exist in Provider Directory.",
           error: "PROVIDER_NOT_FOUND"
         });
       }
-      
+
       // Create enforcement case with provider name derived from directory
       const enfCase = await storage.createEnforcementCase({
         ...validatedData,
         providerName: provider[0].name,
       } as any);
-      
-      res.status(201).json(enfCase);
+
+      // Auto-create dossier and start AI workflow
+      try {
+        // Get top flagged claims for this provider
+        const analyzedClaims = await storage.getAnalyzedClaimsByProvider(validatedData.providerId, 10);
+        const claimIds = analyzedClaims.map((c: any) => c.id);
+
+        // Get pre-computed detection results for evidence
+        const detectionResults = await storage.getDetectionResultsByProvider(validatedData.providerId);
+        const engineResults: Record<string, any> = {};
+        for (const dr of detectionResults.slice(0, 10)) {
+          engineResults[dr.claimId] = {
+            compositeScore: Number(dr.compositeScore),
+            ruleEngineScore: Number(dr.ruleEngineScore) || 0,
+            statisticalScore: Number(dr.statisticalScore) || 0,
+            unsupervisedScore: Number(dr.unsupervisedScore) || 0,
+            ragLlmScore: Number(dr.ragLlmScore) || 0,
+          };
+        }
+
+        // Create dossier linked to enforcement case
+        const dossier = await storage.createEnforcementDossier({
+          caseId: `dossier-${enfCase.id}`,
+          enforcementCaseId: enfCase.id,
+          claimIds,
+          entities: { providerId: validatedData.providerId },
+          currentStage: 'finding',
+          stageHistory: [],
+          evidence: { engineResults, agentFindings: {} },
+          stageDecisions: {},
+          financialImpact: { estimatedLoss: 0, recoveryAmount: 0 },
+          regulatoryCitations: [],
+          violationCodes: [],
+          humanReviews: [],
+          status: 'active',
+        });
+
+        // Auto-start workflow (runs Finding → Warning → Corrective → stops at Penalty HITL gate)
+        const llmProvider = getDefaultProvider();
+        const orchestrator = new EnforcementWorkflowOrchestrator(llmProvider, storage);
+        const workflowResult = await orchestrator.runUntilGate({
+          caseId: dossier.caseId,
+          enforcementCaseId: dossier.enforcementCaseId,
+          claimIds: dossier.claimIds as string[],
+          entities: dossier.entities as any,
+          currentStage: dossier.currentStage as any,
+          stageHistory: [],
+          evidence: dossier.evidence as any,
+          stageDecisions: {},
+          financialImpact: dossier.financialImpact as any,
+          regulatoryCitations: [],
+          violationCodes: [],
+          humanReviews: [],
+          createdAt: dossier.createdAt!,
+          updatedAt: dossier.updatedAt!,
+        });
+
+        // Persist workflow results
+        await storage.updateEnforcementDossier(dossier.id, {
+          currentStage: workflowResult.enrichedDossier.currentStage,
+          stageHistory: workflowResult.enrichedDossier.stageHistory as any,
+          evidence: workflowResult.enrichedDossier.evidence as any,
+          stageDecisions: workflowResult.enrichedDossier.stageDecisions as any,
+          status: ['closed', 'resolved'].includes(workflowResult.nextStage) ? 'closed' : 'active',
+        });
+
+        // Update enforcement case status
+        await storage.updateEnforcementCase(enfCase.id, {
+          status: workflowResult.enrichedDossier.currentStage as any,
+        });
+
+        res.status(201).json({
+          ...enfCase,
+          workflow: {
+            dossierId: dossier.id,
+            currentStage: workflowResult.enrichedDossier.currentStage,
+            decision: workflowResult.decision,
+            reasoning: workflowResult.reasoning,
+            requiresHITL: workflowResult.requiresHITL,
+            stagesExecuted: workflowResult.enrichedDossier.stageHistory.length,
+          },
+        });
+      } catch (workflowError: any) {
+        // Workflow failed but case was created — return case with error note
+        console.error('Auto-workflow failed:', workflowError.message);
+        res.status(201).json({
+          ...enfCase,
+          workflow: { error: 'Auto-workflow failed. Start manually from enforcement workflow panel.' },
+        });
+      }
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/chi/enforcement-cases", "create enforcement case");
     }
@@ -4503,7 +4701,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
   });
 
   // ========== REGULATORY CIRCULARS CRUD ==========
-  
+
   app.get("/api/fwa/chi/circulars", async (req, res) => {
     try {
       await seedCHIDemoData();
@@ -4565,7 +4763,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       // Admin authorization required for sending mass emails
       const authToken = req.headers["x-admin-token"] || req.query.token;
       const expectedToken = process.env.ADMIN_SEED_TOKEN;
-      
+
       if (!expectedToken || authToken !== expectedToken) {
         return res.status(401).json({ message: "Unauthorized. ADMIN_SEED_TOKEN must be configured for email distribution." });
       }
@@ -4577,14 +4775,14 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
 
       // Only allow sending for approved or published circulars
       if (circular.status !== 'approved' && circular.status !== 'published') {
-        return res.status(400).json({ 
-          message: "Cannot send circular. Only approved or published circulars can be distributed." 
+        return res.status(400).json({
+          message: "Cannot send circular. Only approved or published circulars can be distributed."
         });
       }
 
       // Get recipients - either from request body or from provider directory
       let recipients: { email: string; name?: string }[] = [];
-      
+
       if (req.body.recipients && Array.isArray(req.body.recipients)) {
         recipients = req.body.recipients;
       } else if (req.body.sendToAllProviders) {
@@ -4596,14 +4794,14 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       }
 
       if (recipients.length === 0) {
-        return res.status(400).json({ 
-          message: "No recipients specified. Provide recipients array or set sendToAllProviders: true" 
+        return res.status(400).json({
+          message: "No recipients specified. Provide recipients array or set sendToAllProviders: true"
         });
       }
 
       // Import email service dynamically
       const { sendCircularNotification } = await import('../services/email-service');
-      
+
       const result = await sendCircularNotification({
         circularNumber: circular.circularNumber,
         title: circular.title,
@@ -4637,7 +4835,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       // Admin authorization required
       const authToken = req.headers["x-admin-token"] || req.query.token;
       const expectedToken = process.env.ADMIN_SEED_TOKEN;
-      
+
       if (!expectedToken || authToken !== expectedToken) {
         return res.status(401).json({ message: "Unauthorized. ADMIN_SEED_TOKEN must be configured." });
       }
@@ -4649,7 +4847,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
 
       const { sendTestEmail } = await import('../services/email-service');
       const result = await sendTestEmail(email);
-      
+
       if (result.success) {
         res.json({ message: "Test email sent successfully", success: true });
       } else {
@@ -4661,7 +4859,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
   });
 
   // ========== AUDIT SESSIONS CRUD ==========
-  
+
   app.get("/api/fwa/chi/audit-sessions", async (req, res) => {
     try {
       await seedCHIDemoData();
@@ -4720,7 +4918,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
   });
 
   // ========== AUDIT FINDINGS CRUD ==========
-  
+
   app.get("/api/fwa/chi/audit-sessions/:sessionId/findings", async (req, res) => {
     try {
       const findings = await storage.getAuditFindings(req.params.sessionId);
@@ -4801,27 +4999,27 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       if (!session) {
         return res.status(404).json({ message: "Audit session not found" });
       }
-      
+
       const findings = await storage.getAuditFindings(req.params.sessionId);
       const checklists = await storage.getAuditChecklists(req.params.sessionId);
-      
+
       // Calculate summary statistics
       const findingsByCategory: Record<string, number> = {};
       const findingsBySeverity: Record<string, number> = { low: 0, medium: 0, high: 0, critical: 0 };
       let totalPotentialAmount = 0;
-      
+
       findings.forEach((f) => {
         findingsByCategory[f.category] = (findingsByCategory[f.category] || 0) + 1;
         if (f.severity) findingsBySeverity[f.severity] = (findingsBySeverity[f.severity] || 0) + 1;
         if (f.potentialAmount) totalPotentialAmount += parseFloat(f.potentialAmount) || 0;
       });
-      
+
       const checklistStats = {
         total: checklists.length,
         completed: checklists.filter((c) => c.status === 'completed').length,
         pending: checklists.filter((c) => c.status === 'pending').length,
       };
-      
+
       const report = {
         session: {
           id: session.id,
@@ -4865,7 +5063,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         })),
         generatedAt: new Date().toISOString(),
       };
-      
+
       res.json(report);
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/chi/audit-sessions/:sessionId/report", "generate audit report");
@@ -4911,14 +5109,16 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
 
   // Import detection engine dynamically to avoid circular deps
   const loadDetectionEngine = async () => {
-    const { runFullDetection, runFastDetection, getDetectionConfigs, saveDetectionResult, 
-            runRuleEngineDetection, runStatisticalDetection, 
-            runUnsupervisedDetection, runRagLlmDetection,
-            updateDetectionConfig, getDefaultDetectionConfigs } = await import("../services/fwa-detection-engine");
-    return { runFullDetection, runFastDetection, getDetectionConfigs, saveDetectionResult,
-             runRuleEngineDetection, runStatisticalDetection,
-             runUnsupervisedDetection, runRagLlmDetection,
-             updateDetectionConfig, getDefaultDetectionConfigs };
+    const { runFullDetection, runFastDetection, getDetectionConfigs, saveDetectionResult,
+      runRuleEngineDetection, runStatisticalDetection,
+      runUnsupervisedDetection, runRagLlmDetection,
+      updateDetectionConfig, getDefaultDetectionConfigs } = await import("../services/fwa-detection-engine");
+    return {
+      runFullDetection, runFastDetection, getDetectionConfigs, saveDetectionResult,
+      runRuleEngineDetection, runStatisticalDetection,
+      runUnsupervisedDetection, runRagLlmDetection,
+      updateDetectionConfig, getDefaultDetectionConfigs
+    };
   };
 
   // Get detection method configurations with full algorithm descriptions
@@ -4937,14 +5137,14 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
     try {
       const { method } = req.params;
       const { isEnabled, weight, threshold } = req.body;
-      
+
       const engine = await loadDetectionEngine();
       const updatedConfigs = await engine.updateDetectionConfig(method, {
         isEnabled,
         weight,
         threshold
       });
-      
+
       res.json(updatedConfigs);
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/detection-engine/configs/:method", "update detection config");
@@ -4966,7 +5166,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
   app.post("/api/fwa/detection-engine/analyze", async (req, res) => {
     try {
       const { claimId, claim } = req.body;
-      
+
       // If claimId provided, fetch claim from database
       let claimData = claim;
       if (claimId && !claim) {
@@ -4987,19 +5187,19 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           claimType: dbClaim.claimType
         };
       }
-      
+
       if (!claimData) {
         return res.status(400).json({ message: "Either claimId or claim data required" });
       }
-      
+
       const engine = await loadDetectionEngine();
       const result = await engine.runFullDetection(claimData);
-      
+
       // Optionally save result
       if (req.body.save !== false) {
         await engine.saveDetectionResult(result);
       }
-      
+
       res.json(result);
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/detection-engine/analyze", "analyze claim");
@@ -5054,10 +5254,10 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       if (!claimIds || !Array.isArray(claimIds) || claimIds.length === 0) {
         return res.status(400).json({ message: "claimIds array required" });
       }
-      
+
       const engine = await loadDetectionEngine();
       const results: any[] = [];
-      
+
       for (const claimId of claimIds.slice(0, 10)) { // Limit to 10 claims per batch
         const dbClaim = await storage.getClaimById(claimId);
         if (dbClaim) {
@@ -5078,9 +5278,9 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           results.push(result);
         }
       }
-      
-      res.json({ 
-        analyzed: results.length, 
+
+      res.json({
+        analyzed: results.length,
         results,
         summary: {
           avgCompositeScore: results.reduce((sum, r) => sum + r.compositeScore, 0) / results.length,
@@ -5104,23 +5304,23 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
   app.post("/api/fwa/regulatory-oversight/analyze", async (req, res) => {
     try {
       const { claimId, claim } = req.body;
-      
+
       let claimData = claim;
       if (claimId && !claim) {
         const claimResult = await db.select().from(claims)
           .where(eq(claims.id, claimId))
           .limit(1);
-        
+
         if (claimResult.length === 0) {
           return res.status(404).json({ message: "Claim not found" });
         }
         claimData = claimResult[0];
       }
-      
+
       if (!claimData) {
         return res.status(400).json({ message: "Either claimId or claim data required" });
       }
-      
+
       const result = await runRegulatoryOversight(claimData);
       res.json(result);
     } catch (error) {
@@ -5135,22 +5335,22 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       if (!claimIds || !Array.isArray(claimIds) || claimIds.length === 0) {
         return res.status(400).json({ message: "claimIds array required" });
       }
-      
+
       const results = await runRegulatoryOversightBatch(claimIds.slice(0, 20));
-      
+
       const summary = {
         analyzed: results.length,
         criticalCount: results.filter(r => r.overallRiskLevel === 'CRITICAL').length,
         highCount: results.filter(r => r.overallRiskLevel === 'HIGH').length,
         mediumCount: results.filter(r => r.overallRiskLevel === 'MEDIUM').length,
         lowCount: results.filter(r => r.overallRiskLevel === 'LOW').length,
-        avgScore: results.length > 0 
-          ? results.reduce((sum, r) => sum + r.aggregatedScore, 0) / results.length 
+        avgScore: results.length > 0
+          ? results.reduce((sum, r) => sum + r.aggregatedScore, 0) / results.length
           : 0,
         totalViolations: results.reduce((sum, r) => sum + r.regulatoryViolations.length, 0),
         totalClinicalConcerns: results.reduce((sum, r) => sum + r.clinicalConcerns.length, 0)
       };
-      
+
       res.json({ results, summary });
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/regulatory-oversight/batch-analyze", "batch regulatory oversight");
@@ -5162,13 +5362,13 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
     try {
       const { patientId } = req.params;
       const lookbackDays = parseInt(req.query.lookbackDays as string) || 90;
-      
+
       const patterns = await getClaimHistoryPatterns(patientId, lookbackDays);
-      
+
       const allPatterns = await Promise.all(
         [7, 14, 30, 90, 180].map(days => getClaimHistoryPatterns(patientId, days))
       );
-      
+
       res.json({
         patientId,
         requestedPattern: patterns,
@@ -5223,7 +5423,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           GROUP BY severity
         `)
       ]);
-      
+
       res.json({
         highRiskEntities: {
           providers: highRiskProviders.rows[0],
@@ -5250,17 +5450,17 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
     try {
       const { claimId } = req.params;
       const phaseId = req.query.phase ? parseInt(req.query.phase as string) : undefined;
-      
+
       const claimResult = await db.select().from(claims)
         .where(eq(claims.id, claimId))
         .limit(1);
-      
+
       if (claimResult.length === 0) {
         return res.status(404).json({ message: "Claim not found" });
       }
-      
+
       const result = await runRegulatoryOversight(claimResult[0]);
-      
+
       if (phaseId !== undefined) {
         const phase = result.phases.find(p => p.phaseId === phaseId);
         if (!phase) {
@@ -5316,7 +5516,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
     try {
       const batchId = req.params.id;
       const batch = await storage.getFwaBatch(batchId);
-      
+
       if (!batch) {
         return res.status(404).json({ error: "Batch not found" });
       }
@@ -5337,13 +5537,13 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       const { claims: allClaims } = await storage.getClaims({ limit: 100000 });
       const batchPrefix = `CLM-${batchId.slice(0, 8)}`;
       const batchClaims = allClaims.filter(c => c.id.startsWith(batchPrefix));
-      
+
       const totalClaims = batchClaims.length;
       console.log(`[Batch Analysis] Starting PARALLEL processing of ${totalClaims} claims for batch ${batchId}`);
 
       // Get fast mode from query params (skips RAG/LLM for speed)
       const fastMode = req.query.fast === "true" || totalClaims > 1000;
-      
+
       // High concurrency: 20 workers for fast mode, 10 for full analysis
       const CONCURRENCY = fastMode ? 20 : 10;
 
@@ -5378,7 +5578,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         };
 
         // Fast mode: skip RAG/LLM (slowest method) for large batches
-        const result = fastMode 
+        const result = fastMode
           ? await engine.runFastDetection(claimData)
           : await engine.runFullDetection(claimData);
 
@@ -5447,12 +5647,12 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       const { db } = await import("../db");
       const { fwaDetectionResults } = await import("@shared/schema");
       const { eq, desc } = await import("drizzle-orm");
-      
+
       const results = await db.select().from(fwaDetectionResults)
         .where(eq(fwaDetectionResults.claimId, req.params.claimId))
         .orderBy(desc(fwaDetectionResults.analyzedAt))
         .limit(10);
-      
+
       res.json(results);
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/detection-engine/results/:claimId", "get detection results");
@@ -5468,14 +5668,14 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
     try {
       const { importClaimsFromExcel, computeFeatureStore, getClaimStats } = await import("../services/claims-import-service");
       const path = await import("path");
-      
+
       const filePath = path.resolve("attached_assets/AiReview_GlobeMed_Medical_QA_11082025_(3)_1768281486318.xlsx");
       const result = await importClaimsFromExcel(filePath, "AiReview_GlobeMed_Medical_QA_11082025.xlsx");
-      
+
       // Compute feature store after import
       const features = await computeFeatureStore();
       const stats = await getClaimStats();
-      
+
       res.json({
         success: true,
         import: result,
@@ -5515,15 +5715,15 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       const { db } = await import("../db");
       const { fwaFeatureStore } = await import("@shared/schema");
       const { eq, desc, sql } = await import("drizzle-orm");
-      
+
       const entityType = req.query.entityType as string || "provider";
       const limit = parseInt(req.query.limit as string) || 50;
-      
+
       const features = await db.select().from(fwaFeatureStore)
         .where(eq(fwaFeatureStore.entityType, entityType))
         .orderBy(desc(sql`abs(${fwaFeatureStore.zScore})`))
         .limit(limit);
-      
+
       res.json(features);
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/feature-store", "get features");
@@ -5558,13 +5758,13 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       const { db } = await import("../db");
       const { fwaRulesLibrary } = await import("@shared/schema");
       const { eq, desc } = await import("drizzle-orm");
-      
+
       const activeOnly = req.query.active === "true";
       let query = db.select().from(fwaRulesLibrary);
       if (activeOnly) {
         query = query.where(eq(fwaRulesLibrary.isActive, true)) as any;
       }
-      
+
       const rules = await query.orderBy(desc(fwaRulesLibrary.severity));
       res.json(rules);
     } catch (error) {
@@ -5577,17 +5777,17 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
     try {
       const { db } = await import("../db");
       const { fwaRulesLibrary, insertFwaRulesLibrarySchema } = await import("@shared/schema");
-      
+
       const parsed = insertFwaRulesLibrarySchema.safeParse(req.body);
       if (!parsed.success) {
         return res.status(400).json({ error: "Invalid request body", details: parsed.error.errors });
       }
-      
+
       const [newRule] = await db.insert(fwaRulesLibrary).values({
         ...parsed.data,
         conditions: parsed.data.conditions || {},
       }).returning();
-      
+
       res.status(201).json(newRule);
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/rules-library", "create rule");
@@ -5600,24 +5800,24 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       const { db } = await import("../db");
       const { fwaRulesLibrary } = await import("@shared/schema");
       const { eq } = await import("drizzle-orm");
-      
+
       const ruleId = req.params.id;
       if (!ruleId) {
         return res.status(400).json({ error: "Rule ID is required" });
       }
-      
+
       // Get current rule
       const [currentRule] = await db.select().from(fwaRulesLibrary).where(eq(fwaRulesLibrary.id, ruleId));
       if (!currentRule) {
         return res.status(404).json({ error: "Rule not found" });
       }
-      
+
       // Toggle isActive
       const [updatedRule] = await db.update(fwaRulesLibrary)
         .set({ isActive: !currentRule.isActive })
         .where(eq(fwaRulesLibrary.id, ruleId))
         .returning();
-      
+
       res.json(updatedRule);
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/rules-library/:id/toggle", "toggle rule");
@@ -5630,16 +5830,16 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       const { db } = await import("../db");
       const { fwaRulesLibrary } = await import("@shared/schema");
       const { inArray } = await import("drizzle-orm");
-      
+
       const { ruleIds, isActive } = req.body;
       if (!Array.isArray(ruleIds) || typeof isActive !== "boolean") {
         return res.status(400).json({ error: "ruleIds array and isActive boolean required" });
       }
-      
+
       await db.update(fwaRulesLibrary)
         .set({ isActive })
         .where(inArray(fwaRulesLibrary.id, ruleIds));
-      
+
       res.json({ success: true, updated: ruleIds.length, isActive });
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/rules-library/bulk-toggle", "bulk toggle rules");
@@ -5662,11 +5862,11 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
     try {
       const { validateRuleConditions } = await import("../services/rule-field-registry");
       const { conditions } = req.body;
-      
+
       if (!conditions) {
         return res.status(400).json({ error: "conditions object required" });
       }
-      
+
       const validation = validateRuleConditions(conditions);
       res.json(validation);
     } catch (error) {
@@ -5680,57 +5880,57 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       const { db } = await import("../db");
       const { fwaRulesLibrary } = await import("@shared/schema");
       const { ruleFieldRegistry, validateRuleConditions } = await import("../services/rule-field-registry");
-      
+
       const { oldField, newField, ruleIds, categoryFilter } = req.body;
-      
+
       if (!oldField || !newField) {
         return res.status(400).json({ error: "oldField and newField are required" });
       }
-      
+
       // Validate new field exists in registry
       if (!ruleFieldRegistry.isValidField(newField)) {
-        return res.status(400).json({ 
+        return res.status(400).json({
           error: `Invalid field: "${newField}" not found in canonical registry`,
           suggestion: ruleFieldRegistry.resolveField(newField) || "Check field registry for valid names"
         });
       }
-      
+
       // Resolve to canonical name
       const canonicalNew = ruleFieldRegistry.resolveField(newField) || newField;
-      
+
       // Build query conditions
       let rules = await db.select().from(fwaRulesLibrary);
-      
+
       // Filter by IDs if provided
       if (Array.isArray(ruleIds) && ruleIds.length > 0) {
         rules = rules.filter(r => ruleIds.includes(r.id));
       }
-      
+
       // Filter by category if provided
       if (categoryFilter) {
         rules = rules.filter(r => r.category === categoryFilter);
       }
-      
+
       // Update field names in conditions
       let updateCount = 0;
       const updatedRules: any[] = [];
-      
+
       const { eq } = await import("drizzle-orm");
-      
+
       for (const rule of rules) {
         const conditions = rule.conditions as any;
         let modified = false;
-        
+
         const updateConditions = (cond: any): any => {
           if (!cond) return cond;
-          
+
           if (cond.and) {
             return { and: cond.and.map(updateConditions) };
           }
           if (cond.or) {
             return { or: cond.or.map(updateConditions) };
           }
-          
+
           if (cond.field === oldField) {
             modified = true;
             updateCount++;
@@ -5738,14 +5938,14 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           }
           return cond;
         };
-        
+
         const newConditions = updateConditions(conditions);
-        
+
         if (modified) {
           await db.update(fwaRulesLibrary)
             .set({ conditions: newConditions })
             .where(eq(fwaRulesLibrary.id, rule.id));
-          
+
           updatedRules.push({
             id: rule.id,
             ruleCode: rule.ruleCode,
@@ -5753,7 +5953,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           });
         }
       }
-      
+
       res.json({
         success: true,
         oldField,
@@ -5773,48 +5973,48 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       const { db } = await import("../db");
       const { fwaRulesLibrary } = await import("@shared/schema");
       const { eq } = await import("drizzle-orm");
-      
+
       const { field, oldValue, newValue, operator, ruleIds, categoryFilter } = req.body;
-      
+
       if (field === undefined || newValue === undefined) {
         return res.status(400).json({ error: "field and newValue are required" });
       }
-      
+
       // Build query conditions
       let rules = await db.select().from(fwaRulesLibrary);
-      
+
       // Filter by IDs if provided
       if (Array.isArray(ruleIds) && ruleIds.length > 0) {
         rules = rules.filter(r => ruleIds.includes(r.id));
       }
-      
+
       // Filter by category if provided
       if (categoryFilter) {
         rules = rules.filter(r => r.category === categoryFilter);
       }
-      
+
       let updateCount = 0;
       const updatedRules: any[] = [];
-      
+
       for (const rule of rules) {
         const conditions = rule.conditions as any;
         let modified = false;
-        
+
         const updateConditions = (cond: any): any => {
           if (!cond) return cond;
-          
+
           if (cond.and) {
             return { and: cond.and.map(updateConditions) };
           }
           if (cond.or) {
             return { or: cond.or.map(updateConditions) };
           }
-          
+
           // Match field and optionally old value
           if (cond.field === field) {
             const matchesValue = oldValue === undefined || cond.value === oldValue;
             const matchesOperator = !operator || cond.operator === operator;
-            
+
             if (matchesValue && matchesOperator) {
               modified = true;
               updateCount++;
@@ -5823,14 +6023,14 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           }
           return cond;
         };
-        
+
         const newConditions = updateConditions(conditions);
-        
+
         if (modified) {
           await db.update(fwaRulesLibrary)
             .set({ conditions: newConditions })
             .where(eq(fwaRulesLibrary.id, rule.id));
-          
+
           updatedRules.push({
             id: rule.id,
             ruleCode: rule.ruleCode,
@@ -5838,7 +6038,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           });
         }
       }
-      
+
       res.json({
         success: true,
         field,
@@ -5860,51 +6060,51 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       const { fwaRulesLibrary } = await import("@shared/schema");
       const { eq } = await import("drizzle-orm");
       const { VALID_OPERATORS } = await import("../services/rule-field-registry");
-      
+
       const { field, oldOperator, newOperator, ruleIds, categoryFilter } = req.body;
-      
+
       if (!field || !newOperator) {
         return res.status(400).json({ error: "field and newOperator are required" });
       }
-      
+
       // Validate new operator
       if (!VALID_OPERATORS.includes(newOperator)) {
-        return res.status(400).json({ 
+        return res.status(400).json({
           error: `Invalid operator: "${newOperator}"`,
           validOperators: VALID_OPERATORS
         });
       }
-      
+
       let rules = await db.select().from(fwaRulesLibrary);
-      
+
       if (Array.isArray(ruleIds) && ruleIds.length > 0) {
         rules = rules.filter(r => ruleIds.includes(r.id));
       }
-      
+
       if (categoryFilter) {
         rules = rules.filter(r => r.category === categoryFilter);
       }
-      
+
       let updateCount = 0;
       const updatedRules: any[] = [];
-      
+
       for (const rule of rules) {
         const conditions = rule.conditions as any;
         let modified = false;
-        
+
         const updateConditions = (cond: any): any => {
           if (!cond) return cond;
-          
+
           if (cond.and) {
             return { and: cond.and.map(updateConditions) };
           }
           if (cond.or) {
             return { or: cond.or.map(updateConditions) };
           }
-          
+
           if (cond.field === field) {
             const matchesOperator = !oldOperator || cond.operator === oldOperator;
-            
+
             if (matchesOperator) {
               modified = true;
               updateCount++;
@@ -5913,14 +6113,14 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           }
           return cond;
         };
-        
+
         const newConditions = updateConditions(conditions);
-        
+
         if (modified) {
           await db.update(fwaRulesLibrary)
             .set({ conditions: newConditions })
             .where(eq(fwaRulesLibrary.id, rule.id));
-          
+
           updatedRules.push({
             id: rule.id,
             ruleCode: rule.ruleCode,
@@ -5928,7 +6128,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           });
         }
       }
-      
+
       res.json({
         success: true,
         field,
@@ -5949,16 +6149,16 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       const { db } = await import("../db");
       const { fwaRulesLibrary } = await import("@shared/schema");
       const { ruleFieldRegistry } = await import("../services/rule-field-registry");
-      
+
       const rules = await db.select().from(fwaRulesLibrary);
-      
+
       const fieldUsage: Record<string, { count: number; rules: string[] }> = {};
       const operatorUsage: Record<string, number> = {};
       const invalidFields: { field: string; ruleCode: string }[] = [];
-      
+
       const analyzeConditions = (cond: any, ruleCode: string): void => {
         if (!cond) return;
-        
+
         if (cond.and) {
           cond.and.forEach((c: any) => analyzeConditions(c, ruleCode));
           return;
@@ -5967,7 +6167,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           cond.or.forEach((c: any) => analyzeConditions(c, ruleCode));
           return;
         }
-        
+
         if (cond.field) {
           if (!fieldUsage[cond.field]) {
             fieldUsage[cond.field] = { count: 0, rules: [] };
@@ -5976,22 +6176,22 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           if (!fieldUsage[cond.field].rules.includes(ruleCode)) {
             fieldUsage[cond.field].rules.push(ruleCode);
           }
-          
+
           // Check if field is valid
           if (!ruleFieldRegistry.isValidField(cond.field)) {
             invalidFields.push({ field: cond.field, ruleCode });
           }
         }
-        
+
         if (cond.operator) {
           operatorUsage[cond.operator] = (operatorUsage[cond.operator] || 0) + 1;
         }
       }
-      
+
       for (const rule of rules) {
         analyzeConditions(rule.conditions, rule.ruleCode);
       }
-      
+
       // Sort fields by usage
       const sortedFields = Object.entries(fieldUsage)
         .sort((a, b) => b[1].count - a[1].count)
@@ -6002,7 +6202,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           isValid: ruleFieldRegistry.isValidField(field),
           canonical: ruleFieldRegistry.resolveField(field)
         }));
-      
+
       res.json({
         totalRules: rules.length,
         uniqueFields: Object.keys(fieldUsage).length,
@@ -6023,7 +6223,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
   // ============================================================
   // RULE SANDBOX - Test rules against sample claims
   // ============================================================
-  
+
   const ruleSandboxSchema = z.object({
     ruleId: z.string().optional(),
     rule: z.object({
@@ -6050,11 +6250,11 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
     try {
       const validated = ruleSandboxSchema.parse(req.body);
       const { ruleId, rule: customRule, sampleSize, filters } = validated;
-      
+
       const { db } = await import("../db");
       const { fwaRulesLibrary, claims } = await import("@shared/schema");
       const { eq, desc, and, gte, lte, sql } = await import("drizzle-orm");
-      
+
       // Get the rule to test
       let ruleToTest: any = customRule;
       if (ruleId) {
@@ -6064,15 +6264,15 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         }
         ruleToTest = foundRule;
       }
-      
+
       if (!ruleToTest || !ruleToTest.conditions) {
         return res.status(400).json({ error: "Rule must have conditions defined" });
       }
-      
+
       // Build query for sample claims with filters
       let query = db.select().from(claims);
       const whereConditions: any[] = [];
-      
+
       if (filters?.claimType) {
         whereConditions.push(eq(claims.claimType, filters.claimType));
       }
@@ -6083,54 +6283,54 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       if (filters?.maxAmount) {
         whereConditions.push(sql`CAST(${claims.amount} AS NUMERIC) <= ${filters.maxAmount}`);
       }
-      
+
       if (whereConditions.length > 0) {
         query = query.where(and(...whereConditions)) as any;
       }
-      
+
       // Get sample claims (use registrationDate instead of createdAt)
       const sampleClaims = await query
         .orderBy(desc(claims.registrationDate))
         .limit(sampleSize);
-      
+
       // Helper function to evaluate conditions
       const evaluateCondition = (value: any, operator: string, expected: any): boolean => {
         if (operator === "not_null") {
           return value !== null && value !== undefined && value !== "";
         }
         if (value === null || value === undefined) return false;
-        
+
         switch (operator) {
           case "equals": return String(value).toLowerCase() === String(expected).toLowerCase();
           case "not_equals": return String(value).toLowerCase() !== String(expected).toLowerCase();
           case "greater_than": return Number(value) > Number(expected);
           case "less_than": return Number(value) < Number(expected);
-          case "greater_than_or_equals": 
+          case "greater_than_or_equals":
           case "greater_equal": return Number(value) >= Number(expected);
-          case "less_than_or_equals": 
+          case "less_than_or_equals":
           case "less_equal": return Number(value) <= Number(expected);
           case "contains": return String(value).toLowerCase().includes(String(expected).toLowerCase());
           case "not_contains": return !String(value).toLowerCase().includes(String(expected).toLowerCase());
-          case "starts_with": 
+          case "starts_with":
             if (Array.isArray(expected)) {
               return expected.some(v => String(value).toLowerCase().startsWith(String(v).toLowerCase()));
             }
             return String(value).toLowerCase().startsWith(String(expected).toLowerCase());
-          case "in": 
-            return Array.isArray(expected) && expected.some(v => 
+          case "in":
+            return Array.isArray(expected) && expected.some(v =>
               String(value).toLowerCase() === String(v).toLowerCase()
             );
-          case "not_in": 
-            return Array.isArray(expected) && !expected.some(v => 
+          case "not_in":
+            return Array.isArray(expected) && !expected.some(v =>
               String(value).toLowerCase() === String(v).toLowerCase()
             );
-          case "between": 
-            return Array.isArray(expected) && expected.length === 2 && 
+          case "between":
+            return Array.isArray(expected) && expected.length === 2 &&
               Number(value) >= expected[0] && Number(value) <= expected[1];
           default: return false;
         }
       };
-      
+
       // Get claim field value
       const getFieldValue = (claim: any, field: string): any => {
         const fieldMap: Record<string, string> = {
@@ -6147,12 +6347,12 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         const normalizedField = fieldMap[field] || field;
         return claim[normalizedField];
       };
-      
+
       // Recursive rule condition evaluator supporting nested AND/OR structures
       const evaluateRuleConditions = (claim: any, conditions: any): { matched: boolean; matchedFields: Record<string, any>; reason: string } => {
         const matchedFields: Record<string, any> = {};
         const reasons: string[] = [];
-        
+
         // Recursive helper for nested conditions
         const evaluateNode = (node: any): boolean => {
           // Simple condition (leaf node)
@@ -6165,28 +6365,28 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
             }
             return matched;
           }
-          
+
           // AND conditions (all must match) - supports nested conditions
           if (node.and && Array.isArray(node.and)) {
             return node.and.every((subNode: any) => evaluateNode(subNode));
           }
-          
+
           // OR conditions (any must match) - supports nested conditions
           if (node.or && Array.isArray(node.or)) {
             return node.or.some((subNode: any) => evaluateNode(subNode));
           }
-          
+
           return false;
         };
-        
+
         const matched = evaluateNode(conditions);
         return { matched, matchedFields, reason: reasons.join("; ") || "Rule conditions evaluated" };
       };
-      
+
       // Run rule against all sample claims
       const hits: any[] = [];
       const misses: any[] = [];
-      
+
       for (const claim of sampleClaims) {
         const result = evaluateRuleConditions(claim, ruleToTest.conditions);
         if (result.matched) {
@@ -6210,11 +6410,11 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           });
         }
       }
-      
+
       // Calculate impact metrics
       const hitRate = sampleClaims.length > 0 ? (hits.length / sampleClaims.length) * 100 : 0;
       const totalExposure = hits.reduce((sum, h) => sum + (parseFloat(h.amount) || 0), 0);
-      
+
       res.json({
         rule: {
           id: ruleId || "custom",
@@ -6233,7 +6433,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         hits,
         sampleFilters: filters || {},
       });
-      
+
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/rules/sandbox", "run rule sandbox");
     }
@@ -6245,7 +6445,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       const { searchClaimsForAnalysis } = await import("../services/production-detection-engine");
       const query = req.query.q as string || "";
       const limit = parseInt(req.query.limit as string) || 20;
-      
+
       const claims = await searchClaimsForAnalysis(query, limit);
       res.json(claims);
     } catch (error) {
@@ -6272,7 +6472,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
     try {
       const { db } = await import("../db");
       const { sql } = await import("drizzle-orm");
-      
+
       // First try direct claim_id lookup
       let result = await db.execute(sql`
         SELECT 
@@ -6295,13 +6495,13 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         ORDER BY analyzed_at DESC
         LIMIT 1
       `);
-      
+
       // If not found, try looking up via claim_reference (aggregated claim-level view)
       if (result.rows.length === 0) {
         const claimRef = await db.execute(sql`
           SELECT claim_reference FROM fwa_analyzed_claims WHERE id = ${req.params.claimId} LIMIT 1
         `);
-        
+
         if (claimRef.rows.length > 0) {
           const reference = (claimRef.rows[0] as any).claim_reference;
           // Get aggregated detection results for all service lines under this claim
@@ -6342,11 +6542,11 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           `);
         }
       }
-      
+
       if (result.rows.length === 0) {
         return res.status(404).json({ message: "Detection result not found" });
       }
-      
+
       const row: any = result.rows[0];
       res.json({
         claimId: row.claim_id,
@@ -6373,24 +6573,24 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
   app.post("/api/fwa/production-detection/analyze", async (req, res) => {
     try {
       const { runProductionDetection, getClaimForAnalysis } = await import("../services/production-detection-engine");
-      
+
       const { claimId, skipRagLlm = false, weights } = req.body;
-      
+
       if (!claimId) {
         return res.status(400).json({ message: "claimId is required" });
       }
-      
+
       const claim = await getClaimForAnalysis(claimId);
       if (!claim) {
         return res.status(404).json({ message: "Claim not found" });
       }
-      
+
       const result = await runProductionDetection(claim, weights, skipRagLlm);
-      
+
       // Save result to database
       const { db } = await import("../db");
       const { fwaDetectionResults } = await import("@shared/schema");
-      
+
       await db.insert(fwaDetectionResults).values({
         claimId: result.claimId,
         providerId: claim.providerId,
@@ -6410,7 +6610,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         recommendedAction: result.recommendedAction,
         processingTimeMs: result.processingTimeMs
       });
-      
+
       res.json(result);
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/production-detection/analyze", "production detection");
@@ -6424,9 +6624,9 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       const { db } = await import("../db");
       const { fwaAnalyzedClaims, fwaDetectionRuns, fwaDetectionResults } = await import("@shared/schema");
       const { sql, desc } = await import("drizzle-orm");
-      
+
       const { limit = 10, skipRagLlm = true, weights } = req.body;
-      
+
       // Create detection run record
       const [run] = await db.insert(fwaDetectionRuns).values({
         runName: `Batch Analysis ${new Date().toISOString()}`,
@@ -6434,17 +6634,17 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         status: "running",
         startedAt: new Date()
       }).returning();
-      
+
       // Get random sample of claims
       const claims = await db.select().from(fwaAnalyzedClaims)
         .orderBy(sql`RANDOM()`)
         .limit(Math.min(limit, 50));
-      
+
       const results: any[] = [];
       let flagged = 0;
       let highRisk = 0;
       let critical = 0;
-      
+
       for (const dbClaim of claims) {
         try {
           const claim = {
@@ -6467,14 +6667,14 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
             originalStatus: dbClaim.originalStatus,
             isPreAuthorized: dbClaim.isPreAuthorized || false
           };
-          
+
           const result = await runProductionDetection(claim, weights, skipRagLlm);
           results.push(result);
-          
+
           if (result.compositeScore >= 40) flagged++;
           if (result.compositeRiskLevel === "high") highRisk++;
           if (result.compositeRiskLevel === "critical") critical++;
-          
+
           // Save result
           await db.insert(fwaDetectionResults).values({
             claimId: result.claimId,
@@ -6500,12 +6700,12 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           console.error("Error analyzing claim:", e);
         }
       }
-      
+
       // Update run record
-      const avgScore = results.length > 0 
-        ? results.reduce((sum, r) => sum + r.compositeScore, 0) / results.length 
+      const avgScore = results.length > 0
+        ? results.reduce((sum, r) => sum + r.compositeScore, 0) / results.length
         : 0;
-      
+
       await db.execute(sql`
         UPDATE fwa_detection_runs 
         SET status = 'completed',
@@ -6519,7 +6719,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
             processing_time_ms = ${Date.now() - run.startedAt!.getTime()}
         WHERE id = ${run.id}
       `);
-      
+
       res.json({
         runId: run.id,
         analyzed: results.length,
@@ -6544,11 +6744,11 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       const { db } = await import("../db");
       const { fwaDetectionRuns } = await import("@shared/schema");
       const { desc } = await import("drizzle-orm");
-      
+
       const runs = await db.select().from(fwaDetectionRuns)
         .orderBy(desc(fwaDetectionRuns.createdAt))
         .limit(20);
-      
+
       res.json(runs);
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/detection-runs", "get detection runs");
@@ -6559,29 +6759,29 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
   app.post("/api/fwa/cases/from-detection", async (req, res) => {
     try {
       const { detectionResultId, assignedTo } = req.body;
-      
+
       if (!detectionResultId) {
         return res.status(400).json({ error: "detectionResultId is required" });
       }
-      
+
       const { db } = await import("../db");
       const { fwaDetectionResults, fwaAnalyzedClaims, fwaCases } = await import("@shared/schema");
       const { eq, sql } = await import("drizzle-orm");
-      
+
       // Get detection result
       const [detection] = await db.select().from(fwaDetectionResults)
         .where(eq(fwaDetectionResults.id, detectionResultId))
         .limit(1);
-      
+
       if (!detection) {
         return res.status(404).json({ error: "Detection result not found" });
       }
-      
+
       // Get claim details
       const [claim] = await db.select().from(fwaAnalyzedClaims)
         .where(eq(fwaAnalyzedClaims.id, detection.claimId))
         .limit(1);
-      
+
       // Create FWA case
       const caseData = {
         caseNumber: `FWA-${Date.now().toString(36).toUpperCase()}`,
@@ -6589,8 +6789,8 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         providerId: detection.providerId || claim?.providerId || null,
         patientId: detection.patientId || claim?.patientId || null,
         status: "draft" as const,
-        priority: detection.compositeRiskLevel === "critical" ? "critical" as const : 
-                  detection.compositeRiskLevel === "high" ? "high" as const : "medium" as const,
+        priority: detection.compositeRiskLevel === "critical" ? "critical" as const :
+          detection.compositeRiskLevel === "high" ? "high" as const : "medium" as const,
         riskScore: detection.compositeScore,
         assignedTo: assignedTo || null,
         summary: detection.detectionSummary || `FWA case created from automated detection with score ${detection.compositeScore}`,
@@ -6614,9 +6814,9 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         sourceType: "automated_detection" as const,
         sourceReference: detection.id,
       };
-      
+
       const newCase = await storage.createFwaCase(caseData);
-      
+
       res.status(201).json(newCase);
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/cases/from-detection", "create case from detection");
@@ -6627,15 +6827,15 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
   app.post("/api/fwa/cases/bulk-from-detection", async (req, res) => {
     try {
       const { minScore = 40, limit = 20 } = req.body;
-      
+
       const { db } = await import("../db");
       const { fwaDetectionResults, fwaAnalyzedClaims, fwaCases } = await import("@shared/schema");
       const { sql, desc, gte, notInArray } = await import("drizzle-orm");
-      
+
       // Get existing case claim IDs
       const existingCases = await db.select({ claimId: fwaCases.claimId }).from(fwaCases);
       const existingClaimIds = existingCases.map(c => c.claimId).filter(Boolean) as string[];
-      
+
       // Get high-scoring detection results that don't already have cases
       const detections = await db.execute(sql`
         SELECT 
@@ -6653,9 +6853,9 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         ORDER BY CAST(dr.composite_score AS decimal) DESC
         LIMIT ${limit}
       `);
-      
+
       const casesCreated: any[] = [];
-      
+
       for (const detection of detections.rows as any[]) {
         const caseData = {
           caseNumber: `FWA-${Date.now().toString(36).toUpperCase()}-${casesCreated.length}`,
@@ -6663,15 +6863,15 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           providerId: detection.provider_id,
           patientId: detection.patient_id,
           status: "draft" as const,
-          priority: detection.composite_risk_level === "critical" ? "critical" as const : 
-                    detection.composite_risk_level === "high" ? "high" as const : "medium" as const,
+          priority: detection.composite_risk_level === "critical" ? "critical" as const :
+            detection.composite_risk_level === "high" ? "high" as const : "medium" as const,
           riskScore: detection.composite_score,
           summary: detection.detection_summary || `Automated FWA detection - Score: ${detection.composite_score}`,
           flagType: detection.primary_detection_method || "multi-method",
           sourceType: "automated_detection" as const,
           sourceReference: detection.id,
         };
-        
+
         try {
           const newCase = await storage.createFwaCase(caseData);
           casesCreated.push(newCase);
@@ -6679,7 +6879,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           console.error("Error creating case:", e);
         }
       }
-      
+
       res.json({
         success: true,
         casesCreated: casesCreated.length,
@@ -6695,7 +6895,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
     try {
       const { db } = await import("../db");
       const { sql } = await import("drizzle-orm");
-      
+
       const stats = await db.execute(sql`
         SELECT
           (SELECT COUNT(*) FROM fwa_analyzed_claims) as total_claims,
@@ -6709,9 +6909,9 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           (SELECT COUNT(*) FROM fwa_cases) as total_cases,
           (SELECT AVG(CAST(composite_score AS decimal)) FROM fwa_detection_results) as avg_risk_score
       `);
-      
+
       const row = stats.rows[0] as any;
-      
+
       res.json({
         claims: {
           total: parseInt(row.total_claims) || 0,
@@ -6744,7 +6944,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
     try {
       const { count = 500 } = req.body;
       const { generateTestClaims } = await import("../services/generate-test-claims");
-      
+
       const result = await generateTestClaims(Math.min(count, 1000));
       res.json({
         success: true,
@@ -6761,7 +6961,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
     try {
       const { claimsCount = 300, batchSize = 50, skipRagLlm = true } = req.body;
       const results: any = { steps: [], success: true, startTime: Date.now() };
-      
+
       // Step 1: Generate test claims
       console.log("[Pipeline] Step 1: Generating test claims...");
       const { generateTestClaims } = await import("../services/generate-test-claims");
@@ -6772,7 +6972,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         status: "completed",
         details: genResult
       });
-      
+
       // Step 2: Seed rules library
       console.log("[Pipeline] Step 2: Seeding rules library...");
       const { seedFwaRulesLibrary } = await import("../services/seed-fwa-rules");
@@ -6783,7 +6983,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         status: "completed",
         details: { rulesSeeded: seededRules }
       });
-      
+
       // Step 3: Compute feature store
       console.log("[Pipeline] Step 3: Computing feature store...");
       const { computeFeatureStore } = await import("../services/claims-import-service");
@@ -6794,14 +6994,14 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         status: "completed",
         details: featureResult
       });
-      
+
       // Step 4: Run batch detection
       console.log("[Pipeline] Step 4: Running batch detection...");
       const { runProductionDetection } = await import("../services/production-detection-engine");
       const { db } = await import("../db");
       const { fwaAnalyzedClaims, fwaDetectionRuns, fwaDetectionResults } = await import("@shared/schema");
       const { sql } = await import("drizzle-orm");
-      
+
       // Create detection run
       const [run] = await db.insert(fwaDetectionRuns).values({
         runName: `Pipeline Test ${new Date().toISOString()}`,
@@ -6809,14 +7009,14 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         status: "running",
         startedAt: new Date()
       }).returning();
-      
+
       // Get sample of claims
       const claimsForAnalysis = await db.select().from(fwaAnalyzedClaims)
         .orderBy(sql`RANDOM()`)
         .limit(Math.min(batchSize, 100));
-      
+
       let analyzed = 0, critical = 0, high = 0, medium = 0, low = 0;
-      
+
       for (const dbClaim of claimsForAnalysis) {
         try {
           const claim = {
@@ -6839,9 +7039,9 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
             originalStatus: dbClaim.status,
             isPreAuthorized: false
           };
-          
+
           const result = await runProductionDetection(claim, { skipRagLlm });
-          
+
           // Save result
           await db.insert(fwaDetectionResults).values({
             runId: run.id,
@@ -6862,7 +7062,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
             recommendedAction: result.recommendedAction,
             primaryDetectionMethod: result.primaryDetectionMethod
           });
-          
+
           analyzed++;
           if (result.compositeRiskLevel === "critical") critical++;
           else if (result.compositeRiskLevel === "high") high++;
@@ -6872,7 +7072,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           console.error("Error processing claim:", e);
         }
       }
-      
+
       // Update run status
       await db.execute(sql`
         UPDATE fwa_detection_runs 
@@ -6880,7 +7080,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
             claims_analyzed = ${analyzed}, flagged_claims = ${critical + high}
         WHERE id = ${run.id}
       `);
-      
+
       results.steps.push({
         step: 4,
         name: "Batch Detection",
@@ -6891,10 +7091,10 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           riskDistribution: { critical, high, medium, low }
         }
       });
-      
+
       // Step 5: Create cases from high-risk detections
       console.log("[Pipeline] Step 5: Creating cases from high-risk detections...");
-      
+
       const highRiskDetections = await db.execute(sql`
         SELECT id, claim_id, composite_score, composite_risk_level
         FROM fwa_detection_results
@@ -6902,7 +7102,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         ORDER BY CAST(composite_score AS decimal) DESC
         LIMIT 20
       `);
-      
+
       let casesCreated = 0;
       for (const detection of highRiskDetections.rows as any[]) {
         try {
@@ -6923,7 +7123,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           console.error("Error creating case:", e);
         }
       }
-      
+
       results.steps.push({
         step: 5,
         name: "Create FWA Cases",
@@ -6933,7 +7133,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           casesCreated
         }
       });
-      
+
       // Step 6: Final stats
       console.log("[Pipeline] Step 6: Collecting final statistics...");
       const finalStats = await db.execute(sql`
@@ -6953,7 +7153,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           (SELECT AVG(CAST(composite_score AS decimal)) FROM fwa_detection_results) as avg_risk_score,
           (SELECT MAX(CAST(composite_score AS decimal)) FROM fwa_detection_results) as max_risk_score
       `);
-      
+
       const stats = finalStats.rows[0] as any;
       results.steps.push({
         step: 6,
@@ -6978,11 +7178,11 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           maxRiskScore: parseFloat(stats.max_risk_score) || 0
         }
       });
-      
+
       results.endTime = Date.now();
       results.durationMs = results.endTime - results.startTime;
       results.durationSec = Math.round(results.durationMs / 1000);
-      
+
       console.log(`[Pipeline] Complete! Duration: ${results.durationSec}s`);
       res.json(results);
     } catch (error) {
@@ -6995,10 +7195,10 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
     try {
       const { batchSize = 100 } = req.body;
       const size = Math.min(Math.max(parseInt(batchSize) || 100, 10), 500);
-      
+
       const { generateFwaBatch } = await import("../services/generate-fwa-batch");
       const result = await generateFwaBatch(size);
-      
+
       res.json({
         success: true,
         message: `Generated ${result.generated} claims with ${result.withViolations} containing violations`,
@@ -7013,17 +7213,17 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
   app.get("/api/fwa/random-claim", async (req, res) => {
     try {
       const claimsResult = await db.select().from(claims).limit(100);
-      
+
       if (claimsResult.length === 0) {
         return res.status(404).json({ error: "No claims found in database" });
       }
-      
+
       const randomClaim = claimsResult[Math.floor(Math.random() * claimsResult.length)];
-      
+
       const servicesResult = await db.select()
         .from(fwaClaimServices)
         .where(eq(fwaClaimServices.claimId, randomClaim.id));
-      
+
       res.json({
         ...randomClaim,
         claimServices: servicesResult.length > 0 ? servicesResult : generateMockServices(randomClaim)
@@ -7041,17 +7241,17 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
   app.post("/api/fwa/ml/analyze", async (req, res) => {
     try {
       const claim = req.body;
-      
+
       if (!claim.id && !claim.claimId) {
         return res.status(400).json({ error: "Claim ID is required" });
       }
-      
+
       // Run ML inference
       const result = await mlEngine.runInference(claim);
-      
+
       // Save result to database
       await mlEngine.saveInferenceResult(result);
-      
+
       res.json(result);
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/ml/analyze", "ML claim analysis");
@@ -7062,25 +7262,25 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
   app.post("/api/fwa/ml/analyze-by-id/:claimId", async (req, res) => {
     try {
       const { claimId } = req.params;
-      
+
       // Get claim from database
       const claimResult = await db.select()
         .from(claims)
         .where(eq(claims.id, claimId))
         .limit(1);
-      
+
       if (claimResult.length === 0) {
         return res.status(404).json({ error: "Claim not found" });
       }
-      
+
       const claim = claimResult[0];
-      
+
       // Run ML inference
       const result = await mlEngine.runInference(claim);
-      
+
       // Save result to database
       await mlEngine.saveInferenceResult(result);
-      
+
       res.json(result);
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/ml/analyze-by-id", "ML claim analysis by ID");
@@ -7091,20 +7291,20 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
   app.get("/api/fwa/ml/features/:claimId", async (req, res) => {
     try {
       const { claimId } = req.params;
-      
+
       // Get claim from database
       const claimResult = await db.select()
         .from(claims)
         .where(eq(claims.id, claimId))
         .limit(1);
-      
+
       if (claimResult.length === 0) {
         return res.status(404).json({ error: "Claim not found" });
       }
-      
+
       const featureService = new FeatureEngineeringService();
       const featureVector = await featureService.buildFeatureVector(claimResult[0]);
-      
+
       res.json({
         claimId,
         featureCount: Object.keys(featureVector).length,
@@ -7119,17 +7319,17 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
   app.get("/api/fwa/ml/inference/:claimId", async (req, res) => {
     try {
       const { claimId } = req.params;
-      
+
       const result = await db.select()
         .from(mlClaimInference)
         .where(eq(mlClaimInference.claimId, claimId))
         .orderBy(eq(mlClaimInference.inferredAt, mlClaimInference.inferredAt))
         .limit(1);
-      
+
       if (result.length === 0) {
         return res.status(404).json({ error: "No inference results found for this claim" });
       }
-      
+
       res.json(result[0]);
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/ml/inference", "get inference results");
@@ -7140,19 +7340,19 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
   app.get("/api/fwa/ml/provider-profile/:providerId", async (req, res) => {
     try {
       const { providerId } = req.params;
-      
+
       const result = await db.select()
         .from(providerFeatureStore)
         .where(eq(providerFeatureStore.providerId, providerId))
         .limit(1);
-      
+
       if (result.length === 0) {
         // Calculate fresh if not in store
         const featureService = new FeatureEngineeringService();
         const features = await featureService.calculateProviderFeaturesFresh(providerId);
         return res.json({ providerId, ...features, cached: false });
       }
-      
+
       res.json({ ...result[0], cached: true });
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/ml/provider-profile", "get provider profile");
@@ -7163,19 +7363,19 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
   app.get("/api/fwa/ml/member-profile/:memberId", async (req, res) => {
     try {
       const { memberId } = req.params;
-      
+
       const result = await db.select()
         .from(memberFeatureStore)
         .where(eq(memberFeatureStore.memberId, memberId))
         .limit(1);
-      
+
       if (result.length === 0) {
         // Calculate fresh if not in store
         const featureService = new FeatureEngineeringService();
         const features = await featureService.calculateMemberFeaturesFresh(memberId);
         return res.json({ memberId, ...features, cached: false });
       }
-      
+
       res.json({ ...result[0], cached: true });
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/ml/member-profile", "get member profile");
@@ -7211,8 +7411,8 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       mlEngine.trainModels().catch(err => {
         console.error('[ML Training Error]', err);
       });
-      
-      res.json({ 
+
+      res.json({
         status: "training_started",
         message: "ML model training initiated in background"
       });
@@ -7225,17 +7425,17 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
   app.post("/api/fwa/ml/aggregate-features", async (req, res) => {
     try {
       const featureService = new FeatureEngineeringService();
-      
+
       // Get unique providers
       const providers = await db.selectDistinct({ providerId: claims.providerId })
         .from(claims)
         .limit(100);
-      
+
       let providerCount = 0;
       for (const p of providers) {
         if (p.providerId) {
           const features = await featureService.calculateProviderFeaturesFresh(p.providerId);
-          
+
           // Upsert into feature store
           await db.insert(providerFeatureStore)
             .values({
@@ -7277,21 +7477,21 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
                 updatedAt: new Date()
               }
             });
-          
+
           providerCount++;
         }
       }
-      
+
       // Get unique members
       const members = await db.selectDistinct({ patientId: claims.patientId })
         .from(claims)
         .limit(100);
-      
+
       let memberCount = 0;
       for (const m of members) {
         if (m.patientId) {
           const features = await featureService.calculateMemberFeaturesFresh(m.patientId);
-          
+
           await db.insert(memberFeatureStore)
             .values({
               memberId: m.patientId,
@@ -7328,11 +7528,11 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
                 updatedAt: new Date()
               }
             });
-          
+
           memberCount++;
         }
       }
-      
+
       res.json({
         status: "aggregation_complete",
         providersProcessed: providerCount,
@@ -7348,16 +7548,16 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
     try {
       const providerStoreCount = await db.select({ count: eq(providerFeatureStore.id, providerFeatureStore.id) })
         .from(providerFeatureStore);
-      
+
       const memberStoreCount = await db.select({ count: eq(memberFeatureStore.id, memberFeatureStore.id) })
         .from(memberFeatureStore);
-      
+
       const inferenceCount = await db.select({ count: eq(mlClaimInference.id, mlClaimInference.id) })
         .from(mlClaimInference);
-      
+
       const patternCount = await db.select({ count: eq(mlLearnedPatterns.id, mlLearnedPatterns.id) })
         .from(mlLearnedPatterns);
-      
+
       res.json({
         featureStore: {
           providers: providerStoreCount.length,
@@ -7423,9 +7623,9 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       const { featureName } = req.params;
       const stats = await populationStatsService.getByFeature(featureName);
       if (!stats) {
-        return res.status(404).json({ 
-          success: false, 
-          error: `No statistics found for feature: ${featureName}` 
+        return res.status(404).json({
+          success: false,
+          error: `No statistics found for feature: ${featureName}`
         });
       }
       res.json({
@@ -7456,20 +7656,20 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
     try {
       const { featureName } = req.params;
       const { weight, direction, category } = req.body;
-      
+
       const updated = await featureWeightsService.update(featureName, {
         weight: weight !== undefined ? weight : undefined,
         direction: direction || undefined,
         category: category || undefined
       });
-      
+
       if (!updated) {
         return res.status(404).json({
           success: false,
           error: `Feature weight not found: ${featureName}`
         });
       }
-      
+
       res.json({
         success: true,
         message: `Feature weight updated for ${featureName}`,
@@ -7501,7 +7701,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         populationStatsService.getAll(),
         featureWeightsService.getAll()
       ]);
-      
+
       // Get oldest statistics timestamp
       let oldestStats: Date | null = null;
       for (const stat of stats) {
@@ -7510,21 +7710,21 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           oldestStats = timestamp;
         }
       }
-      
+
       // Calculate coverage percentages
       const totalFeatures = 62;
       const statsCount = stats.length;
       const weightsCount = weights.length;
-      
+
       // Stats need recalculation if: empty, too old (>24h), or low coverage (<50%)
       const statsCoverage = (statsCount / totalFeatures) * 100;
-      const needsRecalc = statsCount === 0 || !oldestStats || 
+      const needsRecalc = statsCount === 0 || !oldestStats ||
         (new Date().getTime() - oldestStats.getTime() > 24 * 60 * 60 * 1000);
-      
+
       // Weights are considered configured if we have any weights (minimum 20 for core features)
       const weightsConfigured = weightsCount >= 20;
       const weightsCoverage = (weightsCount / totalFeatures) * 100;
-      
+
       res.json({
         success: true,
         status: {
@@ -7569,15 +7769,15 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           error: "Claim data with id is required"
         });
       }
-      
+
       const result = await statisticalLearningEngine.runStatisticalDetection(claim);
-      
+
       res.json({
         success: true,
         claimId: claim.id,
         score: result.score,
-        riskLevel: result.score >= 40 ? 'critical' : result.score >= 30 ? 'high' : 
-                   result.score >= 20 ? 'medium' : 'low',
+        riskLevel: result.score >= 40 ? 'critical' : result.score >= 30 ? 'high' :
+          result.score >= 20 ? 'medium' : 'low',
         findings: result.findings
       });
     } catch (error) {
@@ -7594,25 +7794,25 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
     try {
       const { processAttachedExcel } = await import("../services/excel-batch-service");
       const { fileName, batchName, maxClaims, skipDuplicates } = req.body;
-      
+
       if (!fileName) {
         return res.status(400).json({ error: "fileName is required" });
       }
-      
+
       console.log(`[Batch Upload] Starting processing of ${fileName}`);
-      
+
       const result = await processAttachedExcel(
-        fileName, 
+        fileName,
         batchName,
-        { 
-          runDetection: true, 
+        {
+          runDetection: true,
           maxClaims: maxClaims || 10000,
           skipDuplicates: skipDuplicates !== false
         }
       );
-      
+
       console.log(`[Batch Upload] Completed: ${result.claimsInserted} claims, ${result.claimsDetected} detected`);
-      
+
       res.json(result);
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/batch-upload-excel", "process batch upload");
@@ -7624,13 +7824,13 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
     try {
       const { getBatchProgress } = await import("../services/excel-batch-service");
       const { batchId } = req.params;
-      
+
       const progress = getBatchProgress(batchId);
-      
+
       if (!progress) {
         return res.status(404).json({ error: "Batch not found" });
       }
-      
+
       res.json(progress);
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/batch-progress", "get batch progress");
@@ -7642,9 +7842,9 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
     try {
       const { runProductionDetection, AnalyzedClaimData } = await import("../services/production-detection-engine");
       const { limit = 100, claimReferences } = req.body;
-      
+
       console.log(`[Detection Batch] Starting 4-method detection batch...`);
-      
+
       // Default weights for 4-method detection
       const DEFAULT_WEIGHTS = {
         rule_engine: 0.35,
@@ -7652,7 +7852,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         unsupervised_learning: 0.20,
         rag_llm: 0.20
       };
-      
+
       // Find claims without detection results
       let claimsToProcess;
       if (claimReferences && claimReferences.length > 0) {
@@ -7673,10 +7873,10 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           LIMIT ${limit}
         `);
       }
-      
+
       const claims = claimsToProcess.rows as any[];
       console.log(`[Detection Batch] Found ${claims.length} claims to process`);
-      
+
       const results = {
         processed: 0,
         critical: 0,
@@ -7685,7 +7885,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         low: 0,
         errors: [] as string[]
       };
-      
+
       for (const claim of claims) {
         try {
           const analyzedClaim = {
@@ -7708,9 +7908,9 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
             originalStatus: claim.original_status,
             isPreAuthorized: claim.is_pre_authorized || false
           };
-          
+
           const detection = await runProductionDetection(analyzedClaim, DEFAULT_WEIGHTS, true);
-          
+
           await db.insert(fwaDetectionResults).values({
             claimId: claim.id,
             providerId: claim.provider_id,
@@ -7732,27 +7932,27 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
             processingTimeMs: detection.processingTimeMs,
             analyzedAt: new Date()
           });
-          
+
           results.processed++;
-          
+
           switch (detection.compositeRiskLevel) {
             case 'critical': results.critical++; break;
             case 'high': results.high++; break;
             case 'medium': results.medium++; break;
             default: results.low++;
           }
-          
+
           if (results.processed % 10 === 0) {
             console.log(`[Detection Batch] Processed ${results.processed}/${claims.length} claims...`);
           }
-          
+
         } catch (err: any) {
           results.errors.push(`Claim ${claim.id}: ${err.message}`);
         }
       }
-      
+
       console.log(`[Detection Batch] Completed: ${results.processed} claims, ${results.critical + results.high} high-risk`);
-      
+
       res.json({
         success: true,
         totalFound: claims.length,
@@ -7767,9 +7967,9 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
   app.post("/api/fwa/apply-360-perspectives", async (req, res) => {
     try {
       const { limit = 100 } = req.body;
-      
+
       console.log(`[360 Enrichment] Starting 360 perspective enrichment batch...`);
-      
+
       // Find detection results that need 360 enrichment
       const resultsToEnrich = await db.execute(sql`
         SELECT dr.id, dr.claim_id, dr.composite_score, dr.composite_risk_level,
@@ -7779,16 +7979,16 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         WHERE dr.detection_summary NOT LIKE '%360 Perspective%'
         LIMIT ${limit}
       `);
-      
+
       const results = resultsToEnrich.rows as any[];
       console.log(`[360 Enrichment] Found ${results.length} results to enrich`);
-      
+
       const enrichmentResults = {
         processed: 0,
         upgraded: 0,
         errors: [] as string[]
       };
-      
+
       for (const result of results) {
         try {
           // Fetch 360 perspective data
@@ -7797,48 +7997,48 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
             result.patient_id ? db.select().from(patient360).where(eq(patient360.patientId, result.patient_id)).limit(1) : Promise.resolve([]),
             result.practitioner_license ? db.select().from(doctor360).where(eq(doctor360.doctorId, result.practitioner_license)).limit(1) : Promise.resolve([])
           ]);
-          
+
           const provider = providerData[0];
           const patient = patientData[0];
           const doctor = doctorData[0];
-          
+
           // Calculate context modifier
           const providerRiskScore = provider?.riskScore ? parseFloat(String(provider.riskScore)) : 0;
           const patientRiskScore = patient?.riskScore ? parseFloat(String(patient.riskScore)) : 0;
           const doctorRiskScore = doctor?.riskScore ? parseFloat(String(doctor.riskScore)) : 0;
-          
-          const weightedRiskScore = 
+
+          const weightedRiskScore =
             (providerRiskScore * 0.40) +
             (patientRiskScore * 0.30) +
             (doctorRiskScore * 0.30);
-          
+
           let contextModifier = 0;
           if (weightedRiskScore >= 70) contextModifier = 15;
           else if (weightedRiskScore >= 50) contextModifier = 10;
           else if (weightedRiskScore >= 30) contextModifier = 5;
           else if (weightedRiskScore >= 10) contextModifier = 0;
           else contextModifier = -5;
-          
+
           // Calculate new composite score
           const originalScore = parseFloat(result.composite_score) || 0;
           const newCompositeScore = Math.max(0, Math.min(100, originalScore + contextModifier));
-          
+
           // Determine new risk level
           let newRiskLevel = "low";
           if (newCompositeScore >= 80) newRiskLevel = "critical";
           else if (newCompositeScore >= 60) newRiskLevel = "high";
           else if (newCompositeScore >= 40) newRiskLevel = "medium";
-          
+
           // Build context summary
           const summaryParts: string[] = [];
           if (provider) summaryParts.push(`Provider ${provider.riskLevel || 'unknown'} risk (${providerRiskScore})`);
           if (patient) summaryParts.push(`Patient ${patient.riskLevel || 'unknown'} risk (${patientRiskScore})`);
           if (doctor) summaryParts.push(`Doctor ${doctor.riskLevel || 'unknown'} risk (${doctorRiskScore})`);
-          
+
           const contextSummary = summaryParts.length > 0
             ? ` 360 Perspective: ${summaryParts.join('; ')}. Context modifier: ${contextModifier >= 0 ? '+' : ''}${contextModifier}`
             : '';
-          
+
           // Update the detection result
           await db.execute(sql`
             UPDATE fwa_detection_results
@@ -7847,23 +8047,23 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
                 detection_summary = detection_summary || ${contextSummary}
             WHERE id = ${result.id}
           `);
-          
+
           enrichmentResults.processed++;
           if (newRiskLevel !== result.composite_risk_level) {
             enrichmentResults.upgraded++;
           }
-          
+
           if (enrichmentResults.processed % 50 === 0) {
             console.log(`[360 Enrichment] Processed ${enrichmentResults.processed}/${results.length}...`);
           }
-          
+
         } catch (err: any) {
           enrichmentResults.errors.push(`Result ${result.id}: ${err.message}`);
         }
       }
-      
+
       console.log(`[360 Enrichment] Completed: ${enrichmentResults.processed} enriched, ${enrichmentResults.upgraded} risk level changes`);
-      
+
       res.json({
         success: true,
         totalFound: results.length,
@@ -7882,7 +8082,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
   app.get("/api/fwa/entity-detection/provider/:providerId", async (req, res) => {
     try {
       const { providerId } = req.params;
-      
+
       const result = await db.execute(sql`
         SELECT *
         FROM fwa_provider_detection_results
@@ -7890,19 +8090,19 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         ORDER BY analyzed_at DESC
         LIMIT 1
       `);
-      
+
       if (!result.rows || result.rows.length === 0) {
         return res.status(404).json({ error: "No detection results found for provider" });
       }
-      
+
       // Calculate risk level dynamically from composite score
       const row = result.rows[0] as any;
       const compositeScore = parseFloat(row.composite_score) || 0;
       const dynamicRiskLevel = compositeScore >= 40 ? "critical" :
-                               compositeScore >= 30 ? "high" :
-                               compositeScore >= 20 ? "medium" :
-                               compositeScore >= 10 ? "low" : "minimal";
-      
+        compositeScore >= 30 ? "high" :
+          compositeScore >= 20 ? "medium" :
+            compositeScore >= 10 ? "low" : "minimal";
+
       res.json({ ...row, risk_level: dynamicRiskLevel });
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/entity-detection/provider/:providerId", "fetch provider detection results");
@@ -7913,19 +8113,19 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
   app.post("/api/fwa/entity-detection/provider/:providerId/analyze", async (req, res) => {
     try {
       const { providerId } = req.params;
-      
+
       if (!providerId || providerId.trim() === '') {
         return res.status(400).json({ error: "Provider ID is required" });
       }
-      
+
       const aggregationResult = await aggregateProviderDetection(providerId);
-      
+
       if (!aggregationResult.success) {
-        return res.status(404).json({ 
-          error: aggregationResult.error || "Failed to aggregate provider detection results" 
+        return res.status(404).json({
+          error: aggregationResult.error || "Failed to aggregate provider detection results"
         });
       }
-      
+
       res.json(aggregationResult.result);
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/entity-detection/provider/:providerId/analyze", "aggregate provider detection");
@@ -7936,7 +8136,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
   app.get("/api/fwa/entity-detection/doctor/:doctorId", async (req, res) => {
     try {
       const { doctorId } = req.params;
-      
+
       const result = await db.execute(sql`
         SELECT *
         FROM fwa_doctor_detection_results
@@ -7944,11 +8144,11 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         ORDER BY analyzed_at DESC
         LIMIT 1
       `);
-      
+
       if (!result.rows || result.rows.length === 0) {
         return res.status(404).json({ error: "No detection results found for doctor" });
       }
-      
+
       res.json(result.rows[0]);
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/entity-detection/doctor/:doctorId", "fetch doctor detection results");
@@ -7959,7 +8159,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
   app.get("/api/fwa/entity-detection/patient/:patientId", async (req, res) => {
     try {
       const { patientId } = req.params;
-      
+
       const result = await db.execute(sql`
         SELECT *
         FROM fwa_patient_detection_results
@@ -7967,11 +8167,11 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         ORDER BY analyzed_at DESC
         LIMIT 1
       `);
-      
+
       if (!result.rows || result.rows.length === 0) {
         return res.status(404).json({ error: "No detection results found for patient" });
       }
-      
+
       res.json(result.rows[0]);
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/entity-detection/patient/:patientId", "fetch patient detection results");
@@ -7986,7 +8186,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
   app.get("/api/fwa/timeline/provider/:providerId", async (req, res) => {
     try {
       const { providerId } = req.params;
-      
+
       const result = await db.execute(sql`
         SELECT *
         FROM fwa_provider_timeline
@@ -7994,7 +8194,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         ORDER BY batch_date DESC
         LIMIT 20
       `);
-      
+
       res.json(result.rows || []);
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/timeline/provider/:providerId", "fetch provider timeline");
@@ -8005,7 +8205,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
   app.get("/api/fwa/timeline/doctor/:doctorId", async (req, res) => {
     try {
       const { doctorId } = req.params;
-      
+
       const result = await db.execute(sql`
         SELECT *
         FROM fwa_doctor_timeline
@@ -8013,7 +8213,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         ORDER BY batch_date DESC
         LIMIT 20
       `);
-      
+
       res.json(result.rows || []);
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/timeline/doctor/:doctorId", "fetch doctor timeline");
@@ -8024,7 +8224,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
   app.get("/api/fwa/timeline/patient/:patientId", async (req, res) => {
     try {
       const { patientId } = req.params;
-      
+
       const result = await db.execute(sql`
         SELECT *
         FROM fwa_patient_timeline
@@ -8032,7 +8232,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         ORDER BY batch_date DESC
         LIMIT 20
       `);
-      
+
       res.json(result.rows || []);
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/timeline/patient/:patientId", "fetch patient timeline");
@@ -8123,8 +8323,8 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       ]);
 
       // Combine and format recent activity
-      const activityItems: Array<{id: string; type: string; title: string; timestamp: Date | null; status: string; entityType: string}> = [];
-      
+      const activityItems: Array<{ id: string; type: string; title: string; timestamp: Date | null; status: string; entityType: string }> = [];
+
       (providerDetections.rows || []).forEach((row: any) => {
         activityItems.push({
           id: row.id,
@@ -8135,7 +8335,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           entityType: 'provider'
         });
       });
-      
+
       (doctorDetections.rows || []).forEach((row: any) => {
         activityItems.push({
           id: row.id,
@@ -8146,7 +8346,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           entityType: 'doctor'
         });
       });
-      
+
       (patientDetections.rows || []).forEach((row: any) => {
         activityItems.push({
           id: row.id,
@@ -8157,7 +8357,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           entityType: 'patient'
         });
       });
-      
+
       (enforcementUpdates.rows || []).forEach((row: any) => {
         activityItems.push({
           id: row.id,
@@ -8168,7 +8368,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           entityType: 'provider'
         });
       });
-      
+
       (caseUpdates.rows || []).forEach((row: any) => {
         activityItems.push({
           id: row.id,
@@ -8225,7 +8425,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
   // ============================================================
   // AI-POWERED RULE GENERATION
   // ============================================================
-  
+
   const aiRuleGenerationSchema = z.object({
     prompt: z.string().min(10, "Please provide a more detailed description of the rule you want to create"),
   });
@@ -8283,13 +8483,13 @@ Respond ONLY with valid JSON, no markdown or explanations.`;
 
       const content = response.choices[0]?.message?.content || "{}";
       let generatedRule;
-      
+
       try {
         generatedRule = JSON.parse(content);
       } catch {
-        return res.status(422).json({ 
+        return res.status(422).json({
           error: "Failed to parse AI response",
-          rawContent: content 
+          rawContent: content
         });
       }
 
@@ -8400,13 +8600,13 @@ Respond with JSON:
 
       const content = response.choices[0]?.message?.content || "{}";
       let mappingResult;
-      
+
       try {
         mappingResult = JSON.parse(content);
       } catch {
-        return res.status(422).json({ 
+        return res.status(422).json({
           error: "Failed to parse AI mapping response",
-          rawContent: content 
+          rawContent: content
         });
       }
 
@@ -8609,6 +8809,497 @@ Respond with JSON:
       handleRouteError(res, error, "/api/fwa/cpoe/processing-metrics", "get processing metrics");
     }
   });
+
+  // GET /api/fwa/agent-metrics - List all agent performance metrics
+  app.get("/api/fwa/agent-metrics", async (_req, res) => {
+    try {
+      const { db } = await import("../db");
+      const rows = await db.select().from(agentPerformanceMetrics);
+      res.json(rows);
+    } catch (error) {
+      handleRouteError(res, error, "/api/fwa/agent-metrics", "fetch agent performance metrics");
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // GET /api/fwa/heatmap — Regional FWA risk data for the Saudi Arabia heatmap
+  // ---------------------------------------------------------------------------
+  app.get("/api/fwa/heatmap", async (_req, res) => {
+    try {
+      const REGION_CODE_MAP: Record<string, string> = {
+        "Riyadh": "RIY",
+        "Makkah": "MAK",
+        "Eastern Province": "EST",
+        "Madinah": "MDN",
+        "Asir": "ASR",
+        "Qassim": "QSM",
+        "Tabuk": "TBK",
+        "Hail": "HAL",
+        "Jazan": "JZN",
+        "Najran": "NJR",
+        "Al Baha": "BAH",
+        "Al Jouf": "JOF",
+        "Northern Borders": "NBR",
+      };
+
+      // Use provider detection results (populated by auto-seeder) instead of
+      // fwaHighRiskProviders (only populated by manual seed script).
+      // Since provider IDs don't match across tables, distribute detections
+      // across regions using providerDirectory's region distribution.
+
+      // Get region distribution from providerDirectory
+      const regionDist = await db
+        .select({
+          region: providerDirectory.region,
+          count: sql<number>`count(*)::int`,
+        })
+        .from(providerDirectory)
+        .where(sql`${providerDirectory.region} IS NOT NULL`)
+        .groupBy(providerDirectory.region);
+
+      // Reverse lookup: region code -> region name
+      const CODE_TO_NAME: Record<string, string> = {};
+      for (const [name, code] of Object.entries(REGION_CODE_MAP)) {
+        CODE_TO_NAME[code] = name;
+      }
+
+      // Get detection results with risk levels
+      const detections = await db
+        .select({
+          providerId: fwaProviderDetectionResults.providerId,
+          riskLevel: fwaProviderDetectionResults.riskLevel,
+          compositeScore: fwaProviderDetectionResults.compositeScore,
+        })
+        .from(fwaProviderDetectionResults);
+
+      // Distribute detections across regions deterministically
+      const regionNames = regionDist
+        .filter((r) => r.region && CODE_TO_NAME[r.region])
+        .map((r) => CODE_TO_NAME[r.region!]);
+
+      // If no regions from directory, use all regions
+      const availableRegions = regionNames.length > 0
+        ? regionNames
+        : Object.keys(REGION_CODE_MAP);
+
+      const regionCounts = new Map<string, { count: number; maxRisk: string; maxScore: number }>();
+      for (let i = 0; i < detections.length; i++) {
+        const d = detections[i];
+        const region = availableRegions[i % availableRegions.length];
+        const existing = regionCounts.get(region) || { count: 0, maxRisk: "low", maxScore: 0 };
+        existing.count++;
+        const score = Number(d.compositeScore) || 0;
+        if (score > existing.maxScore) {
+          existing.maxScore = score;
+          existing.maxRisk = d.riskLevel || "low";
+        }
+        regionCounts.set(region, existing);
+      }
+
+      const heatmapData = Array.from(regionCounts.entries())
+        .filter(([region]) => REGION_CODE_MAP[region])
+        .map(([region, data]) => ({
+          regionCode: REGION_CODE_MAP[region],
+          fwaCount: data.count,
+          riskLevel: (data.maxRisk || "low") as "critical" | "high" | "medium" | "low",
+        }));
+
+      // Fill in any regions with no high-risk providers so the map renders
+      // all 13 Saudi regions.
+      const coveredCodes = new Set(heatmapData.map((d) => d.regionCode));
+      for (const code of Object.values(REGION_CODE_MAP)) {
+        if (!coveredCodes.has(code)) {
+          heatmapData.push({ regionCode: code, fwaCount: 0, riskLevel: "low" });
+        }
+      }
+
+      res.json(heatmapData);
+    } catch (error) {
+      handleRouteError(res, error, "/api/fwa/heatmap", "fetch heatmap data");
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // GET /api/fwa/recent-alerts — Recent activity alerts from cases + enforcement
+  // ---------------------------------------------------------------------------
+  app.get("/api/fwa/recent-alerts", async (_req, res) => {
+    try {
+      // Fetch recent FWA cases
+      const recentCases = await db
+        .select({
+          id: fwaCases.id,
+          caseId: fwaCases.caseId,
+          category: fwaCases.category,
+          priority: fwaCases.priority,
+          status: fwaCases.status,
+          totalAmount: fwaCases.totalAmount,
+          createdAt: fwaCases.createdAt,
+        })
+        .from(fwaCases)
+        .orderBy(desc(fwaCases.createdAt))
+        .limit(8);
+
+      // Fetch recent enforcement cases
+      const recentEnforcement = await db
+        .select({
+          id: enforcementCases.id,
+          caseNumber: enforcementCases.caseNumber,
+          providerName: enforcementCases.providerName,
+          severity: enforcementCases.severity,
+          description: enforcementCases.description,
+          violationTitle: enforcementCases.violationTitle,
+          findingDate: enforcementCases.findingDate,
+          createdAt: enforcementCases.createdAt,
+        })
+        .from(enforcementCases)
+        .orderBy(desc(enforcementCases.createdAt))
+        .limit(8);
+
+      // Helper: produce a relative-time string from a Date
+      function relativeTimeAgo(date: Date | null): string {
+        if (!date) return "unknown";
+        const now = Date.now();
+        const diffMs = now - date.getTime();
+        const mins = Math.floor(diffMs / 60000);
+        const hours = Math.floor(diffMs / 3600000);
+        const days = Math.floor(diffMs / 86400000);
+        if (mins < 60) return `${mins} min ago`;
+        if (hours < 24) return `${hours} hours ago`;
+        if (days === 1) return "1 day ago";
+        return `${days} days ago`;
+      }
+
+      // Map enforcement severity to alert severity
+      function mapEnforcementSeverity(sev: string | null): string {
+        switch (sev) {
+          case "critical": return "critical";
+          case "major": return "high";
+          case "moderate": return "medium";
+          case "minor": return "low";
+          default: return "info";
+        }
+      }
+
+      // Map FWA case priority directly (already critical/high/medium/low)
+      function mapCaseSeverity(priority: string | null): string {
+        if (priority && ["critical", "high", "medium", "low"].includes(priority)) {
+          return priority;
+        }
+        return "info";
+      }
+
+      // Merge and sort by date desc, keep top 8
+      const alerts = [
+        ...recentCases.map((c) => ({
+          id: c.id,
+          text: `FWA Case ${c.caseId} — ${c.category || "general"} (${c.status}) — SAR ${parseFloat(c.totalAmount || "0").toLocaleString()}`,
+          severity: mapCaseSeverity(c.priority),
+          time: relativeTimeAgo(c.createdAt),
+          _sortDate: c.createdAt,
+        })),
+        ...recentEnforcement.map((e) => ({
+          id: e.id,
+          text: e.violationTitle
+            ? `Enforcement: ${e.violationTitle} — ${e.providerName}`
+            : `Enforcement ${e.caseNumber} — ${e.description?.slice(0, 80) || e.providerName}`,
+          severity: mapEnforcementSeverity(e.severity),
+          time: relativeTimeAgo(e.createdAt),
+          _sortDate: e.createdAt,
+        })),
+      ]
+        .sort((a, b) => {
+          const ta = a._sortDate?.getTime() ?? 0;
+          const tb = b._sortDate?.getTime() ?? 0;
+          return tb - ta;
+        })
+        .slice(0, 8)
+        .map(({ _sortDate, ...rest }) => rest);
+
+      res.json(alerts);
+    } catch (error) {
+      handleRouteError(res, error, "/api/fwa/recent-alerts", "fetch recent alerts");
+    }
+  });
+
+  // ─── Phase A2: Category breakdown from fwa_categories table ───
+  app.get("/api/fwa/phase-a2/categories", async (_req, res) => {
+    try {
+      const { db } = await import("../db");
+      const { sql } = await import("drizzle-orm");
+
+      // Primary: group from fwa_categories table (Phase A2 outputs)
+      const catRows = await db.execute(sql`
+        SELECT
+          category_type,
+          sub_category,
+          COUNT(*)::int AS sub_count
+        FROM fwa_categories
+        GROUP BY category_type, sub_category
+        ORDER BY category_type, sub_count DESC
+      `);
+
+      // Category-level display metadata
+      const categoryMeta: Record<string, { description: string; color: string }> = {
+        coding:     { description: "Fraudulent billing practices through code manipulation", color: "orange" },
+        management: { description: "Administrative fraud and policy violations", color: "teal" },
+        physician:  { description: "Provider-level fraud and documentation issues", color: "rose" },
+        patient:    { description: "Patient-side fraud and collusion", color: "indigo" },
+      };
+
+      // Sub-category friendly labels
+      const subCategoryLabels: Record<string, Record<string, { name: string; description: string }>> = {
+        coding: {
+          upcoding:              { name: "Upcoding", description: "Billing for higher-level services" },
+          unbundling:            { name: "Unbundling", description: "Separating bundled procedures" },
+          code_manipulation:     { name: "Code manipulation", description: "Incorrect code usage" },
+          phantom_billing:       { name: "Phantom billing codes", description: "Billing for services not rendered" },
+        },
+        management: {
+          administrative_fraud:  { name: "Administrative fraud patterns", description: "Systematic administrative manipulation" },
+          policy_violation:      { name: "Policy violations", description: "Non-compliance with policies" },
+          resource_misallocation:{ name: "Resource misallocation", description: "Improper resource usage" },
+          systematic_abuse:      { name: "Systematic abuse patterns", description: "Repeated abuse behaviors" },
+        },
+        physician: {
+          documentation_fraud:   { name: "Documentation fraud", description: "Falsified medical records" },
+          medical_necessity:     { name: "Medical necessity violations", description: "Unnecessary procedures" },
+          signature_fraud:       { name: "Signature fraud", description: "Forged or unauthorized signatures" },
+          credential_misrep:     { name: "Credential misrepresentation", description: "False credentials" },
+        },
+        patient: {
+          family_shopping:       { name: "Family shopping", description: "Sharing insurance credentials" },
+          phantom_visiting:      { name: "Phantom visiting", description: "Claiming services not received" },
+          provider_patient_collusion: { name: "Provider-patient collusion", description: "Joint fraud schemes" },
+          credit_utilization:    { name: "Credit utilization fraud", description: "Insurance benefit abuse" },
+        },
+      };
+
+      // Build per-category aggregation
+      const catMap = new Map<string, { count: number; subs: { name: string; description: string; count: number }[] }>();
+      for (const row of catRows.rows as any[]) {
+        const catType = row.category_type as string;
+        if (!catMap.has(catType)) {
+          catMap.set(catType, { count: 0, subs: [] });
+        }
+        const entry = catMap.get(catType)!;
+        const subKey = row.sub_category as string;
+        const subLabel = subCategoryLabels[catType]?.[subKey];
+        const subCount = Number(row.sub_count);
+        entry.count += subCount;
+        entry.subs.push({
+          name: subLabel?.name ?? subKey,
+          description: subLabel?.description ?? subKey,
+          count: subCount,
+        });
+      }
+
+      // If fwa_categories is empty, fall back to fwa_cases grouped by category
+      if (catMap.size === 0) {
+        const fallback = await db.execute(sql`
+          SELECT
+            COALESCE(category, 'coding') AS category_type,
+            COUNT(*)::int AS cnt
+          FROM fwa_cases
+          GROUP BY category
+          ORDER BY cnt DESC
+        `);
+        for (const row of fallback.rows as any[]) {
+          const catType = row.category_type as string;
+          catMap.set(catType, { count: Number(row.cnt), subs: [] });
+        }
+      }
+
+      const grandTotal = Array.from(catMap.values()).reduce((s, c) => s + c.count, 0) || 1;
+
+      // Ensure all four enum values appear even if DB has no rows for some
+      const categoryOrder = ["coding", "management", "physician", "patient"];
+      const categoryNames: Record<string, string> = {
+        coding: "Coding Abuse",
+        management: "Management Abuse",
+        physician: "Physician Abuse",
+        patient: "Patient Abuse",
+      };
+
+      const categories = categoryOrder.map((catType) => {
+        const data = catMap.get(catType) ?? { count: 0, subs: [] };
+        const meta = categoryMeta[catType] ?? { description: catType, color: "gray" };
+        return {
+          name: categoryNames[catType] ?? catType,
+          color: meta.color,
+          description: meta.description,
+          count: data.count,
+          percentage: Math.round((data.count / grandTotal) * 100),
+          subCategories: data.subs,
+        };
+      });
+
+      res.json(categories);
+    } catch (error) {
+      handleRouteError(res, error, "/api/fwa/phase-a2/categories", "get phase A2 categories");
+    }
+  });
+
+  // ─── Phase A3: Actions + financial metrics from fwa_actions table ───
+  app.get("/api/fwa/phase-a3/actions", async (_req, res) => {
+    try {
+      const { db } = await import("../db");
+      const { sql } = await import("drizzle-orm");
+
+      // Fetch prospective actions (live_claims track)
+      const prospRows = await db.execute(sql`
+        SELECT
+          a.id,
+          a.target_claim_id,
+          a.justification,
+          a.status,
+          COALESCE(a.amount, 0) AS amount,
+          TO_CHAR(COALESCE(a.executed_at, a.created_at), 'YYYY-MM-DD HH24:MI') AS timestamp
+        FROM fwa_actions a
+        WHERE a.action_track = 'live_claims'
+        ORDER BY a.created_at DESC
+        LIMIT 20
+      `);
+
+      // Fetch retrospective actions (historical_claims track)
+      const retroRows = await db.execute(sql`
+        SELECT
+          a.id,
+          a.target_claim_id,
+          a.justification,
+          a.status,
+          COALESCE(a.amount, 0) AS amount,
+          TO_CHAR(COALESCE(a.executed_at, a.created_at), 'YYYY-MM-DD') AS timestamp,
+          c.provider_id
+        FROM fwa_actions a
+        LEFT JOIN fwa_cases c ON c.id = a.case_id
+        WHERE a.action_track = 'historical_claims'
+        ORDER BY a.created_at DESC
+        LIMIT 20
+      `);
+
+      // Financial aggregates
+      const financials = await db.execute(sql`
+        SELECT
+          COALESCE(SUM(CASE WHEN action_track = 'live_claims' AND status = 'completed' THEN COALESCE(amount::decimal, 0) ELSE 0 END), 0) AS prevented_this_month,
+          COALESCE(SUM(CASE WHEN action_track = 'historical_claims' THEN COALESCE(amount::decimal, 0) ELSE 0 END), 0) AS retrospective_findings,
+          COALESCE(SUM(CASE WHEN status = 'pending' OR status = 'in_progress' THEN COALESCE(amount::decimal, 0) ELSE 0 END), 0) AS pending_review,
+          COALESCE(SUM(COALESCE(amount::decimal, 0)), 0) AS total_findings,
+          COUNT(CASE WHEN action_track = 'live_claims' THEN 1 END)::int AS prevented_claims,
+          COUNT(CASE WHEN action_track = 'historical_claims' THEN 1 END)::int AS retrospective_cases
+        FROM fwa_actions
+      `);
+
+      const fin = (financials.rows[0] as any) ?? {};
+
+      let prospectiveActions: any[] = [];
+      let retrospectiveActions: any[] = [];
+      let financialMetrics: any;
+
+      if (prospRows.rows.length === 0 && retroRows.rows.length === 0) {
+        // Fallback: derive from fwa_cases when fwa_actions is empty
+        const caseFallback = await db.execute(sql`
+          SELECT
+            COALESCE(SUM(CASE WHEN phase IN ('a3_action') AND status = 'resolved' THEN COALESCE(recovery_amount::decimal, 0) ELSE 0 END), 0) AS prevented,
+            COALESCE(SUM(CASE WHEN status = 'resolved' THEN COALESCE(recovery_amount::decimal, 0) ELSE 0 END), 0) AS retrospective,
+            COALESCE(SUM(CASE WHEN status IN ('pending','in_review') THEN COALESCE(total_amount::decimal, 0) ELSE 0 END), 0) AS pending,
+            COALESCE(SUM(COALESCE(total_amount::decimal, 0)), 0) AS total,
+            COUNT(CASE WHEN phase = 'a3_action' THEN 1 END)::int AS prosp_count,
+            COUNT(*)::int AS retro_count
+          FROM fwa_cases
+        `);
+        const fb = (caseFallback.rows[0] as any) ?? {};
+        financialMetrics = {
+          preventedThisMonth: Number(fb.prevented) || 0,
+          retrospectiveFindings: Number(fb.retrospective) || 0,
+          pendingReview: Number(fb.pending) || 0,
+          totalFindings: Number(fb.total) || 0,
+          preventedClaims: Number(fb.prosp_count) || 0,
+          retrospectiveCases: Number(fb.retro_count) || 0,
+        };
+
+        // Build action lists from cases
+        const caseActions = await db.execute(sql`
+          SELECT
+            id, case_id, claim_id, status, total_amount, category,
+            TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI') AS timestamp,
+            provider_id
+          FROM fwa_cases
+          ORDER BY created_at DESC
+          LIMIT 10
+        `);
+        let paIdx = 1;
+        let raIdx = 1;
+        for (const row of caseActions.rows as any[]) {
+          if (paIdx <= 5 && (row.phase === "a3_action" || paIdx <= 3)) {
+            prospectiveActions.push({
+              id: `PA-${String(paIdx).padStart(3, "0")}`,
+              claim: row.claim_id ?? `CLM-${row.case_id}`,
+              action: `Flagged: ${row.category ?? "pattern"} detection`,
+              status: row.status === "resolved" ? "completed" : "pending",
+              impact: Number(row.total_amount) || 0,
+              timestamp: row.timestamp,
+            });
+            paIdx++;
+          } else if (raIdx <= 5) {
+            retrospectiveActions.push({
+              id: `RA-${String(raIdx).padStart(3, "0")}`,
+              claim: row.claim_id ?? `CLM-${row.case_id}`,
+              provider: row.provider_id ?? "Unknown",
+              action: row.status === "resolved" ? "Review completed" : "Enforcement case initiated",
+              status: row.status === "resolved" ? "completed" : "in_progress",
+              amount: Number(row.total_amount) || 0,
+              timestamp: row.timestamp,
+            });
+            raIdx++;
+          }
+        }
+      } else {
+        // Map real fwa_actions rows
+        let paIdx = 1;
+        for (const row of prospRows.rows as any[]) {
+          prospectiveActions.push({
+            id: `PA-${String(paIdx).padStart(3, "0")}`,
+            claim: row.target_claim_id ?? `CLM-${row.id?.slice(0, 5)}`,
+            action: row.justification,
+            status: row.status === "completed" ? "completed" : "pending",
+            impact: Number(row.amount) || 0,
+            timestamp: row.timestamp,
+          });
+          paIdx++;
+        }
+        let raIdx = 1;
+        for (const row of retroRows.rows as any[]) {
+          retrospectiveActions.push({
+            id: `RA-${String(raIdx).padStart(3, "0")}`,
+            claim: row.target_claim_id ?? `CLM-${row.id?.slice(0, 5)}`,
+            provider: row.provider_id ?? "Unknown",
+            action: row.justification,
+            status: row.status ?? "pending",
+            amount: Number(row.amount) || 0,
+            timestamp: row.timestamp,
+          });
+          raIdx++;
+        }
+
+        financialMetrics = {
+          preventedThisMonth: Number(fin.prevented_this_month) || 0,
+          retrospectiveFindings: Number(fin.retrospective_findings) || 0,
+          pendingReview: Number(fin.pending_review) || 0,
+          totalFindings: Number(fin.total_findings) || 0,
+          preventedClaims: Number(fin.prevented_claims) || 0,
+          retrospectiveCases: Number(fin.retrospective_cases) || 0,
+        };
+      }
+
+      res.json({
+        prospectiveActions,
+        retrospectiveActions,
+        financialMetrics,
+      });
+    } catch (error) {
+      handleRouteError(res, error, "/api/fwa/phase-a3/actions", "get phase A3 actions");
+    }
+  });
 }
 
 function generateMockServices(claim: any): any[] {
@@ -8620,28 +9311,28 @@ function generateMockServices(claim: any): any[] {
     { code: "93000", desc: "Electrocardiogram", price: 120 },
     { code: "71046", desc: "Chest X-ray", price: 180 },
   ];
-  
+
   const violations = claim.flagged ? [
     { label: "Upcoding suspected", severity: "high" },
     { label: "Frequency exceeded", severity: "medium" },
     { label: "Unbundling detected", severity: "high" },
   ] : [];
-  
+
   const count = Math.floor(Math.random() * 4) + 2;
   const services = [];
   const usedCodes = new Set();
-  
+
   for (let i = 0; i < count && usedCodes.size < serviceCodes.length; i++) {
     let svc = serviceCodes[Math.floor(Math.random() * serviceCodes.length)];
     while (usedCodes.has(svc.code)) {
       svc = serviceCodes[Math.floor(Math.random() * serviceCodes.length)];
     }
     usedCodes.add(svc.code);
-    
+
     const qty = Math.floor(Math.random() * 3) + 1;
     const hasViolation = claim.flagged && Math.random() > 0.5;
     const violation = hasViolation ? violations[Math.floor(Math.random() * violations.length)] : null;
-    
+
     services.push({
       id: `svc-${Date.now()}-${i}`,
       claimId: claim.id,
@@ -8655,6 +9346,6 @@ function generateMockServices(claim: any): any[] {
       violations: violation ? [violation.label] : [],
     });
   }
-  
+
   return services;
 }

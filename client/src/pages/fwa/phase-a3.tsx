@@ -1,7 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   TrendingUp,
@@ -9,42 +8,68 @@ import {
   ShieldCheck,
   Clock,
   CheckCircle,
-  XCircle,
   AlertTriangle,
-  ArrowRight,
   Play,
   FileText,
   RotateCcw,
+  Loader2,
 } from "lucide-react";
-import { Link, useLocation } from "wouter";
+import { useLocation } from "wouter";
+import { useQuery } from "@tanstack/react-query";
+import { QueryErrorState } from "@/components/error-boundary";
 
-const prospectiveActions = [
-  { id: "PA-001", claim: "CLM-45678", action: "Auto-rejected: Upcoding pattern match", status: "completed", impact: 8500, timestamp: "2024-01-15 10:23" },
-  { id: "PA-002", claim: "CLM-45679", action: "Flagged for review: Unbundling detected", status: "pending", impact: 12000, timestamp: "2024-01-15 10:18" },
-  { id: "PA-003", claim: "CLM-45680", action: "Auto-rejected: Phantom billing code", status: "completed", impact: 5200, timestamp: "2024-01-15 09:55" },
-  { id: "PA-004", claim: "CLM-45681", action: "Applied rejection rule: Documentation fraud", status: "completed", impact: 15800, timestamp: "2024-01-15 09:42" },
-  { id: "PA-005", claim: "CLM-45682", action: "Flagged for review: Suspicious pattern", status: "pending", impact: 7300, timestamp: "2024-01-15 09:30" },
-];
+// ── Types matching the API response shape ──
+interface ProspectiveAction {
+  id: string;
+  claim: string;
+  action: string;
+  status: string;
+  impact: number;
+  timestamp: string;
+}
 
-const retrospectiveActions = [
-  { id: "RA-001", claim: "CLM-42156", provider: "Metro Health", action: "Enforcement case initiated", status: "in_progress", amount: 45000, timestamp: "2024-01-15" },
-  { id: "RA-002", claim: "CLM-41892", provider: "City Medical", action: "Evidence package generated", status: "pending", amount: 28500, timestamp: "2024-01-14" },
-  { id: "RA-003", claim: "CLM-41567", provider: "Regional Hospital", action: "Review completed", status: "completed", amount: 67000, timestamp: "2024-01-13" },
-  { id: "RA-004", claim: "CLM-41234", provider: "Family Care", action: "Enforcement case initiated", status: "in_progress", amount: 18900, timestamp: "2024-01-12" },
-  { id: "RA-005", claim: "CLM-40987", provider: "Specialty Diagnostics", action: "Review completed", status: "completed", amount: 34200, timestamp: "2024-01-11" },
-];
+interface RetrospectiveAction {
+  id: string;
+  claim: string;
+  provider: string;
+  action: string;
+  status: string;
+  amount: number;
+  timestamp: string;
+}
 
-const financialMetrics = {
-  prospectiveFindings: 847500,
-  retrospectiveFindings: 523000,
-  pendingReview: 392400,
-  totalFindings: 1762900,
-  prospectiveClaims: 156,
-  retrospectiveCases: 45,
-};
+interface FinancialMetrics {
+  preventedThisMonth: number;
+  retrospectiveFindings: number;
+  pendingReview: number;
+  totalFindings: number;
+  preventedClaims: number;
+  retrospectiveCases: number;
+}
+
+interface PhaseA3Data {
+  prospectiveActions: ProspectiveAction[];
+  retrospectiveActions: RetrospectiveAction[];
+  financialMetrics: FinancialMetrics;
+}
 
 export default function PhaseA3() {
   const [, navigate] = useLocation();
+
+  const { data, isLoading, error, refetch } = useQuery<PhaseA3Data>({
+    queryKey: ["/api/fwa/phase-a3/actions"],
+  });
+
+  const prospectiveActions = data?.prospectiveActions ?? [];
+  const retrospectiveActions = data?.retrospectiveActions ?? [];
+  const financialMetrics: FinancialMetrics = data?.financialMetrics ?? {
+    preventedThisMonth: 0,
+    retrospectiveFindings: 0,
+    pendingReview: 0,
+    totalFindings: 0,
+    preventedClaims: 0,
+    retrospectiveCases: 0,
+  };
 
   const handleRunBatch = () => {
     navigate("/fwa/agent-workflow?entityId=all&entityType=provider&entityName=All%20Providers&phase=A3");
@@ -115,139 +140,172 @@ export default function PhaseA3() {
         </CardContent>
       </Card>
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      {isLoading ? (
+        <div className="flex items-center justify-center py-12">
+          <Loader2 className="w-6 h-6 animate-spin text-purple-600 mr-2" />
+          <span className="text-muted-foreground">Loading action data...</span>
+        </div>
+      ) : error ? (
+        <QueryErrorState error={error} onRetry={() => refetch()} title="Failed to load action data" />
+      ) : !data || (prospectiveActions.length === 0 && retrospectiveActions.length === 0 && financialMetrics.totalFindings === 0) ? (
         <Card>
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between mb-2">
-              <ShieldCheck className="w-5 h-5 text-green-600" />
-              <Badge className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">+12%</Badge>
-            </div>
-            <p className="text-3xl font-bold text-green-600">${(financialMetrics.preventedThisMonth / 1000).toFixed(0)}K</p>
-            <p className="text-sm text-muted-foreground">Prevented This Month</p>
-            <p className="text-xs text-muted-foreground mt-1">{financialMetrics.preventedClaims} claims intercepted</p>
+          <CardContent className="flex flex-col items-center justify-center py-12">
+            <FileText className="w-12 h-12 text-muted-foreground mb-4" />
+            <h3 className="text-lg font-medium mb-2">No Action Data</h3>
+            <p className="text-sm text-muted-foreground text-center mb-4">
+              No corrective actions have been generated yet. Run a batch analysis to identify claims with inappropriate care patterns.
+            </p>
+            <Button variant="outline" onClick={handleRunBatch}>
+              <Play className="w-4 h-4 mr-2" />
+              Run Batch Analysis
+            </Button>
           </CardContent>
         </Card>
-        <Card>
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between mb-2">
-              <DollarSign className="w-5 h-5 text-purple-600" />
-              <Badge className="bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200">+8%</Badge>
-            </div>
-            <p className="text-3xl font-bold text-purple-600">${(financialMetrics.retrospectiveFindings / 1000).toFixed(0)}K</p>
-            <p className="text-sm text-muted-foreground">Retrospective Findings</p>
-            <p className="text-xs text-muted-foreground mt-1">{financialMetrics.retrospectiveCases} cases reviewed</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between mb-2">
-              <Clock className="w-5 h-5 text-amber-600" />
-            </div>
-            <p className="text-3xl font-bold text-amber-600">${(financialMetrics.pendingReview / 1000).toFixed(0)}K</p>
-            <p className="text-sm text-muted-foreground">Pending Review</p>
-            <p className="text-xs text-muted-foreground mt-1">In progress</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between mb-2">
-              <TrendingUp className="w-5 h-5 text-blue-600" />
-              <Badge className="bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">Total</Badge>
-            </div>
-            <p className="text-3xl font-bold text-blue-600">${(financialMetrics.totalFindings / 1000000).toFixed(2)}M</p>
-            <p className="text-sm text-muted-foreground">Total Findings YTD</p>
-          </CardContent>
-        </Card>
-      </div>
-
-      <Tabs defaultValue="preventive">
-        <TabsList>
-          <TabsTrigger value="preventive" data-testid="tab-prospective">
-            <ShieldCheck className="w-4 h-4 mr-2" />
-            Prospective Actions
-          </TabsTrigger>
-          <TabsTrigger value="recovery" data-testid="tab-retrospective">
-            <RotateCcw className="w-4 h-4 mr-2" />
-            Retrospective Actions
-          </TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="preventive" className="mt-6">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between gap-2">
-              <CardTitle className="text-lg">Live Claim Interventions</CardTitle>
-              <Badge variant="outline" className="text-green-600 border-green-600">
-                Real-time
-              </Badge>
-            </CardHeader>
-            <CardContent className="p-0">
-              {prospectiveActions.map((action) => (
-                <div key={action.id} className="flex items-center justify-between p-4 border-b hover-elevate" data-testid={`prospective-row-${action.id}`}>
-                  <div className="flex items-center gap-4">
-                    {action.status === "completed" ? (
-                      <CheckCircle className="w-5 h-5 text-green-600" />
-                    ) : (
-                      <Clock className="w-5 h-5 text-amber-600" />
-                    )}
-                    <div>
-                      <p className="font-medium text-sm">{action.action}</p>
-                      <p className="text-xs text-muted-foreground">Claim: {action.claim} • {action.timestamp}</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className="text-sm font-medium text-green-600">+${action.impact.toLocaleString()}</span>
-                    <Badge className={action.status === "completed" ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200" : "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200"}>
-                      {action.status === "completed" ? "Completed" : "Pending"}
-                    </Badge>
-                  </div>
+      ) : (
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <Card>
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between mb-2">
+                  <ShieldCheck className="w-5 h-5 text-green-600" />
+                  <Badge className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">+12%</Badge>
                 </div>
-              ))}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="recovery" className="mt-6">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between gap-2">
-              <CardTitle className="text-lg">Historical Claim Review</CardTitle>
-              <Badge variant="outline" className="text-purple-600 border-purple-600">
-                Batch Processing
-              </Badge>
-            </CardHeader>
-            <CardContent className="p-0">
-              {retrospectiveActions.map((action) => (
-                <div key={action.id} className="flex items-center justify-between p-4 border-b hover-elevate" data-testid={`retrospective-row-${action.id}`}>
-                  <div className="flex items-center gap-4">
-                    {action.status === "completed" ? (
-                      <CheckCircle className="w-5 h-5 text-green-600" />
-                    ) : action.status === "in_progress" ? (
-                      <Clock className="w-5 h-5 text-blue-600" />
-                    ) : (
-                      <AlertTriangle className="w-5 h-5 text-amber-600" />
-                    )}
-                    <div>
-                      <p className="font-medium text-sm">{action.action}</p>
-                      <p className="text-xs text-muted-foreground">{action.provider} • Claim: {action.claim} • {action.timestamp}</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className="text-sm font-medium text-purple-600">${action.amount.toLocaleString()}</span>
-                    <Badge className={
-                      action.status === "completed" 
-                        ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200" 
-                        : action.status === "in_progress"
-                        ? "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
-                        : "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200"
-                    }>
-                      {action.status === "completed" ? "Reviewed" : action.status === "in_progress" ? "In Progress" : "Pending"}
-                    </Badge>
-                  </div>
+                <p className="text-3xl font-bold text-green-600">${(financialMetrics.preventedThisMonth / 1000).toFixed(0)}K</p>
+                <p className="text-sm text-muted-foreground">Prevented This Month</p>
+                <p className="text-xs text-muted-foreground mt-1">{financialMetrics.preventedClaims} claims intercepted</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between mb-2">
+                  <DollarSign className="w-5 h-5 text-purple-600" />
+                  <Badge className="bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200">+8%</Badge>
                 </div>
-              ))}
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
+                <p className="text-3xl font-bold text-purple-600">${(financialMetrics.retrospectiveFindings / 1000).toFixed(0)}K</p>
+                <p className="text-sm text-muted-foreground">Retrospective Findings</p>
+                <p className="text-xs text-muted-foreground mt-1">{financialMetrics.retrospectiveCases} cases reviewed</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between mb-2">
+                  <Clock className="w-5 h-5 text-amber-600" />
+                </div>
+                <p className="text-3xl font-bold text-amber-600">${(financialMetrics.pendingReview / 1000).toFixed(0)}K</p>
+                <p className="text-sm text-muted-foreground">Pending Review</p>
+                <p className="text-xs text-muted-foreground mt-1">In progress</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between mb-2">
+                  <TrendingUp className="w-5 h-5 text-blue-600" />
+                  <Badge className="bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">Total</Badge>
+                </div>
+                <p className="text-3xl font-bold text-blue-600">${(financialMetrics.totalFindings / 1000000).toFixed(2)}M</p>
+                <p className="text-sm text-muted-foreground">Total Findings YTD</p>
+              </CardContent>
+            </Card>
+          </div>
+
+          <Tabs defaultValue="preventive">
+            <TabsList>
+              <TabsTrigger value="preventive" data-testid="tab-prospective">
+                <ShieldCheck className="w-4 h-4 mr-2" />
+                Prospective Actions
+              </TabsTrigger>
+              <TabsTrigger value="recovery" data-testid="tab-retrospective">
+                <RotateCcw className="w-4 h-4 mr-2" />
+                Retrospective Actions
+              </TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="preventive" className="mt-6">
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between gap-2">
+                  <CardTitle className="text-lg">Live Claim Interventions</CardTitle>
+                  <Badge variant="outline" className="text-green-600 border-green-600">
+                    Real-time
+                  </Badge>
+                </CardHeader>
+                <CardContent className="p-0">
+                  {prospectiveActions.length === 0 ? (
+                    <div className="p-6 text-center text-muted-foreground">No prospective actions found.</div>
+                  ) : (
+                    prospectiveActions.map((action) => (
+                      <div key={action.id} className="flex items-center justify-between p-4 border-b hover-elevate" data-testid={`prospective-row-${action.id}`}>
+                        <div className="flex items-center gap-4">
+                          {action.status === "completed" ? (
+                            <CheckCircle className="w-5 h-5 text-green-600" />
+                          ) : (
+                            <Clock className="w-5 h-5 text-amber-600" />
+                          )}
+                          <div>
+                            <p className="font-medium text-sm">{action.action}</p>
+                            <p className="text-xs text-muted-foreground">Claim: {action.claim} • {action.timestamp}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <span className="text-sm font-medium text-green-600">+${action.impact.toLocaleString()}</span>
+                          <Badge className={action.status === "completed" ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200" : "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200"}>
+                            {action.status === "completed" ? "Completed" : "Pending"}
+                          </Badge>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            <TabsContent value="recovery" className="mt-6">
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between gap-2">
+                  <CardTitle className="text-lg">Historical Claim Review</CardTitle>
+                  <Badge variant="outline" className="text-purple-600 border-purple-600">
+                    Batch Processing
+                  </Badge>
+                </CardHeader>
+                <CardContent className="p-0">
+                  {retrospectiveActions.length === 0 ? (
+                    <div className="p-6 text-center text-muted-foreground">No retrospective actions found.</div>
+                  ) : (
+                    retrospectiveActions.map((action) => (
+                      <div key={action.id} className="flex items-center justify-between p-4 border-b hover-elevate" data-testid={`retrospective-row-${action.id}`}>
+                        <div className="flex items-center gap-4">
+                          {action.status === "completed" ? (
+                            <CheckCircle className="w-5 h-5 text-green-600" />
+                          ) : action.status === "in_progress" ? (
+                            <Clock className="w-5 h-5 text-blue-600" />
+                          ) : (
+                            <AlertTriangle className="w-5 h-5 text-amber-600" />
+                          )}
+                          <div>
+                            <p className="font-medium text-sm">{action.action}</p>
+                            <p className="text-xs text-muted-foreground">{action.provider} • Claim: {action.claim} • {action.timestamp}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <span className="text-sm font-medium text-purple-600">${action.amount.toLocaleString()}</span>
+                          <Badge className={
+                            action.status === "completed"
+                              ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
+                              : action.status === "in_progress"
+                              ? "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
+                              : "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200"
+                          }>
+                            {action.status === "completed" ? "Reviewed" : action.status === "in_progress" ? "In Progress" : "Pending"}
+                          </Badge>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
+          </Tabs>
+        </>
+      )}
     </div>
   );
 }

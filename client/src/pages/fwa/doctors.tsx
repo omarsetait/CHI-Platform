@@ -60,6 +60,10 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Link, useLocation } from "wouter";
 import type { FwaHighRiskDoctor } from "@shared/schema";
+import { MetricCard } from "@/components/metric-card";
+import { formatCurrency } from "@/lib/format";
+import { getRiskLevelBadgeClasses } from "@/lib/risk-utils";
+import { METRIC_GRID } from "@/lib/grid";
 
 interface DoctorStats {
   totalDoctors: number;
@@ -75,20 +79,6 @@ const defaultStats: DoctorStats = {
   activeCases: 0,
 };
 
-function getRiskLevelBadgeClasses(level: string | null) {
-  switch (level) {
-    case "critical":
-      return "bg-red-100 text-red-700 border-red-200 dark:bg-red-900/30 dark:text-red-400 dark:border-red-800";
-    case "high":
-      return "bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-900/30 dark:text-orange-400 dark:border-orange-800";
-    case "medium":
-      return "bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:border-amber-800";
-    case "low":
-      return "bg-green-100 text-green-700 border-green-200 dark:bg-green-900/30 dark:text-green-400 dark:border-green-800";
-    default:
-      return "bg-gray-100 text-gray-700 border-gray-200 dark:bg-gray-900/30 dark:text-gray-400 dark:border-gray-800";
-  }
-}
 
 function getReasonBadgeClasses(reason: string) {
   if (reason.startsWith("Coding Abuse:") || reason.startsWith("Coding FWA:")) {
@@ -103,16 +93,6 @@ function getReasonBadgeClasses(reason: string) {
   return "bg-gray-100 text-gray-700 border-gray-200 dark:bg-gray-900/30 dark:text-gray-400 dark:border-gray-800";
 }
 
-function formatCurrency(amount: number | string | null | undefined): string {
-  if (amount === null || amount === undefined) return "$0.00";
-  const numAmount = typeof amount === "string" ? parseFloat(amount) : amount;
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  }).format(numAmount);
-}
 
 function formatDate(date: Date | string | null | undefined): string {
   if (!date) return "-";
@@ -124,40 +104,6 @@ function formatDate(date: Date | string | null | undefined): string {
   });
 }
 
-function StatsCard({
-  title,
-  value,
-  description,
-  icon: Icon,
-  isLoading,
-}: {
-  title: string;
-  value: number | string;
-  description: string;
-  icon: React.ElementType;
-  isLoading?: boolean;
-}) {
-  return (
-    <Card data-testid={`stats-card-${title.toLowerCase().replace(/\s+/g, "-")}`}>
-      <CardContent className="p-6">
-        <div className="flex items-center justify-between gap-2">
-          <div className="space-y-1">
-            <p className="text-sm text-muted-foreground">{title}</p>
-            {isLoading ? (
-              <Skeleton className="h-9 w-24" />
-            ) : (
-              <p className="text-3xl font-bold">{value}</p>
-            )}
-            <p className="text-xs text-muted-foreground">{description}</p>
-          </div>
-          <div className="p-3 rounded-lg bg-purple-100 dark:bg-purple-900/30">
-            <Icon className="w-5 h-5 text-purple-600 dark:text-purple-400" />
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
 
 function DoctorDetailSheet({
   doctor,
@@ -181,17 +127,20 @@ function DoctorDetailSheet({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="right"
-        className="w-full sm:max-w-lg border-l-purple-300 dark:border-l-purple-800"
+        className="w-full sm:max-w-lg bg-white/80 dark:bg-slate-950/80 backdrop-blur-2xl border-l border-white/20 dark:border-white/10 shadow-2xl"
         data-testid="sheet-doctor-detail"
       >
-        <SheetHeader className="pb-4 border-b border-purple-200 dark:border-purple-800">
-          <div className="flex items-center gap-2">
-            <Stethoscope className="w-5 h-5 text-purple-600 dark:text-purple-400" />
-            <SheetTitle className="text-purple-700 dark:text-purple-300">
+        <SheetHeader className="pb-4 border-b border-white/20 dark:border-white/10 relative overflow-hidden">
+          <div className="absolute inset-0 bg-gradient-to-br from-violet-500/5 to-fuchsia-500/5 -z-10" />
+          <div className="flex items-center gap-2 relative z-10">
+            <div className="p-2 rounded-xl bg-gradient-to-br from-violet-500/10 to-fuchsia-500/10 border border-violet-200/50 dark:border-violet-800/50">
+              <Stethoscope className="w-5 h-5 text-violet-600 dark:text-violet-400" />
+            </div>
+            <SheetTitle className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-violet-700 to-fuchsia-700 dark:from-violet-300 dark:to-fuchsia-300">
               Doctor Details
             </SheetTitle>
           </div>
-          <SheetDescription>
+          <SheetDescription className="relative z-10 mt-2">
             Review doctor risk profile and metrics
           </SheetDescription>
         </SheetHeader>
@@ -199,49 +148,49 @@ function DoctorDetailSheet({
         <ScrollArea className="h-[calc(100vh-180px)] pr-4">
           <div className="py-4 space-y-6">
             <div className="space-y-3">
-              <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+              <h3 className="text-xs font-semibold text-violet-600 dark:text-violet-400 uppercase tracking-wider mb-2">
                 Doctor Summary
               </h3>
-              <Card className="border-purple-200 dark:border-purple-800">
+              <Card className="bg-white/50 dark:bg-slate-900/50 backdrop-blur border-white/20 dark:border-white/10 shadow-sm">
                 <CardContent className="p-4 space-y-3">
                   <div className="flex items-center gap-3">
-                    <div className="p-2 rounded-lg bg-purple-100 dark:bg-purple-900/30">
-                      <Stethoscope className="w-5 h-5 text-purple-600 dark:text-purple-400" />
+                    <div className="p-2 rounded-lg bg-violet-100 dark:bg-violet-900/30 text-violet-600 dark:text-violet-400 border border-violet-200 dark:border-violet-800">
+                      <Stethoscope className="w-5 h-5" />
                     </div>
-                    <div>
-                      <p className="font-semibold" data-testid="text-doctor-name">
+                    <div className="flex-1">
+                      <p className="font-semibold text-lg leading-tight" data-testid="text-doctor-name">
                         {doctor.doctorName}
                       </p>
-                      <p className="text-sm text-muted-foreground" data-testid="text-doctor-id">
-                        ID: {doctor.doctorId}
+                      <p className="text-sm text-muted-foreground font-mono mt-0.5" data-testid="text-doctor-id">
+                        {doctor.doctorId}
                       </p>
                     </div>
                   </div>
-                  <Separator />
+                  <Separator className="bg-white/20 dark:bg-white/10" />
                   <div className="grid grid-cols-2 gap-3">
-                    <div className="flex items-center gap-2">
-                      <Stethoscope className="w-4 h-4 text-muted-foreground" />
+                    <div className="flex items-center gap-2 bg-slate-50/50 dark:bg-slate-800/50 p-2 rounded-lg border border-white/10 dark:border-white/5">
+                      <Stethoscope className="w-4 h-4 text-violet-500" />
                       <div>
-                        <p className="text-xs text-muted-foreground">Specialty</p>
+                        <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Specialty</p>
                         <p className="text-sm font-medium" data-testid="text-specialty">
                           {doctor.specialty || "N/A"}
                         </p>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <BadgeCheck className="w-4 h-4 text-muted-foreground" />
+                    <div className="flex items-center gap-2 bg-slate-50/50 dark:bg-slate-800/50 p-2 rounded-lg border border-white/10 dark:border-white/5">
+                      <BadgeCheck className="w-4 h-4 text-fuchsia-500" />
                       <div>
-                        <p className="text-xs text-muted-foreground">License</p>
+                        <p className="text-[10px] text-muted-foreground uppercase tracking-wider">License</p>
                         <p className="text-sm font-medium" data-testid="text-license">
                           {doctor.licenseNumber || "N/A"}
                         </p>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2 col-span-2">
-                      <Building2 className="w-4 h-4 text-muted-foreground" />
+                    <div className="flex items-center gap-2 col-span-2 bg-slate-50/50 dark:bg-slate-800/50 p-2 rounded-lg border border-white/10 dark:border-white/5">
+                      <Building2 className="w-4 h-4 text-indigo-500" />
                       <div>
-                        <p className="text-xs text-muted-foreground">Organization</p>
-                        <p className="text-sm font-medium" data-testid="text-organization">
+                        <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Organization</p>
+                        <p className="text-sm font-medium truncate max-w-full" data-testid="text-organization">
                           {doctor.organization || "N/A"}
                         </p>
                       </div>
@@ -252,25 +201,30 @@ function DoctorDetailSheet({
             </div>
 
             <div className="space-y-3">
-              <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+              <h3 className="text-xs font-semibold text-violet-600 dark:text-violet-400 uppercase tracking-wider mb-2">
                 Risk Metrics
               </h3>
-              <Card className="border-purple-200 dark:border-purple-800">
+              <Card className="bg-white/50 dark:bg-slate-900/50 backdrop-blur border-white/20 dark:border-white/10 shadow-sm relative overflow-hidden">
+                <div className="absolute left-0 bottom-0 w-32 h-32 bg-fuchsia-500/10 blur-3xl -z-10 rounded-full" />
                 <CardContent className="p-4 space-y-4">
-                  <div className="space-y-2">
+                  <div className="space-y-2 relative">
                     <div className="flex items-center justify-between">
                       <span className="text-sm text-muted-foreground">Risk Score</span>
-                      <span className="text-sm font-semibold" data-testid="text-risk-score">
+                      <span className={`text-lg font-bold ${riskScore > 75 ? 'text-red-500' : riskScore > 50 ? 'text-orange-500' : 'text-green-500'}`} data-testid="text-risk-score">
                         {riskScore.toFixed(0)}%
                       </span>
                     </div>
-                    <Progress value={riskScore} className="h-2" />
+                    <Progress
+                      value={riskScore}
+                      className="h-2 bg-slate-200 dark:bg-slate-700 [&>div]:bg-current"
+                      style={{ color: riskScore > 75 ? '#ef4444' : riskScore > 50 ? '#f97316' : '#22c55e' } as React.CSSProperties}
+                    />
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="text-sm text-muted-foreground">Risk Level</span>
                     <Badge
                       variant="outline"
-                      className={getRiskLevelBadgeClasses(doctor.riskLevel)}
+                      className={`${getRiskLevelBadgeClasses(doctor.riskLevel)} shadow-sm uppercase tracking-wider text-[10px]`}
                       data-testid="badge-risk-level"
                     >
                       {doctor.riskLevel || "unknown"}
@@ -281,53 +235,53 @@ function DoctorDetailSheet({
             </div>
 
             <div className="space-y-3">
-              <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+              <h3 className="text-xs font-semibold text-violet-600 dark:text-violet-400 uppercase tracking-wider mb-2">
                 Claim Statistics
               </h3>
-              <Card className="border-purple-200 dark:border-purple-800">
+              <Card className="bg-white/50 dark:bg-slate-900/50 backdrop-blur border-white/20 dark:border-white/10 shadow-sm">
                 <CardContent className="p-4">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-1">
-                      <p className="text-xs text-muted-foreground">Total Claims</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1 bg-white/40 dark:bg-slate-800/40 p-2.5 rounded-xl border border-white/10 dark:border-white/5 hover:border-violet-300 dark:hover:border-violet-700 transition-colors">
+                      <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Total Claims</p>
                       <div className="flex items-center gap-2">
-                        <ClipboardList className="w-4 h-4 text-purple-600 dark:text-purple-400" />
-                        <span className="text-lg font-semibold" data-testid="text-total-claims">
-                          {doctor.totalClaims || 0}
+                        <ClipboardList className="w-4 h-4 text-violet-500" />
+                        <span className="text-lg font-bold" data-testid="text-total-claims">
+                          {doctor.totalClaims?.toLocaleString() || 0}
                         </span>
                       </div>
                     </div>
-                    <div className="space-y-1">
-                      <p className="text-xs text-muted-foreground">Flagged Claims</p>
+                    <div className="space-y-1 bg-white/40 dark:bg-slate-800/40 p-2.5 rounded-xl border border-white/10 dark:border-white/5 hover:border-orange-300 dark:hover:border-orange-700 transition-colors">
+                      <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Flagged Claims</p>
                       <div className="flex items-center gap-2">
-                        <Flag className="w-4 h-4 text-orange-600 dark:text-orange-400" />
-                        <span className="text-lg font-semibold" data-testid="text-flagged-claims">
-                          {doctor.flaggedClaims || 0}
+                        <Flag className="w-4 h-4 text-orange-500" />
+                        <span className="text-lg font-bold" data-testid="text-flagged-claims">
+                          {doctor.flaggedClaims?.toLocaleString() || 0}
                         </span>
                       </div>
                     </div>
-                    <div className="space-y-1">
-                      <p className="text-xs text-muted-foreground">Avg Claim Amount</p>
+                    <div className="space-y-1 bg-white/40 dark:bg-slate-800/40 p-2.5 rounded-xl border border-white/10 dark:border-white/5 hover:border-fuchsia-300 dark:hover:border-fuchsia-700 transition-colors">
+                      <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Avg Claim Amount</p>
                       <div className="flex items-center gap-2">
-                        <DollarSign className="w-4 h-4 text-purple-600 dark:text-purple-400" />
-                        <span className="text-lg font-semibold" data-testid="text-avg-amount">
+                        <DollarSign className="w-4 h-4 text-fuchsia-500" />
+                        <span className="text-lg font-bold" data-testid="text-avg-amount">
                           {formatCurrency(avgClaimAmount)}
                         </span>
                       </div>
                     </div>
-                    <div className="space-y-1">
-                      <p className="text-xs text-muted-foreground">Total Exposure</p>
+                    <div className="space-y-1 bg-white/40 dark:bg-slate-800/40 p-2.5 rounded-xl border border-red-200/50 dark:border-red-900/30 hover:border-red-300 dark:hover:border-red-700 transition-colors">
+                      <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Total Exposure</p>
                       <div className="flex items-center gap-2">
-                        <TrendingUp className="w-4 h-4 text-red-600 dark:text-red-400" />
-                        <span className="text-lg font-semibold" data-testid="text-total-exposure">
+                        <TrendingUp className="w-4 h-4 text-red-500" />
+                        <span className="text-lg font-bold text-red-600 dark:text-red-400" data-testid="text-total-exposure">
                           {formatCurrency(totalExposure)}
                         </span>
                       </div>
                     </div>
-                    <div className="space-y-1">
-                      <p className="text-xs text-muted-foreground">IC Cases</p>
+                    <div className="space-y-1 bg-white/40 dark:bg-slate-800/40 p-2.5 rounded-xl border border-white/10 dark:border-white/5 hover:border-purple-300 dark:hover:border-purple-700 transition-colors">
+                      <p className="text-[10px] text-muted-foreground uppercase tracking-wider">IC Cases</p>
                       <div className="flex items-center gap-2">
-                        <FileText className="w-4 h-4 text-purple-600 dark:text-purple-400" />
-                        <span className="text-lg font-semibold" data-testid="text-fwa-cases">
+                        <FileText className="w-4 h-4 text-purple-500" />
+                        <span className="text-lg font-bold" data-testid="text-fwa-cases">
                           {doctor.fwaCaseCount || 0}
                         </span>
                       </div>
@@ -495,55 +449,55 @@ export default function FWADoctors() {
         </Button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatsCard
+      <div className={METRIC_GRID}>
+        <MetricCard
           title="Total Doctors"
-          value={stats.totalDoctors}
-          description="Doctors in system"
+          value={String(stats.totalDoctors)}
+          subtitle="Doctors in system"
           icon={Users}
-          isLoading={isLoading}
+          loading={isLoading}
         />
-        <StatsCard
+        <MetricCard
           title="High Risk"
-          value={stats.highRiskCount}
-          description="Critical & high risk"
+          value={String(stats.highRiskCount)}
+          subtitle="Critical & high risk"
           icon={AlertTriangle}
-          isLoading={isLoading}
+          loading={isLoading}
         />
-        <StatsCard
+        <MetricCard
           title="Total Exposure"
           value={formatCurrency(stats.totalExposure)}
-          description="Combined exposure amount"
+          subtitle="Combined exposure amount"
           icon={DollarSign}
-          isLoading={isLoading}
+          loading={isLoading}
         />
-        <StatsCard
+        <MetricCard
           title="Active Cases"
-          value={stats.activeCases}
-          description="Open FWA cases"
+          value={String(stats.activeCases)}
+          subtitle="Open FWA cases"
           icon={FileText}
-          isLoading={isLoading}
+          loading={isLoading}
         />
       </div>
 
-      <Card>
+      <Card className="bg-white/40 dark:bg-slate-950/40 backdrop-blur-xl border-white/20 dark:border-white/10 shadow-lg">
         <CardContent className="p-4">
           <div className="flex flex-wrap items-center gap-4">
             <div className="relative flex-1 min-w-[200px]">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-violet-500/70" />
               <Input
                 placeholder="Search by doctor name or license..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-9"
+                className="pl-9 bg-white/50 dark:bg-slate-900/50 border-white/20 dark:border-white/10 focus-visible:ring-violet-500/50 transition-all rounded-xl"
                 data-testid="input-search"
               />
             </div>
             <Select value={riskLevelFilter} onValueChange={setRiskLevelFilter}>
-              <SelectTrigger className="w-[160px]" data-testid="select-risk-level">
+              <SelectTrigger className="w-[160px] bg-white/50 dark:bg-slate-900/50 border-white/20 dark:border-white/10 focus:ring-violet-500/50 transition-all rounded-xl" data-testid="select-risk-level">
                 <SelectValue placeholder="Risk Level" />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border-white/20 dark:border-white/10">
                 <SelectItem value="all">All Levels</SelectItem>
                 <SelectItem value="critical">Critical</SelectItem>
                 <SelectItem value="high">High</SelectItem>
@@ -552,10 +506,10 @@ export default function FWADoctors() {
               </SelectContent>
             </Select>
             <Select value={specialtyFilter} onValueChange={setSpecialtyFilter}>
-              <SelectTrigger className="w-[180px]" data-testid="select-specialty">
+              <SelectTrigger className="w-[180px] bg-white/50 dark:bg-slate-900/50 border-white/20 dark:border-white/10 focus:ring-violet-500/50 transition-all rounded-xl" data-testid="select-specialty">
                 <SelectValue placeholder="Specialty" />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border-white/20 dark:border-white/10">
                 <SelectItem value="all">All Specialties</SelectItem>
                 {specialties.map((specialty) => (
                   <SelectItem key={specialty} value={specialty}>
@@ -565,11 +519,11 @@ export default function FWADoctors() {
               </SelectContent>
             </Select>
             <Select value={sortBy} onValueChange={(v) => setSortBy(v as "risk_score" | "exposure")}>
-              <SelectTrigger className="w-[160px]" data-testid="select-sort">
+              <SelectTrigger className="w-[160px] bg-white/50 dark:bg-slate-900/50 border-white/20 dark:border-white/10 focus:ring-violet-500/50 transition-all rounded-xl" data-testid="select-sort">
                 <ArrowUpDown className="w-4 h-4 mr-2" />
                 <SelectValue placeholder="Sort By" />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border-white/20 dark:border-white/10">
                 <SelectItem value="risk_score">Risk Score</SelectItem>
                 <SelectItem value="exposure">Exposure</SelectItem>
               </SelectContent>
@@ -578,48 +532,48 @@ export default function FWADoctors() {
         </CardContent>
       </Card>
 
-      <Card>
+      <Card className="bg-white/40 dark:bg-slate-950/40 backdrop-blur-xl border-white/20 dark:border-white/10 shadow-lg overflow-hidden">
         <CardContent className="p-0">
           <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Doctor</TableHead>
-                <TableHead>Specialty</TableHead>
-                <TableHead>License</TableHead>
-                <TableHead>Organization</TableHead>
-                <TableHead>Risk Score</TableHead>
-                <TableHead>Risk Level</TableHead>
-                <TableHead>Reasons</TableHead>
-                <TableHead className="text-right">Claims</TableHead>
-                <TableHead className="text-right">Flagged</TableHead>
-                <TableHead className="text-right">IC Cases</TableHead>
-                <TableHead className="text-right">Avg Claim</TableHead>
-                <TableHead className="text-right">Exposure</TableHead>
-                <TableHead>Last Flagged</TableHead>
+            <TableHeader className="bg-violet-50/50 dark:bg-violet-900/20 border-b border-white/20 dark:border-white/10">
+              <TableRow className="hover:bg-transparent">
+                <TableHead className="font-semibold text-violet-900 dark:text-violet-100">Doctor</TableHead>
+                <TableHead className="font-semibold text-violet-900 dark:text-violet-100">Specialty</TableHead>
+                <TableHead className="font-semibold text-violet-900 dark:text-violet-100">License</TableHead>
+                <TableHead className="font-semibold text-violet-900 dark:text-violet-100">Organization</TableHead>
+                <TableHead className="font-semibold text-violet-900 dark:text-violet-100">Risk Score</TableHead>
+                <TableHead className="font-semibold text-violet-900 dark:text-violet-100">Risk Level</TableHead>
+                <TableHead className="font-semibold text-violet-900 dark:text-violet-100">Reasons</TableHead>
+                <TableHead className="text-right font-semibold text-violet-900 dark:text-violet-100">Claims</TableHead>
+                <TableHead className="text-right font-semibold text-violet-900 dark:text-violet-100">Flagged</TableHead>
+                <TableHead className="text-right font-semibold text-violet-900 dark:text-violet-100">IC Cases</TableHead>
+                <TableHead className="text-right font-semibold text-violet-900 dark:text-violet-100">Avg Claim</TableHead>
+                <TableHead className="text-right font-semibold text-violet-900 dark:text-violet-100">Exposure</TableHead>
+                <TableHead className="font-semibold text-violet-900 dark:text-violet-100">Last Flagged</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {isLoading ? (
                 Array.from({ length: 5 }).map((_, idx) => (
-                  <TableRow key={idx}>
+                  <TableRow key={idx} className="border-b border-white/10">
                     <TableCell>
                       <div className="space-y-1">
-                        <Skeleton className="h-4 w-32" />
-                        <Skeleton className="h-3 w-20" />
+                        <Skeleton className="h-4 w-32 bg-violet-100 dark:bg-violet-900/20" />
+                        <Skeleton className="h-3 w-20 bg-violet-100 dark:bg-violet-900/20" />
                       </div>
                     </TableCell>
-                    <TableCell><Skeleton className="h-4 w-24" /></TableCell>
-                    <TableCell><Skeleton className="h-4 w-20" /></TableCell>
-                    <TableCell><Skeleton className="h-4 w-28" /></TableCell>
-                    <TableCell><Skeleton className="h-4 w-24" /></TableCell>
-                    <TableCell><Skeleton className="h-5 w-16" /></TableCell>
-                    <TableCell><Skeleton className="h-5 w-32" /></TableCell>
-                    <TableCell><Skeleton className="h-4 w-12" /></TableCell>
-                    <TableCell><Skeleton className="h-4 w-12" /></TableCell>
-                    <TableCell><Skeleton className="h-4 w-8" /></TableCell>
-                    <TableCell><Skeleton className="h-4 w-16" /></TableCell>
-                    <TableCell><Skeleton className="h-4 w-20" /></TableCell>
-                    <TableCell><Skeleton className="h-4 w-20" /></TableCell>
+                    <TableCell><Skeleton className="h-4 w-24 bg-violet-100 dark:bg-violet-900/20" /></TableCell>
+                    <TableCell><Skeleton className="h-4 w-20 bg-violet-100 dark:bg-violet-900/20" /></TableCell>
+                    <TableCell><Skeleton className="h-4 w-28 bg-violet-100 dark:bg-violet-900/20" /></TableCell>
+                    <TableCell><Skeleton className="h-4 w-24 bg-violet-100 dark:bg-violet-900/20" /></TableCell>
+                    <TableCell><Skeleton className="h-5 w-16 bg-violet-100 dark:bg-violet-900/20" /></TableCell>
+                    <TableCell><Skeleton className="h-5 w-32 bg-violet-100 dark:bg-violet-900/20" /></TableCell>
+                    <TableCell><Skeleton className="h-4 w-12 bg-violet-100 dark:bg-violet-900/20 ml-auto" /></TableCell>
+                    <TableCell><Skeleton className="h-4 w-12 bg-violet-100 dark:bg-violet-900/20 ml-auto" /></TableCell>
+                    <TableCell><Skeleton className="h-4 w-8 bg-violet-100 dark:bg-violet-900/20 ml-auto" /></TableCell>
+                    <TableCell><Skeleton className="h-4 w-16 bg-violet-100 dark:bg-violet-900/20 ml-auto" /></TableCell>
+                    <TableCell><Skeleton className="h-4 w-20 bg-violet-100 dark:bg-violet-900/20 ml-auto" /></TableCell>
+                    <TableCell><Skeleton className="h-4 w-20 bg-violet-100 dark:bg-violet-900/20" /></TableCell>
                   </TableRow>
                 ))
               ) : filteredDoctors.length > 0 ? (
@@ -637,7 +591,7 @@ export default function FWADoctors() {
                   return (
                     <TableRow
                       key={doctor.id}
-                      className="cursor-pointer hover-elevate"
+                      className="cursor-pointer hover-elevate border-b border-white/10 dark:border-white/5 transition-all duration-200"
                       onClick={() => handleRowClick(doctor)}
                       data-testid={`row-doctor-${doctor.doctorId}`}
                     >

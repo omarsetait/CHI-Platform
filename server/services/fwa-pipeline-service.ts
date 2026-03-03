@@ -117,12 +117,12 @@ function getRiskLevel(score: number): "critical" | "high" | "medium" | "low" | "
  */
 export async function runBulkSqlDetection(batchSize: number = 100000): Promise<{ processed: number; flagged: number; critical: number; high: number }> {
   console.log(`[BulkSQLDetection] Starting bulk SQL detection with batch size ${batchSize}...`);
-  
+
   let totalProcessed = 0;
   let totalFlagged = 0;
   let totalCritical = 0;
   let totalHigh = 0;
-  
+
   try {
     // Count claims without detection results
     const unprocessedCount = await db.execute(sql`
@@ -131,12 +131,12 @@ export async function runBulkSqlDetection(batchSize: number = 100000): Promise<{
     `);
     const remaining = parseInt((unprocessedCount.rows[0] as any).count);
     console.log(`[BulkSQLDetection] ${remaining} claims pending detection`);
-    
+
     if (remaining === 0) {
       console.log(`[BulkSQLDetection] All claims already processed`);
       return { processed: 0, flagged: 0, critical: 0, high: 0 };
     }
-    
+
     // Process in batches using SQL
     while (totalProcessed < remaining) {
       const result = await db.execute(sql`
@@ -178,7 +178,7 @@ export async function runBulkSqlDetection(batchSize: number = 100000): Promise<{
             -- Unsupervised Score (default for bulk)
             5::numeric as unsup_score,
             -- RAG/LLM and Semantic placeholders
-            5::numeric as rag_score,
+            5::numeric as rag_llm_score,
             5::numeric as semantic_score
           FROM claim_data cd
         )
@@ -190,8 +190,8 @@ export async function runBulkSqlDetection(batchSize: number = 100000): Promise<{
         )
         SELECT 
           dc.id, dc.provider_id, dc.patient_id,
-          dc.rule_score, dc.stat_score, dc.unsup_score, dc.rag_score, dc.semantic_score,
-          ROUND((dc.rule_score * 0.30 + dc.stat_score * 0.22 + dc.unsup_score * 0.18 + dc.rag_score * 0.15 + dc.semantic_score * 0.15)::numeric, 2),
+          dc.rule_score, dc.stat_score, dc.unsup_score, dc.rag_llm_score, dc.semantic_score,
+          ROUND((dc.rule_score * 0.30 + dc.stat_score * 0.22 + dc.unsup_score * 0.18 + dc.rag_llm_score * 0.15 + dc.semantic_score * 0.15)::numeric, 2),
           CASE 
             WHEN (dc.rule_score * 0.30 + dc.stat_score * 0.22) >= 40 THEN 'critical'::reconciliation_risk_level
             WHEN (dc.rule_score * 0.30 + dc.stat_score * 0.22) >= 30 THEN 'high'::reconciliation_risk_level
@@ -212,10 +212,10 @@ export async function runBulkSqlDetection(batchSize: number = 100000): Promise<{
         FROM detection_calc dc
         RETURNING composite_risk_level
       `);
-      
+
       const batchProcessed = result.rows.length;
       totalProcessed += batchProcessed;
-      
+
       // Count risk levels
       for (const row of result.rows) {
         const level = (row as any).composite_risk_level;
@@ -223,12 +223,12 @@ export async function runBulkSqlDetection(batchSize: number = 100000): Promise<{
         else if (level === 'high') { totalHigh++; totalFlagged++; }
         else if (level === 'medium') { totalFlagged++; }
       }
-      
-      console.log(`[BulkSQLDetection] Batch complete: ${totalProcessed}/${remaining} (${(totalProcessed/remaining*100).toFixed(1)}%)`);
-      
+
+      console.log(`[BulkSQLDetection] Batch complete: ${totalProcessed}/${remaining} (${(totalProcessed / remaining * 100).toFixed(1)}%)`);
+
       if (batchProcessed === 0) break;
     }
-    
+
     console.log(`[BulkSQLDetection] Complete: ${totalProcessed} processed, ${totalFlagged} flagged, ${totalCritical} critical, ${totalHigh} high`);
     return { processed: totalProcessed, flagged: totalFlagged, critical: totalCritical, high: totalHigh };
   } catch (error) {
@@ -264,7 +264,7 @@ export async function runBulkSqlDetection(batchSize: number = 100000): Promise<{
  */
 export async function runBulkSemanticDetection(batchSize: number = 50000): Promise<{ processed: number; mismatchCount: number }> {
   console.log(`[BulkSemanticDetection] Starting bulk semantic validation...`);
-  
+
   try {
     // Update semantic_score based on ICD-10/procedure clinical appropriateness
     const result = await db.execute(sql`
@@ -347,7 +347,7 @@ export async function runBulkSemanticDetection(batchSize: number = 50000): Promi
       FROM semantic_scores ss
       WHERE dr.claim_id = ss.claim_id
     `);
-    
+
     // Get count of updated records
     const countResult = await db.execute(sql`
       SELECT 
@@ -355,11 +355,11 @@ export async function runBulkSemanticDetection(batchSize: number = 50000): Promi
         COUNT(*) FILTER (WHERE semantic_score > 40) as high_mismatch
       FROM fwa_detection_results
     `);
-    
+
     const counts = countResult.rows[0] as any;
     const processed = parseInt(counts.with_semantic) || 0;
     const mismatchCount = parseInt(counts.high_mismatch) || 0;
-    
+
     console.log(`[BulkSemanticDetection] Complete: ${processed} claims with semantic scores, ${mismatchCount} with high mismatch risk`);
     return { processed, mismatchCount };
   } catch (error) {
@@ -375,7 +375,7 @@ export async function runBulkSemanticDetection(batchSize: number = 50000): Promi
  */
 export async function runBulkRagLlmDetection(batchSize: number = 50000): Promise<{ processed: number; flaggedCount: number }> {
   console.log(`[BulkRagLlmDetection] Starting bulk RAG/LLM analysis...`);
-  
+
   try {
     // For bulk processing, use rule-based RAG scoring based on claim patterns
     // This simulates RAG analysis by checking against known FWA patterns
@@ -428,23 +428,23 @@ export async function runBulkRagLlmDetection(batchSize: number = 50000): Promise
             CASE WHEN claim_type = 'inpatient' AND COALESCE(length_of_stay, 0) = 0 THEN 18 ELSE 0 END +
             -- Random variation to simulate AI analysis
             RANDOM() * 8
-          )) as new_rag_score
+          )) as new_rag_llm_score
         FROM claim_patterns
       )
       UPDATE fwa_detection_results dr
       SET 
-        rag_llm_score = ROUND(rs.new_rag_score::numeric, 2),
+        rag_llm_score = ROUND(rs.new_rag_llm_score::numeric, 2),
         composite_score = ROUND((
           COALESCE(dr.rule_engine_score, 0) * 0.30 +
           COALESCE(dr.statistical_score, 0) * 0.22 +
           COALESCE(dr.unsupervised_score, 0) * 0.18 +
-          rs.new_rag_score * 0.15 +
+          rs.new_rag_llm_score * 0.15 +
           COALESCE(dr.semantic_score, 0) * 0.15
         )::numeric, 2)
       FROM rag_scores rs
       WHERE dr.claim_id = rs.claim_id
     `);
-    
+
     // Get count of updated records
     const countResult = await db.execute(sql`
       SELECT 
@@ -452,11 +452,11 @@ export async function runBulkRagLlmDetection(batchSize: number = 50000): Promise
         COUNT(*) FILTER (WHERE rag_llm_score > 30) as flagged
       FROM fwa_detection_results
     `);
-    
+
     const counts = countResult.rows[0] as any;
     const processed = parseInt(counts.with_rag) || 0;
     const flaggedCount = parseInt(counts.flagged) || 0;
-    
+
     console.log(`[BulkRagLlmDetection] Complete: ${processed} claims with RAG/LLM scores, ${flaggedCount} flagged for review`);
     return { processed, flaggedCount };
   } catch (error) {
@@ -477,16 +477,16 @@ export async function runCompleteBulkDetection(): Promise<{
   ragLlm: { processed: number; flaggedCount: number };
 }> {
   console.log(`[CompleteBulkDetection] Starting comprehensive 5-method detection...`);
-  
+
   // Step 1: Run basic detection (Rule + Statistical + Unsupervised)
   const basicResult = await runBulkSqlDetection();
-  
+
   // Step 2: Run Semantic Detection
   const semanticResult = await runBulkSemanticDetection();
-  
+
   // Step 3: Run RAG/LLM Detection
   const ragResult = await runBulkRagLlmDetection();
-  
+
   // Step 4: Recalculate composite scores and risk levels with all 5 methods
   await db.execute(sql`
     UPDATE fwa_detection_results
@@ -514,9 +514,9 @@ export async function runCompleteBulkDetection(): Promise<{
         ELSE 'minimal'::reconciliation_risk_level
       END
   `);
-  
+
   console.log(`[CompleteBulkDetection] Complete - All 5 methods applied`);
-  
+
   return {
     ruleEngine: { processed: basicResult.processed },
     statistical: { processed: basicResult.processed },
@@ -530,7 +530,7 @@ export async function runFullPipeline(claimIds?: string[]): Promise<PipelineResu
   const startTime = Date.now();
   const pipelineRunId = `PIPE-${Date.now()}-${Math.random().toString(36).substring(7)}`;
   const errors: string[] = [];
-  
+
   const result: PipelineResult = {
     success: false,
     pipelineRunId,
@@ -594,10 +594,10 @@ export async function runFullPipeline(claimIds?: string[]): Promise<PipelineResu
 
     result.success = true;
     result.totalProcessingTimeMs = Date.now() - startTime;
-    
+
     console.log(`[Pipeline ${pipelineRunId}] Complete in ${result.totalProcessingTimeMs}ms`);
     currentProgress = null;
-    
+
     return result;
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : "Unknown error";
@@ -620,7 +620,7 @@ async function preprocessClaims(claimIds?: string[]): Promise<{ processed: numbe
     } else {
       const existingAnalyzed = await db.execute(sql`SELECT id FROM fwa_analyzed_claims`);
       const existingIds = new Set((existingAnalyzed.rows as any[]).map(r => r.id));
-      
+
       const allClaims = await db.select().from(claims);
       claimsToProcess = allClaims.filter(c => !existingIds.has(c.id));
     }
@@ -1015,14 +1015,14 @@ async function runClaimDetection(claimIds?: string[]): Promise<{ processed: numb
 
     const totalClaims = claimsToAnalyze.length;
     console.log(`[ClaimDetection] Processing ${totalClaims} claims with REAL 5-method detection engine...`);
-    
+
     // Process in batches with concurrency
     const BATCH_SIZE = 50;  // Process 50 claims concurrently
     const LOG_INTERVAL = 1000; // Log progress every 1000 claims
-    
+
     for (let i = 0; i < claimsToAnalyze.length; i += BATCH_SIZE) {
       const batch = claimsToAnalyze.slice(i, i + BATCH_SIZE);
-      
+
       // Process batch concurrently
       const results = await Promise.allSettled(
         batch.map(async (claim) => {
@@ -1040,7 +1040,7 @@ async function runClaimDetection(claimIds?: string[]): Promise<{ processed: numb
               description: claim.serviceDescription || "",
               claimNumber: claim.claimReference
             });
-            
+
             // Store results
             await db.execute(sql`
               INSERT INTO fwa_detection_results (
@@ -1085,7 +1085,7 @@ async function runClaimDetection(claimIds?: string[]): Promise<{ processed: numb
                 recommended_action = EXCLUDED.recommended_action,
                 analyzed_at = NOW()
             `);
-            
+
             return { success: true, riskLevel: detection.compositeRiskLevel };
           } catch (err) {
             console.error(`[ClaimDetection] Error processing claim ${claim.id}:`, err);
@@ -1093,7 +1093,7 @@ async function runClaimDetection(claimIds?: string[]): Promise<{ processed: numb
           }
         })
       );
-      
+
       // Count results
       for (const result of results) {
         if (result.status === "fulfilled" && result.value.success) {
@@ -1106,7 +1106,7 @@ async function runClaimDetection(claimIds?: string[]): Promise<{ processed: numb
           }
         }
       }
-      
+
       // Progress logging
       if ((i + BATCH_SIZE) % LOG_INTERVAL < BATCH_SIZE) {
         const pct = ((i + BATCH_SIZE) / totalClaims * 100).toFixed(1);
@@ -1183,7 +1183,7 @@ async function detectClaimFWA(claim: any, thresholds: any, popAvg: number, popSt
 
   // Unsupervised score (anomaly detection simulation)
   let unsupervisedScore = 0;
-  
+
   // Check provider patterns from feature store
   const providerFeatures = await db.execute(sql`
     SELECT claim_count, avg_claim_amount, z_score
@@ -1191,7 +1191,7 @@ async function detectClaimFWA(claim: any, thresholds: any, popAvg: number, popSt
     WHERE entity_type = 'provider' AND entity_id = ${claim.providerId}
     LIMIT 1
   `);
-  
+
   if (providerFeatures.rows.length > 0) {
     const pf = providerFeatures.rows[0] as any;
     const providerZScore = Math.abs(parseFloat(pf.z_score) || 0);
@@ -1206,7 +1206,7 @@ async function detectClaimFWA(claim: any, thresholds: any, popAvg: number, popSt
   const semanticScore = 5;
 
   // Calculate composite score
-  const compositeScore = 
+  const compositeScore =
     ruleScore * DETECTION_WEIGHTS.rule_engine +
     statisticalScore * DETECTION_WEIGHTS.statistical_learning +
     unsupervisedScore * DETECTION_WEIGHTS.unsupervised_learning +
@@ -1215,7 +1215,7 @@ async function detectClaimFWA(claim: any, thresholds: any, popAvg: number, popSt
 
   // Determine risk level with rule severity boost
   let riskLevel = getRiskLevel(compositeScore);
-  
+
   if (matchedRules.some(r => r.severity === "critical") && compositeScore >= 25) {
     riskLevel = "critical";
   } else if (matchedRules.some(r => r.severity === "high") && compositeScore >= 15) {
@@ -1265,7 +1265,7 @@ async function runProviderDetection(): Promise<{ processed: number; flagged: num
 
   try {
     const thresholds = await getDetectionThresholds();
-    
+
     // Aggregate 5-method scores from claim detections to provider level
     // Weights: Rule Engine 30%, Statistical 22%, Unsupervised 18%, RAG/LLM 15%, Semantic 15%
     const result = await db.execute(sql`
@@ -1290,7 +1290,7 @@ async function runProviderDetection(): Promise<{ processed: number; flagged: num
       )
       INSERT INTO fwa_provider_detection_results (
         provider_id, composite_score, risk_level, rule_engine_score,
-        statistical_score, unsupervised_score, rag_score, semantic_score,
+        statistical_score, unsupervised_score, rag_llm_score, semantic_score,
         primary_method, risk_factors, analyzed_at
       )
       SELECT 
@@ -1312,7 +1312,7 @@ async function runProviderDetection(): Promise<{ processed: number; flagged: num
         LEAST(COALESCE(ca.avg_rule, 0), 100) as rule_engine_score,
         LEAST(COALESCE(CASE WHEN fd.z_score > 0 THEN fd.z_score * 15 ELSE ca.avg_stat END, 0), 100) as statistical_score,
         LEAST(COALESCE(ca.avg_unsup, 0), 100) as unsupervised_score,
-        LEAST(COALESCE(ca.avg_rag, 5), 100) as rag_score,
+        LEAST(COALESCE(ca.avg_rag, 5), 100) as rag_llm_score,
         LEAST(COALESCE(ca.avg_semantic, 5), 100) as semantic_score,
         CASE 
           WHEN COALESCE(ca.avg_rule, 0) >= GREATEST(COALESCE(ca.avg_stat, 0), COALESCE(ca.avg_unsup, 0)) THEN 'rule_engine'
@@ -1335,7 +1335,7 @@ async function runProviderDetection(): Promise<{ processed: number; flagged: num
         rule_engine_score = EXCLUDED.rule_engine_score,
         statistical_score = EXCLUDED.statistical_score,
         unsupervised_score = EXCLUDED.unsupervised_score,
-        rag_score = EXCLUDED.rag_score,
+        rag_llm_score = EXCLUDED.rag_llm_score,
         semantic_score = EXCLUDED.semantic_score,
         primary_method = EXCLUDED.primary_method,
         risk_factors = EXCLUDED.risk_factors,
@@ -1343,7 +1343,7 @@ async function runProviderDetection(): Promise<{ processed: number; flagged: num
     `);
 
     processed = (result as any).rowCount || 0;
-    
+
     // Count flagged
     const flaggedResult = await db.execute(sql`
       SELECT COUNT(*) as cnt FROM fwa_provider_detection_results 
@@ -1388,7 +1388,7 @@ async function runPatientDetection(): Promise<{ processed: number; flagged: numb
       )
       INSERT INTO fwa_patient_detection_results (
         patient_id, composite_score, risk_level, rule_engine_score,
-        statistical_score, unsupervised_score, rag_score, semantic_score,
+        statistical_score, unsupervised_score, rag_llm_score, semantic_score,
         primary_method, risk_factors, analyzed_at
       )
       SELECT 
@@ -1413,7 +1413,7 @@ async function runPatientDetection(): Promise<{ processed: number; flagged: numb
         LEAST(COALESCE(ca.avg_stat, 0), 100) as statistical_score,
         LEAST(COALESCE(CASE WHEN COALESCE(ca.unique_providers, fd.unique_providers) > 5 
           THEN (COALESCE(ca.unique_providers, fd.unique_providers) - 5) * 8 ELSE ca.avg_unsup END, 0), 100) as unsupervised_score,
-        LEAST(COALESCE(ca.avg_rag, 5), 100) as rag_score,
+        LEAST(COALESCE(ca.avg_rag, 5), 100) as rag_llm_score,
         LEAST(COALESCE(ca.avg_semantic, 5), 100) as semantic_score,
         CASE 
           WHEN COALESCE(ca.unique_providers, fd.unique_providers) > 5 THEN 'unsupervised_learning'
@@ -1435,7 +1435,7 @@ async function runPatientDetection(): Promise<{ processed: number; flagged: numb
         rule_engine_score = EXCLUDED.rule_engine_score,
         statistical_score = EXCLUDED.statistical_score,
         unsupervised_score = EXCLUDED.unsupervised_score,
-        rag_score = EXCLUDED.rag_score,
+        rag_llm_score = EXCLUDED.rag_llm_score,
         semantic_score = EXCLUDED.semantic_score,
         primary_method = EXCLUDED.primary_method,
         risk_factors = EXCLUDED.risk_factors,
@@ -1443,7 +1443,7 @@ async function runPatientDetection(): Promise<{ processed: number; flagged: numb
     `);
 
     processed = (result as any).rowCount || 0;
-    
+
     const flaggedResult = await db.execute(sql`
       SELECT COUNT(*) as cnt FROM fwa_patient_detection_results 
       WHERE risk_level IN ('high', 'critical', 'medium')
@@ -1488,7 +1488,7 @@ async function runDoctorDetection(): Promise<{ processed: number; flagged: numbe
       )
       INSERT INTO fwa_doctor_detection_results (
         doctor_id, composite_score, risk_level, rule_engine_score,
-        statistical_score, unsupervised_score, rag_score, semantic_score,
+        statistical_score, unsupervised_score, rag_llm_score, semantic_score,
         primary_method, risk_factors, analyzed_at
       )
       SELECT 
@@ -1510,7 +1510,7 @@ async function runDoctorDetection(): Promise<{ processed: number; flagged: numbe
         LEAST(COALESCE(ca.avg_rule, 0), 100) as rule_engine_score,
         LEAST(COALESCE(CASE WHEN fd.z_score > 0 THEN fd.z_score * 15 ELSE ca.avg_stat END, 0), 100) as statistical_score,
         LEAST(COALESCE(ca.avg_unsup, 0), 100) as unsupervised_score,
-        LEAST(COALESCE(ca.avg_rag, 5), 100) as rag_score,
+        LEAST(COALESCE(ca.avg_rag, 5), 100) as rag_llm_score,
         LEAST(COALESCE(ca.avg_semantic, 5), 100) as semantic_score,
         CASE 
           WHEN COALESCE(ca.avg_rule, 0) >= GREATEST(COALESCE(ca.avg_stat, 0), COALESCE(ca.avg_unsup, 0)) THEN 'rule_engine'
@@ -1533,7 +1533,7 @@ async function runDoctorDetection(): Promise<{ processed: number; flagged: numbe
         rule_engine_score = EXCLUDED.rule_engine_score,
         statistical_score = EXCLUDED.statistical_score,
         unsupervised_score = EXCLUDED.unsupervised_score,
-        rag_score = EXCLUDED.rag_score,
+        rag_llm_score = EXCLUDED.rag_llm_score,
         semantic_score = EXCLUDED.semantic_score,
         primary_method = EXCLUDED.primary_method,
         risk_factors = EXCLUDED.risk_factors,
@@ -1541,7 +1541,7 @@ async function runDoctorDetection(): Promise<{ processed: number; flagged: numbe
     `);
 
     processed = (result as any).rowCount || 0;
-    
+
     const flaggedResult = await db.execute(sql`
       SELECT COUNT(*) as cnt FROM fwa_doctor_detection_results 
       WHERE risk_level IN ('high', 'critical', 'medium')

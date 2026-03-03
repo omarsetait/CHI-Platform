@@ -81,6 +81,21 @@ import FWAFlaggedClaims from "@/pages/fwa/flagged-claims";
 import CodingIntelligencePage from "@/pages/fwa/coding-intelligence";
 import KnowledgeHub from "@/pages/fwa/knowledge-hub";
 
+import { PreAuthLayout } from "@/components/pre-auth/pre-auth-layout";
+import PreAuthDashboard from "@/pages/pre-auth/dashboard";
+import PreAuthClaims from "@/pages/pre-auth/claims";
+import PreAuthPending from "@/pages/pre-auth/pending";
+import PreAuthNewClaim from "@/pages/pre-auth/new-claim";
+import PreAuthAnalytics from "@/pages/pre-auth/analytics";
+import PreAuthKnowledgeBase from "@/pages/pre-auth/knowledge-base";
+import PreAuthPolicyRules from "@/pages/pre-auth/policy-rules";
+import PreAuthAgentConfig from "@/pages/pre-auth/agent-config";
+import PreAuthBatchUpload from "@/pages/pre-auth/batch-upload";
+import PreAuthRLHF from "@/pages/pre-auth/rlhf";
+import PreAuthSettings from "@/pages/pre-auth/settings";
+import PreAuthClaimDetail from "@/pages/pre-auth/claim-detail";
+import PreAuthWorkflowPhase from "@/pages/pre-auth/workflow-phase";
+
 function IntelligenceRouter() {
   return (
     <IntelligenceLayout>
@@ -147,6 +162,30 @@ function MembersRouter() {
         <Route component={NotFound} />
       </Switch>
     </MembersLayout>
+  );
+}
+
+function PreAuthRouter() {
+  return (
+    <PreAuthLayout>
+      <Switch>
+        <Route path="/pre-auth">{() => <Redirect to="/pre-auth/dashboard" />}</Route>
+        <Route path="/pre-auth/dashboard" component={PreAuthDashboard} />
+        <Route path="/pre-auth/claims/:id" component={PreAuthClaimDetail} />
+        <Route path="/pre-auth/claims" component={PreAuthClaims} />
+        <Route path="/pre-auth/pending" component={PreAuthPending} />
+        <Route path="/pre-auth/new-claim" component={PreAuthNewClaim} />
+        <Route path="/pre-auth/analytics" component={PreAuthAnalytics} />
+        <Route path="/pre-auth/knowledge-base" component={PreAuthKnowledgeBase} />
+        <Route path="/pre-auth/policy-rules" component={PreAuthPolicyRules} />
+        <Route path="/pre-auth/agent-config" component={PreAuthAgentConfig} />
+        <Route path="/pre-auth/batch-upload" component={PreAuthBatchUpload} />
+        <Route path="/pre-auth/rlhf" component={PreAuthRLHF} />
+        <Route path="/pre-auth/settings" component={PreAuthSettings} />
+        <Route path="/pre-auth/workflow/:phase" component={PreAuthWorkflowPhase} />
+        <Route component={NotFound} />
+      </Switch>
+    </PreAuthLayout>
   );
 }
 
@@ -236,6 +275,10 @@ function AppRouter() {
 
   if (location.startsWith("/members")) {
     return <MembersRouter />;
+  }
+
+  if (location.startsWith("/pre-auth")) {
+    return <PreAuthRouter />;
   }
 
   return <NotFound />;

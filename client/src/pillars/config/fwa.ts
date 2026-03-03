@@ -1,6 +1,5 @@
 import {
   Shield,
-  Command,
   AlertTriangle,
   FileSearch,
   Rss,
@@ -9,6 +8,7 @@ import {
   Stethoscope,
   Database,
   MessageCircle,
+  Settings2,
 } from "lucide-react";
 import type { PillarConfig } from "@/pillars/types";
 
@@ -21,17 +21,23 @@ export const fwaPillarConfig: PillarConfig = {
   subtitle: "National fraud intelligence command center",
   navSections: [
     {
-      title: "Regulatory Oversight",
+      title: "Detection & Analysis",
       items: [
-        { label: "Command Center", href: "/fwa/dashboard", icon: Command },
-        { label: "High-Risk Entities", href: "/fwa/high-risk-entities", icon: AlertTriangle },
-        { label: "Flagged Claims", href: "/fwa/flagged-claims", icon: FileSearch },
-        { label: "Online Listening", href: "/fwa/online-listening", icon: Rss, badge: "Live" },
+        { label: "Detection Engine", href: "/fwa/detection-engine", icon: Shield },
+        { label: "5 Detection Methods", href: "/fwa/engine-config", icon: Settings2 },
         { label: "Coding Intelligence", href: "/fwa/coding-intelligence", icon: Stethoscope },
+        { label: "Flagged Claims", href: "/fwa/flagged-claims", icon: FileSearch },
       ],
     },
     {
-      title: "Action & Intelligence",
+      title: "Risk & Entities",
+      items: [
+        { label: "High-Risk Entities", href: "/fwa/high-risk-entities", icon: AlertTriangle },
+        { label: "Online Listening", href: "/fwa/online-listening", icon: Rss, badge: "Live" },
+      ],
+    },
+    {
+      title: "Enforcement & Compliance",
       items: [
         { label: "Enforcement & Compliance", href: "/fwa/enforcement", icon: Gavel },
         { label: "Intelligence Reports", href: "/fwa/kpi-dashboard", icon: BarChart3 },

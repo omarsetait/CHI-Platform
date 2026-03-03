@@ -27,48 +27,26 @@ import {
   FileText,
   Plus,
   Command,
-  Copy,
-  FileWarning,
-  MapPin,
 } from "lucide-react";
+import { MetricCard } from "@/components/metric-card";
+import { formatCurrency } from "@/lib/format";
+import { METRIC_GRID } from "@/lib/grid";
 import { Link } from "wouter";
 import { motion } from "framer-motion";
 import { SaudiHeatmap, type RegionData } from "@/components/fwa/saudi-heatmap";
 
 // ---------------------------------------------------------------------------
-// Static heatmap data for 13 Saudi regions
+// Alert type from API
 // ---------------------------------------------------------------------------
 
-const heatmapData: RegionData[] = [
-  { regionCode: "RIY", fwaCount: 847, riskLevel: "critical" },  // Dental ring
-  { regionCode: "MAK", fwaCount: 312, riskLevel: "high" },      // OB/GYN upcoding
-  { regionCode: "EST", fwaCount: 156, riskLevel: "high" },      // Cross-insurer duplicates
-  { regionCode: "MDN", fwaCount: 43, riskLevel: "medium" },
-  { regionCode: "ASR", fwaCount: 28, riskLevel: "medium" },
-  { regionCode: "QSM", fwaCount: 15, riskLevel: "low" },
-  { regionCode: "TBK", fwaCount: 8, riskLevel: "low" },
-  { regionCode: "HAL", fwaCount: 5, riskLevel: "low" },
-  { regionCode: "JZN", fwaCount: 12, riskLevel: "low" },
-  { regionCode: "NJR", fwaCount: 3, riskLevel: "low" },
-  { regionCode: "BAH", fwaCount: 2, riskLevel: "low" },
-  { regionCode: "JOF", fwaCount: 4, riskLevel: "low" },
-  { regionCode: "NBR", fwaCount: 1, riskLevel: "low" },
-];
+interface AlertItem {
+  id: string;
+  text: string;
+  severity: string;
+  time: string;
+}
 
-// ---------------------------------------------------------------------------
-// Real-time alert feed data
-// ---------------------------------------------------------------------------
 
-const alerts = [
-  { id: 1, text: "Dental network flagged in Riyadh \u2014 4 linked entities detected", severity: "critical", time: "2 hours ago", icon: AlertTriangle },
-  { id: 2, text: "OB/GYN upcoding cluster detected in Jeddah \u2014 C-section rate 68% vs 23% national", severity: "high", time: "5 hours ago", icon: TrendingUp },
-  { id: 3, text: "Cross-insurer duplicate billing identified in Eastern Province \u2014 156 claim pairs", severity: "high", time: "8 hours ago", icon: Copy },
-  { id: 4, text: "SBS V3.0 compliance rate dropped to 58% in Qassim region", severity: "medium", time: "12 hours ago", icon: FileWarning },
-  { id: 5, text: "Provider license renewal pending \u2014 Al Shifa Medical Complex, Madinah", severity: "low", time: "1 day ago", icon: Clock },
-  { id: 6, text: "Monthly enforcement report generated \u2014 47 active cases across 5 regions", severity: "info", time: "1 day ago", icon: FileText },
-  { id: 7, text: "New provider registration anomaly \u2014 3 dental clinics registered same address in Riyadh", severity: "medium", time: "2 days ago", icon: MapPin },
-  { id: 8, text: "NPHIES throughput exceeded 500K claims/day \u2014 system nominal", severity: "info", time: "2 days ago", icon: Activity },
-];
 
 const severityDotColor: Record<string, string> = {
   critical: "bg-red-500",
@@ -151,15 +129,6 @@ interface TransformedAgent {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function formatCurrency(value: number): string {
-  if (value >= 1000000) {
-    return `${(value / 1000000).toFixed(2)}M SAR`;
-  }
-  if (value >= 1000) {
-    return `${(value / 1000).toFixed(0)}K SAR`;
-  }
-  return `${value.toFixed(0)} SAR`;
-}
 
 function formatTimeAgo(timestamp: string): string {
   const now = new Date();
@@ -219,47 +188,6 @@ function AttentionCard({
   );
 }
 
-function MetricCard({
-  title,
-  titleAr,
-  value,
-  icon: Icon,
-  description,
-  isLoading,
-}: {
-  title: string;
-  titleAr?: string;
-  value: string | number;
-  icon: React.ElementType;
-  description: string;
-  isLoading?: boolean;
-}) {
-  return (
-    <Card data-testid={`metric-card-${title.toLowerCase().replace(/\s+/g, "-")}`}>
-      <CardContent className="p-5">
-        <div className="flex items-center justify-between gap-2">
-          <div className="space-y-1">
-            <div className="text-sm font-medium text-muted-foreground">
-              {title}
-              {titleAr && (
-                <span className="block text-xs text-muted-foreground/60 mt-0.5">{titleAr}</span>
-              )}
-            </div>
-            {isLoading ? (
-              <Skeleton className="h-8 w-20" />
-            ) : (
-              <p className="text-2xl font-bold">{value}</p>
-            )}
-            <p className="text-xs text-muted-foreground">{description}</p>
-          </div>
-          <div className="p-3 rounded-lg bg-primary/10">
-            <Icon className="w-5 h-5 text-primary" />
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
 
 function ActivityItem({ item }: { item: RecentActivityItem }) {
   const typeConfig = {
@@ -342,6 +270,16 @@ export default function OperationsCenter() {
     refetchInterval: 30000,
   });
 
+  const { data: heatmapData, isLoading: isHeatmapLoading } = useQuery<RegionData[]>({
+    queryKey: ["/api/fwa/heatmap"],
+    refetchInterval: 60000,
+  });
+
+  const { data: alertsData, isLoading: isAlertsLoading } = useQuery<AlertItem[]>({
+    queryKey: ["/api/fwa/recent-alerts"],
+    refetchInterval: 30000,
+  });
+
   const attention = summary?.attentionRequired || {
     highRiskEntities: 0,
     overdueEnforcement: 0,
@@ -412,7 +350,11 @@ export default function OperationsCenter() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <SaudiHeatmap data={heatmapData} className="max-h-[420px]" />
+              {isHeatmapLoading ? (
+                <Skeleton className="w-full h-[420px] rounded-lg" />
+              ) : (
+                <SaudiHeatmap data={heatmapData ?? []} className="max-h-[420px]" />
+              )}
             </CardContent>
           </Card>
 
@@ -432,22 +374,36 @@ export default function OperationsCenter() {
             </CardHeader>
             <CardContent className="p-0">
               <div className="max-h-[380px] overflow-y-auto divide-y">
-                {alerts.map((alert) => {
-                  const AlertIcon = alert.icon;
-                  return (
+                {isAlertsLoading ? (
+                  Array.from({ length: 5 }).map((_, i) => (
+                    <div key={i} className="flex items-start gap-3 px-4 py-3">
+                      <Skeleton className="mt-1.5 h-2.5 w-2.5 rounded-full shrink-0" />
+                      <Skeleton className="h-4 w-4 shrink-0" />
+                      <div className="flex-1 space-y-2">
+                        <Skeleton className="h-4 w-full" />
+                        <Skeleton className="h-3 w-20" />
+                      </div>
+                    </div>
+                  ))
+                ) : (alertsData ?? []).length > 0 ? (
+                  (alertsData ?? []).map((alert) => (
                     <div
                       key={alert.id}
                       className="flex items-start gap-3 px-4 py-3 hover:bg-muted/50 transition-colors cursor-default"
                     >
                       <span className={`mt-1.5 h-2.5 w-2.5 rounded-full shrink-0 ${severityDotColor[alert.severity] || "bg-gray-400"}`} />
-                      <AlertIcon className="w-4 h-4 mt-0.5 shrink-0 text-muted-foreground" />
+                      <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-muted-foreground" />
                       <div className="flex-1 min-w-0">
                         <p className="text-sm leading-snug">{alert.text}</p>
                         <p className="text-xs text-muted-foreground mt-1">{alert.time}</p>
                       </div>
                     </div>
-                  );
-                })}
+                  ))
+                ) : (
+                  <div className="p-6 text-center text-sm text-muted-foreground">
+                    No recent alerts
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -455,38 +411,34 @@ export default function OperationsCenter() {
       </div>
 
       {/* Row 2: Key Metrics with bilingual labels */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className={METRIC_GRID}>
         <MetricCard
           title="Active Cases"
-          titleAr="الحالات النشطة"
-          value={metrics.activeCases}
+          subtitle="الحالات النشطة"
+          value={String(metrics.activeCases)}
           icon={ClipboardList}
-          description="Cases under investigation"
-          isLoading={isLoading}
+          loading={isLoading}
         />
         <MetricCard
           title="High-Risk Entities"
-          titleAr="تنبيهات الاحتيال"
-          value={metrics.highRiskCount}
+          subtitle="تنبيهات الاحتيال"
+          value={String(metrics.highRiskCount)}
           icon={AlertTriangle}
-          description="Providers, doctors, patients"
-          isLoading={isLoading}
+          loading={isLoading}
         />
         <MetricCard
           title="Pending Actions"
-          titleAr="قيد التحقيق"
-          value={metrics.pendingActions}
+          subtitle="قيد التحقيق"
+          value={String(metrics.pendingActions)}
           icon={Clock}
-          description="Awaiting decision"
-          isLoading={isLoading}
+          loading={isLoading}
         />
         <MetricCard
           title="Total Impact"
-          titleAr="درجة المخاطر"
+          subtitle="درجة المخاطر"
           value={formatCurrency(metrics.totalImpact)}
           icon={DollarSign}
-          description="Prospective & retrospective"
-          isLoading={isLoading}
+          loading={isLoading}
         />
       </div>
 

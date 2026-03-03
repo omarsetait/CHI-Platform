@@ -98,6 +98,10 @@ import {
   type InsertOnlineListeningMention,
   type EnforcementCase,
   type InsertEnforcementCase,
+  type EnforcementDossier,
+  type InsertEnforcementDossier,
+  type FwaDetectionResult,
+  type FwaAnalyzedClaim,
   type RegulatoryCircular,
   type InsertRegulatoryCircular,
   type AuditSession,
@@ -114,6 +118,7 @@ import {
   type InsertAuditFinding,
   type AuditChecklist,
   type InsertAuditChecklist,
+  type AgentPerformanceMetrics,
   users,
   preAuthClaims,
   preAuthSignals,
@@ -125,6 +130,7 @@ import {
   preAuthPolicyRules,
   preAuthAgentConfigs,
   preAuthBatches,
+  agentPerformanceMetrics,
   fwaCases,
   fwaAnalysisFindings,
   fwaCategories,
@@ -164,6 +170,9 @@ import {
   providerComplaints,
   onlineListeningMentions,
   enforcementCases,
+  enforcementDossiers,
+  fwaDetectionResults,
+  fwaAnalyzedClaims,
   regulatoryCirculars,
   auditSessions,
   rlhfFeedback,
@@ -223,6 +232,10 @@ export interface IStorage {
   getPreAuthAgentConfig(agentId: string): Promise<PreAuthAgentConfig | undefined>;
   createPreAuthAgentConfig(config: InsertPreAuthAgentConfig): Promise<PreAuthAgentConfig>;
   updatePreAuthAgentConfig(agentId: string, updates: Partial<InsertPreAuthAgentConfig>): Promise<PreAuthAgentConfig | undefined>;
+
+  getPreAuthAllSignals(): Promise<PreAuthSignal[]>;
+  getPreAuthAllActions(): Promise<PreAuthAdjudicatorAction[]>;
+  getAgentPerformanceMetricsByModule(module: string): Promise<AgentPerformanceMetrics[]>;
 
   getPreAuthBatches(): Promise<PreAuthBatch[]>;
   getPreAuthBatch(id: string): Promise<PreAuthBatch | undefined>;
@@ -444,6 +457,18 @@ export interface IStorage {
   getEnforcementCase(id: string): Promise<EnforcementCase | undefined>;
   createEnforcementCase(data: InsertEnforcementCase): Promise<EnforcementCase>;
   updateEnforcementCase(id: string, data: Partial<InsertEnforcementCase>): Promise<EnforcementCase | undefined>;
+
+  // Enforcement Dossiers
+  createEnforcementDossier(data: InsertEnforcementDossier): Promise<EnforcementDossier>;
+  getEnforcementDossier(id: number): Promise<EnforcementDossier | undefined>;
+  getEnforcementDossierByCaseId(caseId: string): Promise<EnforcementDossier | undefined>;
+  updateEnforcementDossier(id: number, data: Partial<InsertEnforcementDossier>): Promise<EnforcementDossier | undefined>;
+  listEnforcementDossiers(filters?: { status?: string; stage?: string }): Promise<EnforcementDossier[]>;
+
+  // Detection results for enforcement workflow
+  getDetectionResultsByClaimId(claimId: string): Promise<FwaDetectionResult | undefined>;
+  getDetectionResultsByProvider(providerId: string): Promise<FwaDetectionResult[]>;
+  getAnalyzedClaimsByProvider(providerId: string, limit?: number): Promise<FwaAnalyzedClaim[]>;
 
   // Regulatory Circulars
   getRegulatoryCirculars(): Promise<RegulatoryCircular[]>;
@@ -775,6 +800,18 @@ export class MemStorage implements IStorage {
     };
     this.preAuthAdjudicatorActions.set(id, newAction);
     return newAction;
+  }
+
+  async getPreAuthAllSignals(): Promise<PreAuthSignal[]> {
+    return Array.from(this.preAuthSignals.values());
+  }
+
+  async getPreAuthAllActions(): Promise<PreAuthAdjudicatorAction[]> {
+    return Array.from(this.preAuthAdjudicatorActions.values());
+  }
+
+  async getAgentPerformanceMetricsByModule(module: string): Promise<AgentPerformanceMetrics[]> {
+    return [];
   }
 
   async createPreAuthRlhfFeedback(feedback: InsertPreAuthRlhfFeedback): Promise<PreAuthRlhfFeedback> {
@@ -2615,6 +2652,8 @@ export class MemStorage implements IStorage {
   private providerComplaintsMap: Map<string, ProviderComplaint> = new Map();
   private onlineListeningMentionsMap: Map<string, OnlineListeningMention> = new Map();
   private enforcementCasesMap: Map<string, EnforcementCase> = new Map();
+  private enforcementDossiersMap: Map<number, EnforcementDossier> = new Map();
+  private enforcementDossierIdCounter: number = 1;
   private regulatoryCircularsMap: Map<string, RegulatoryCircular> = new Map();
   private auditSessionsMap: Map<string, AuditSession> = new Map();
 
@@ -2706,6 +2745,48 @@ export class MemStorage implements IStorage {
     const updated = { ...existing, ...data, updatedAt: new Date() };
     this.enforcementCasesMap.set(id, updated);
     return updated;
+  }
+
+  // Enforcement Dossier CRUD (MemStorage)
+  async createEnforcementDossier(data: InsertEnforcementDossier): Promise<EnforcementDossier> {
+    const id = this.enforcementDossierIdCounter++;
+    const dossier = { ...data, id, createdAt: new Date(), updatedAt: new Date() } as EnforcementDossier;
+    this.enforcementDossiersMap.set(id, dossier);
+    return dossier;
+  }
+
+  async getEnforcementDossier(id: number): Promise<EnforcementDossier | undefined> {
+    return this.enforcementDossiersMap.get(id);
+  }
+
+  async getEnforcementDossierByCaseId(caseId: string): Promise<EnforcementDossier | undefined> {
+    return Array.from(this.enforcementDossiersMap.values()).find(d => d.caseId === caseId);
+  }
+
+  async updateEnforcementDossier(id: number, data: Partial<InsertEnforcementDossier>): Promise<EnforcementDossier | undefined> {
+    const existing = this.enforcementDossiersMap.get(id);
+    if (!existing) return undefined;
+    const updated = { ...existing, ...data, updatedAt: new Date() } as EnforcementDossier;
+    this.enforcementDossiersMap.set(id, updated);
+    return updated;
+  }
+
+  async listEnforcementDossiers(filters?: { status?: string; stage?: string }): Promise<EnforcementDossier[]> {
+    let dossiers = Array.from(this.enforcementDossiersMap.values());
+    if (filters?.status) dossiers = dossiers.filter(d => d.status === filters.status);
+    if (filters?.stage) dossiers = dossiers.filter(d => d.currentStage === filters.stage);
+    return dossiers.sort((a, b) => (b.updatedAt?.getTime() ?? 0) - (a.updatedAt?.getTime() ?? 0));
+  }
+
+  // Detection results for enforcement workflow (MemStorage stubs)
+  async getDetectionResultsByClaimId(claimId: string): Promise<FwaDetectionResult | undefined> {
+    return undefined;
+  }
+  async getDetectionResultsByProvider(providerId: string): Promise<FwaDetectionResult[]> {
+    return [];
+  }
+  async getAnalyzedClaimsByProvider(providerId: string, limit?: number): Promise<FwaAnalyzedClaim[]> {
+    return [];
   }
 
   async getRegulatoryCirculars(): Promise<RegulatoryCircular[]> {
@@ -2987,6 +3068,21 @@ export class DatabaseStorage implements IStorage {
   async createPreAuthAdjudicatorAction(action: InsertPreAuthAdjudicatorAction): Promise<PreAuthAdjudicatorAction> {
     const [result] = await db.insert(preAuthAdjudicatorActions).values(action).returning();
     return result;
+  }
+
+  async getPreAuthAllSignals(): Promise<PreAuthSignal[]> {
+    const results = await db.select().from(preAuthSignals).orderBy(desc(preAuthSignals.createdAt));
+    return results;
+  }
+
+  async getPreAuthAllActions(): Promise<PreAuthAdjudicatorAction[]> {
+    const results = await db.select().from(preAuthAdjudicatorActions);
+    return results;
+  }
+
+  async getAgentPerformanceMetricsByModule(module: string): Promise<AgentPerformanceMetrics[]> {
+    const results = await db.select().from(agentPerformanceMetrics).where(eq(agentPerformanceMetrics.module, module));
+    return results;
   }
 
   async createPreAuthRlhfFeedback(feedback: InsertPreAuthRlhfFeedback): Promise<PreAuthRlhfFeedback> {
@@ -3951,6 +4047,70 @@ export class DatabaseStorage implements IStorage {
   async updateEnforcementCase(id: string, data: Partial<InsertEnforcementCase>): Promise<EnforcementCase | undefined> {
     const [result] = await db.update(enforcementCases).set({ ...data, updatedAt: new Date() }).where(eq(enforcementCases.id, id)).returning();
     return result;
+  }
+
+  // Enforcement Dossier CRUD (DatabaseStorage)
+  async createEnforcementDossier(data: InsertEnforcementDossier): Promise<EnforcementDossier> {
+    const [dossier] = await db.insert(enforcementDossiers).values(data).returning();
+    return dossier;
+  }
+
+  async getEnforcementDossier(id: number): Promise<EnforcementDossier | undefined> {
+    const [dossier] = await db.select().from(enforcementDossiers).where(eq(enforcementDossiers.id, id));
+    return dossier;
+  }
+
+  async getEnforcementDossierByCaseId(caseId: string): Promise<EnforcementDossier | undefined> {
+    const [dossier] = await db.select().from(enforcementDossiers).where(eq(enforcementDossiers.caseId, caseId));
+    return dossier;
+  }
+
+  async updateEnforcementDossier(id: number, data: Partial<InsertEnforcementDossier>): Promise<EnforcementDossier | undefined> {
+    const [dossier] = await db
+      .update(enforcementDossiers)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(enforcementDossiers.id, id))
+      .returning();
+    return dossier;
+  }
+
+  async listEnforcementDossiers(filters?: { status?: string; stage?: string }): Promise<EnforcementDossier[]> {
+    const conditions = [];
+    if (filters?.status) conditions.push(eq(enforcementDossiers.status, filters.status));
+    if (filters?.stage) conditions.push(eq(enforcementDossiers.currentStage, filters.stage));
+    if (conditions.length > 0) {
+      return db.select().from(enforcementDossiers).where(and(...conditions)).orderBy(desc(enforcementDossiers.updatedAt));
+    }
+    return db.select().from(enforcementDossiers).orderBy(desc(enforcementDossiers.updatedAt));
+  }
+
+  // Detection results for enforcement workflow (DatabaseStorage)
+  async getDetectionResultsByClaimId(claimId: string): Promise<FwaDetectionResult | undefined> {
+    const [result] = await db
+      .select()
+      .from(fwaDetectionResults)
+      .where(eq(fwaDetectionResults.claimId, claimId))
+      .orderBy(desc(fwaDetectionResults.analyzedAt))
+      .limit(1);
+    return result;
+  }
+
+  async getDetectionResultsByProvider(providerId: string): Promise<FwaDetectionResult[]> {
+    return db
+      .select()
+      .from(fwaDetectionResults)
+      .where(eq(fwaDetectionResults.providerId, providerId))
+      .orderBy(desc(fwaDetectionResults.compositeScore))
+      .limit(50);
+  }
+
+  async getAnalyzedClaimsByProvider(providerId: string, limit?: number): Promise<FwaAnalyzedClaim[]> {
+    return db
+      .select()
+      .from(fwaAnalyzedClaims)
+      .where(eq(fwaAnalyzedClaims.providerId, providerId))
+      .orderBy(desc(fwaAnalyzedClaims.createdAt))
+      .limit(limit || 10);
   }
 
   async getRegulatoryCirculars(): Promise<RegulatoryCircular[]> {

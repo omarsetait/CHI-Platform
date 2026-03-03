@@ -67,6 +67,244 @@ export function registerPreAuthRoutes(
     }
   });
 
+  // GET /api/pre-auth/analytics/overview - Aggregated overview stats
+  app.get("/api/pre-auth/analytics/overview", async (req, res) => {
+    try {
+      const claims = await storage.getPreAuthClaims();
+      const actions = await storage.getPreAuthAllActions();
+
+      const totalClaims = claims.length;
+      const approved = claims.filter((c) => c.status === "approved").length;
+      const rejected = claims.filter((c) => c.status === "rejected").length;
+      const pendingReview = claims.filter((c) => c.status === "pending_review").length;
+      const requestInfo = claims.filter((c) => c.status === "request_info").length;
+
+      const processedCount = approved + rejected;
+      const approvalRate = processedCount > 0 ? Math.round((approved / processedCount) * 100 * 10) / 10 : 0;
+
+      const totalActions = actions.length;
+      const totalOverrides = actions.filter((a) => a.overrideReason !== null && a.overrideReason !== "").length;
+      const overrideRate = totalActions > 0 ? Math.round((totalOverrides / totalActions) * 100 * 10) / 10 : 0;
+
+      // Compute average processing time from claims that have timestamps
+      const claimsWithTime = claims.filter((c) => c.createdAt && c.updatedAt);
+      let avgProcessingTime = "0s";
+      if (claimsWithTime.length > 0) {
+        const totalMs = claimsWithTime.reduce((sum, c) => {
+          const created = new Date(c.createdAt!).getTime();
+          const updated = new Date(c.updatedAt!).getTime();
+          return sum + (updated - created);
+        }, 0);
+        const avgMs = totalMs / claimsWithTime.length;
+        if (avgMs < 1000) {
+          avgProcessingTime = `${Math.round(avgMs)}ms`;
+        } else if (avgMs < 60000) {
+          avgProcessingTime = `${(avgMs / 1000).toFixed(1)}s`;
+        } else if (avgMs < 3600000) {
+          avgProcessingTime = `${(avgMs / 60000).toFixed(1)}m`;
+        } else {
+          avgProcessingTime = `${(avgMs / 3600000).toFixed(1)}h`;
+        }
+      }
+
+      res.json({
+        totalClaims,
+        approved,
+        rejected,
+        pendingReview,
+        requestInfo,
+        approvalRate,
+        overrideRate,
+        avgProcessingTime,
+        totalActions,
+        totalOverrides,
+      });
+    } catch (error) {
+      handleRouteError(res, error, "/api/pre-auth/analytics/overview", "fetch analytics overview");
+    }
+  });
+
+  // GET /api/pre-auth/analytics/claims-by-status - Group claims by status
+  app.get("/api/pre-auth/analytics/claims-by-status", async (req, res) => {
+    try {
+      const claims = await storage.getPreAuthClaims();
+      const total = claims.length;
+      const statusCounts: Record<string, number> = {};
+      claims.forEach((c) => {
+        const status = c.status || "unknown";
+        statusCounts[status] = (statusCounts[status] || 0) + 1;
+      });
+
+      const distribution = Object.entries(statusCounts).map(([status, count]) => ({
+        status,
+        count,
+        percentage: total > 0 ? Math.round((count / total) * 100 * 10) / 10 : 0,
+      }));
+
+      res.json({ distribution, total });
+    } catch (error) {
+      handleRouteError(res, error, "/api/pre-auth/analytics/claims-by-status", "fetch claims by status");
+    }
+  });
+
+  // GET /api/pre-auth/analytics/claims-trend - Daily trend for last 30 days
+  app.get("/api/pre-auth/analytics/claims-trend", async (req, res) => {
+    try {
+      const claims = await storage.getPreAuthClaims();
+      const now = new Date();
+      const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+      // Build a map of date -> { submitted, approved, rejected }
+      const dayMap: Record<string, { submitted: number; approved: number; rejected: number }> = {};
+
+      // Initialize all 30 days
+      for (let i = 0; i < 30; i++) {
+        const d = new Date(thirtyDaysAgo.getTime() + i * 24 * 60 * 60 * 1000);
+        const key = d.toISOString().split("T")[0];
+        dayMap[key] = { submitted: 0, approved: 0, rejected: 0 };
+      }
+
+      claims.forEach((c) => {
+        if (!c.createdAt) return;
+        const date = new Date(c.createdAt);
+        if (date < thirtyDaysAgo) return;
+        const key = date.toISOString().split("T")[0];
+        if (!dayMap[key]) {
+          dayMap[key] = { submitted: 0, approved: 0, rejected: 0 };
+        }
+        dayMap[key].submitted += 1;
+        if (c.status === "approved") dayMap[key].approved += 1;
+        if (c.status === "rejected") dayMap[key].rejected += 1;
+      });
+
+      const trend = Object.entries(dayMap)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([date, counts]) => ({ date, ...counts }));
+
+      res.json({ trend });
+    } catch (error) {
+      handleRouteError(res, error, "/api/pre-auth/analytics/claims-trend", "fetch claims trend");
+    }
+  });
+
+  // GET /api/pre-auth/analytics/agent-performance - Agent signal stats
+  app.get("/api/pre-auth/analytics/agent-performance", async (req, res) => {
+    try {
+      // Try agent_performance_metrics table first
+      const metricsFromTable = await storage.getAgentPerformanceMetricsByModule("pre-auth");
+      if (metricsFromTable.length > 0) {
+        const performance = metricsFromTable.map((m) => ({
+          detector: m.agentId,
+          signalCount: m.totalRecommendations || 0,
+          avgConfidence: m.confidenceAccuracy ? parseFloat(String(m.confidenceAccuracy)) / 100 : 0,
+          riskFlagCount: m.overriddenRecommendations || 0,
+          hardStopCount: m.escalatedRecommendations || 0,
+          riskFlagRate: m.totalRecommendations
+            ? Math.round(((m.overriddenRecommendations || 0) / m.totalRecommendations) * 100 * 10) / 10
+            : 0,
+          recommendations: {
+            accepted: m.acceptedRecommendations || 0,
+            overridden: m.overriddenRecommendations || 0,
+            escalated: m.escalatedRecommendations || 0,
+          },
+        }));
+        return res.json({ performance });
+      }
+
+      // Fallback: compute from signals
+      const signals = await storage.getPreAuthAllSignals();
+      const detectorMap: Record<string, {
+        signalCount: number;
+        totalConfidence: number;
+        riskFlagCount: number;
+        hardStopCount: number;
+        recommendations: Record<string, number>;
+      }> = {};
+
+      signals.forEach((s) => {
+        const detector = s.detector;
+        if (!detectorMap[detector]) {
+          detectorMap[detector] = {
+            signalCount: 0,
+            totalConfidence: 0,
+            riskFlagCount: 0,
+            hardStopCount: 0,
+            recommendations: {},
+          };
+        }
+        const entry = detectorMap[detector];
+        entry.signalCount += 1;
+        entry.totalConfidence += s.confidence ? parseFloat(String(s.confidence)) : 0;
+        if (s.riskFlag) entry.riskFlagCount += 1;
+        if (s.isHardStop) entry.hardStopCount += 1;
+        if (s.recommendation) {
+          entry.recommendations[s.recommendation] = (entry.recommendations[s.recommendation] || 0) + 1;
+        }
+      });
+
+      const performance = Object.entries(detectorMap).map(([detector, data]) => ({
+        detector,
+        signalCount: data.signalCount,
+        avgConfidence: data.signalCount > 0 ? data.totalConfidence / data.signalCount : 0,
+        riskFlagCount: data.riskFlagCount,
+        hardStopCount: data.hardStopCount,
+        riskFlagRate: data.signalCount > 0
+          ? Math.round((data.riskFlagCount / data.signalCount) * 100 * 10) / 10
+          : 0,
+        recommendations: data.recommendations,
+      }));
+
+      res.json({ performance });
+    } catch (error) {
+      handleRouteError(res, error, "/api/pre-auth/analytics/agent-performance", "fetch agent performance");
+    }
+  });
+
+  // GET /api/pre-auth/analytics/override-patterns - Override analysis
+  app.get("/api/pre-auth/analytics/override-patterns", async (req, res) => {
+    try {
+      const actions = await storage.getPreAuthAllActions();
+      const overrides = actions.filter((a) => a.overrideReason !== null && a.overrideReason !== "");
+      const totalOverrides = overrides.length;
+
+      // Group by category (use action field as category)
+      const categoryMap: Record<string, number> = {};
+      overrides.forEach((o) => {
+        const category = o.action || "unknown";
+        categoryMap[category] = (categoryMap[category] || 0) + 1;
+      });
+      const byCategory = Object.entries(categoryMap)
+        .map(([category, count]) => ({ category, count }))
+        .sort((a, b) => b.count - a.count);
+
+      // Group by reason
+      const reasonMap: Record<string, number> = {};
+      overrides.forEach((o) => {
+        const reason = o.overrideReason || "unspecified";
+        reasonMap[reason] = (reasonMap[reason] || 0) + 1;
+      });
+      const byReason = Object.entries(reasonMap)
+        .map(([reason, count]) => ({ reason, count }))
+        .sort((a, b) => b.count - a.count);
+
+      // Group by verdict change (originalRecommendation -> finalVerdict)
+      const verdictChangeMap: Record<string, number> = {};
+      overrides.forEach((o) => {
+        const from = o.originalRecommendation || "unknown";
+        const to = o.finalVerdict || "unknown";
+        const change = `${from} -> ${to}`;
+        verdictChangeMap[change] = (verdictChangeMap[change] || 0) + 1;
+      });
+      const byVerdictChange = Object.entries(verdictChangeMap)
+        .map(([change, count]) => ({ change, count }))
+        .sort((a, b) => b.count - a.count);
+
+      res.json({ totalOverrides, byCategory, byReason, byVerdictChange });
+    } catch (error) {
+      handleRouteError(res, error, "/api/pre-auth/analytics/override-patterns", "fetch override patterns");
+    }
+  });
+
   // POST /api/pre-auth/seed - Seed sample data for demo
   app.post("/api/pre-auth/seed", async (req, res) => {
     try {

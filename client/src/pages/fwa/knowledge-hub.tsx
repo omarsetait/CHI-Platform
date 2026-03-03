@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -198,6 +198,8 @@ export default function KnowledgeHub() {
   const [searchQuery, setSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const [sseJobData, setSseJobData] = useState<UploadJobRow | null>(null);
+  const sseConnected = useRef(false);
   const queryClient = useQueryClient();
 
   const {
@@ -226,7 +228,7 @@ export default function KnowledgeHub() {
   const { data: activeJobResponse } = useQuery<UploadJobResponse>({
     queryKey: activeJobQueryKey,
     enabled: Boolean(activeJobId),
-    refetchInterval: 2000,
+    refetchInterval: sseConnected.current ? false : 2000,
   });
 
   useEffect(() => {
@@ -237,6 +239,70 @@ export default function KnowledgeHub() {
       }
     }
   }, [jobsResponse, activeJobId]);
+
+  // SSE real-time progress stream
+  useEffect(() => {
+    if (!activeJobId) {
+      setSseJobData(null);
+      sseConnected.current = false;
+      return;
+    }
+
+    const controller = new AbortController();
+    sseConnected.current = true;
+
+    (async () => {
+      try {
+        const response = await fetch(
+          `/api/knowledge-documents/upload-jobs/${activeJobId}/progress`,
+          { signal: controller.signal }
+        );
+        const reader = response.body?.getReader();
+        if (!reader) {
+          sseConnected.current = false;
+          return;
+        }
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            try {
+              const data = JSON.parse(line.slice(6));
+              if (data.done) {
+                queryClient.invalidateQueries({ queryKey: ["/api/knowledge-documents"] });
+                queryClient.invalidateQueries({ queryKey: ["/api/knowledge-documents/stats"] });
+                queryClient.invalidateQueries({ queryKey: ["/api/knowledge-documents/upload-jobs"] });
+                sseConnected.current = false;
+                return;
+              }
+              setSseJobData(data);
+            } catch {
+              // ignore malformed lines
+            }
+          }
+        }
+      } catch (err) {
+        if ((err as Error).name !== "AbortError") {
+          console.error("[KnowledgeHub] SSE error:", err);
+        }
+        sseConnected.current = false;
+      }
+    })();
+
+    return () => {
+      controller.abort();
+      sseConnected.current = false;
+    };
+  }, [activeJobId, queryClient]);
 
   useEffect(() => {
     const status = activeJobResponse?.data?.status;
@@ -326,7 +392,7 @@ export default function KnowledgeHub() {
     indexed: statsResponse?.data?.completed ?? 0,
     processing: statsResponse?.data?.processing ?? 0,
   };
-  const activeJob = activeJobResponse?.data;
+  const activeJob = sseJobData || activeJobResponse?.data;
 
   return (
     <div className="space-y-6" data-testid="page-knowledge-hub">

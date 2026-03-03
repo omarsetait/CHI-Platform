@@ -18,6 +18,7 @@ import { registerETLRoutes } from "./routes/etl-routes";
 import { registerSemanticRoutes } from "./routes/semantic-routes";
 import { registerPillarRoutes } from "./routes/pillar-routes";
 import { registerChatRoutes } from "./routes/chat-routes";
+import { registerEnforcementWorkflowRoutes } from "./routes/enforcement-workflow-routes";
 import authRoutes from "./routes/auth-routes";
 import { registerPipelineRoutes } from "./routes/pipeline-routes";
 import { loadUserFromSession, requireAuth } from "./middleware/auth";
@@ -229,6 +230,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   registerSemanticRoutes(app, handleRouteError);
   registerPillarRoutes(app, handleRouteError);
   registerChatRoutes(app);
+  registerEnforcementWorkflowRoutes(app, storage, handleRouteError);
 
   const httpServer = createServer(app);
 

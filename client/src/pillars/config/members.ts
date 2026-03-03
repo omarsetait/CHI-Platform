@@ -27,9 +27,9 @@ export const membersPillarConfig: PillarConfig = {
       title: "Beneficiary Services",
       items: [
         { label: "Complaints & Disputes", href: "/members/complaints", icon: MessageSquare },
+        { label: "Report Fraud", href: "/members/report-fraud", icon: ShieldAlert },
         { label: "Coverage Gap Monitor", href: "/members/coverage-gaps", icon: MapPin },
         { label: "Provider Quality", href: "/members/provider-quality", icon: Star },
-        { label: "Report Fraud", href: "/members/report-fraud", icon: ShieldAlert },
         { label: "Benefits Awareness", href: "/members/benefits-awareness", icon: BookOpen },
       ],
     },

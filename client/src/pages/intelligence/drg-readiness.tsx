@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend,
   LineChart, Line, XAxis, YAxis, CartesianGrid,
@@ -53,7 +54,7 @@ export default function DrgReadinessPage() {
               <CheckCircle2 className="h-6 w-6 text-emerald-600" />
             </div>
             <div>
-              <div className="text-2xl font-bold">{data?.overall.ready ?? "..."}%</div>
+              <div className="text-2xl font-bold">{data ? `${data.overall.ready}%` : <Skeleton className="h-8 w-24 inline-block" />}</div>
               <div className="text-xs text-muted-foreground">Ready</div>
             </div>
           </CardContent>
@@ -65,7 +66,7 @@ export default function DrgReadinessPage() {
               <Clock className="h-6 w-6 text-amber-600" />
             </div>
             <div>
-              <div className="text-2xl font-bold">{data?.overall.inProgress ?? "..."}%</div>
+              <div className="text-2xl font-bold">{data ? `${data.overall.inProgress}%` : <Skeleton className="h-8 w-24 inline-block" />}</div>
               <div className="text-xs text-muted-foreground">In Progress</div>
             </div>
           </CardContent>
@@ -77,7 +78,7 @@ export default function DrgReadinessPage() {
               <XCircle className="h-6 w-6 text-rose-600" />
             </div>
             <div>
-              <div className="text-2xl font-bold">{data?.overall.notStarted ?? "..."}%</div>
+              <div className="text-2xl font-bold">{data ? `${data.overall.notStarted}%` : <Skeleton className="h-8 w-24 inline-block" />}</div>
               <div className="text-xs text-muted-foreground">Not Started</div>
             </div>
           </CardContent>

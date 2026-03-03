@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import { QueryErrorState } from "@/components/error-boundary";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -99,15 +100,15 @@ export default function CodingIntelligencePage() {
   const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
 
   // Data queries
-  const { data: trendsData, isLoading: trendsLoading } = useQuery<{ trends: RejectionTrend[] }>({
+  const { data: trendsData, isLoading: trendsLoading, error: trendsError, refetch: refetchTrends } = useQuery<{ trends: RejectionTrend[] }>({
     queryKey: ["/api/fwa/cpoe/rejection-trends"],
   });
 
-  const { data: frequencyData, isLoading: frequencyLoading } = useQuery<{ pairs: FrequencyPair[] }>({
+  const { data: frequencyData, isLoading: frequencyLoading, error: frequencyError, refetch: refetchFrequency } = useQuery<{ pairs: FrequencyPair[] }>({
     queryKey: ["/api/fwa/cpoe/frequency-table"],
   });
 
-  const { data: metricsData, isLoading: metricsLoading } = useQuery<ProcessingMetrics>({
+  const { data: metricsData, isLoading: metricsLoading, error: metricsError, refetch: refetchMetrics } = useQuery<ProcessingMetrics>({
     queryKey: ["/api/fwa/cpoe/processing-metrics"],
   });
 
@@ -153,7 +154,9 @@ export default function CodingIntelligencePage() {
             <div className="flex items-center justify-between">
               <div className="space-y-1">
                 <p className="text-sm text-muted-foreground">Claims Processed</p>
-                {metricsLoading ? (
+                {metricsError ? (
+                  <p className="text-sm text-destructive">Failed to load</p>
+                ) : metricsLoading ? (
                   <Skeleton className="h-8 w-24" />
                 ) : (
                   <p className="text-3xl font-bold">
@@ -174,7 +177,9 @@ export default function CodingIntelligencePage() {
             <div className="flex items-center justify-between">
               <div className="space-y-1">
                 <p className="text-sm text-muted-foreground">Avg Processing Time</p>
-                {metricsLoading ? (
+                {metricsError ? (
+                  <p className="text-sm text-destructive">Failed to load</p>
+                ) : metricsLoading ? (
                   <Skeleton className="h-8 w-24" />
                 ) : (
                   <p className="text-3xl font-bold">
@@ -195,7 +200,9 @@ export default function CodingIntelligencePage() {
             <div className="flex items-center justify-between">
               <div className="space-y-1">
                 <p className="text-sm text-muted-foreground">Current Acceptance Rate</p>
-                {trendsLoading ? (
+                {trendsError ? (
+                  <p className="text-sm text-destructive">Failed to load</p>
+                ) : trendsLoading ? (
                   <Skeleton className="h-8 w-24" />
                 ) : (
                   <p className="text-3xl font-bold text-green-600 dark:text-green-400">
@@ -216,7 +223,9 @@ export default function CodingIntelligencePage() {
             <div className="flex items-center justify-between">
               <div className="space-y-1">
                 <p className="text-sm text-muted-foreground">Top Rejection Reason</p>
-                {metricsLoading ? (
+                {metricsError ? (
+                  <p className="text-sm text-destructive">Failed to load</p>
+                ) : metricsLoading ? (
                   <Skeleton className="h-8 w-24" />
                 ) : (
                   <p className="text-lg font-semibold leading-tight">
@@ -398,7 +407,9 @@ export default function CodingIntelligencePage() {
 
         {/* Tab 2: Rejection Trends */}
         <TabsContent value="trends" className="space-y-6">
-          {trendsLoading ? (
+          {trendsError ? (
+            <QueryErrorState error={trendsError} onRetry={() => refetchTrends()} title="Failed to load rejection trends" />
+          ) : trendsLoading ? (
             <div className="space-y-4">
               <Skeleton className="h-[350px] w-full" />
               <Skeleton className="h-[300px] w-full" />
@@ -479,7 +490,9 @@ export default function CodingIntelligencePage() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              {frequencyLoading ? (
+              {frequencyError ? (
+                <QueryErrorState error={frequencyError} onRetry={() => refetchFrequency()} title="Failed to load frequency data" />
+              ) : frequencyLoading ? (
                 <div className="space-y-2">
                   {Array.from({ length: 5 }).map((_, i) => (
                     <Skeleton key={i} className="h-12 w-full" />
@@ -533,7 +546,9 @@ export default function CodingIntelligencePage() {
 
         {/* Tab 4: Rejection Reasons */}
         <TabsContent value="reasons" className="space-y-6">
-          {metricsLoading ? (
+          {metricsError ? (
+            <QueryErrorState error={metricsError} onRetry={() => refetchMetrics()} title="Failed to load rejection reasons" />
+          ) : metricsLoading ? (
             <div className="space-y-4">
               <Skeleton className="h-[350px] w-full" />
               <Skeleton className="h-[200px] w-full" />

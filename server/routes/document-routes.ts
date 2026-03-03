@@ -675,6 +675,50 @@ Only return valid JSON, no other text.`;
     }
   });
 
+  // SSE endpoint for real-time upload job progress
+  app.get("/api/knowledge-documents/upload-jobs/:jobId/progress", async (req: Request, res: Response) => {
+    try {
+      const { jobId } = req.params;
+
+      const job = await knowledgeUploadQueueService.getJob(jobId);
+      if (!job) {
+        return res.status(404).json({ success: false, error: "Job not found" });
+      }
+
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+
+      // Send current state immediately
+      res.write(`data: ${JSON.stringify(job)}\n\n`);
+
+      const TERMINAL = new Set(["completed", "completed_with_errors", "failed"]);
+      if (TERMINAL.has(job.status)) {
+        res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+        res.end();
+        return;
+      }
+
+      const unsubscribe = knowledgeUploadQueueService.onJobProgress(jobId, (summary) => {
+        try {
+          res.write(`data: ${JSON.stringify(summary)}\n\n`);
+          if (TERMINAL.has(summary.status)) {
+            res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+            res.end();
+          }
+        } catch (err) {
+          unsubscribe();
+        }
+      });
+
+      req.on("close", () => {
+        unsubscribe();
+      });
+    } catch (error) {
+      handleRouteError(res, error, "/api/knowledge-documents/upload-jobs/:jobId/progress", "stream upload job progress");
+    }
+  });
+
   // Retry only failed items for a completed/failed batch
   app.post("/api/knowledge-documents/upload-jobs/:jobId/retry-failed", requireAuth, async (req: Request, res: Response) => {
     try {

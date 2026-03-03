@@ -286,13 +286,14 @@ export default function MyCoveragePage() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {categories.map((cat) => {
             const IconComp = getCategoryIcon(cat.icon);
-            const limitSar = Number(cat.limitSar);
-            const usedSar = Number(cat.usedSar);
+            const limitSar = cat.limitSar ? Number(cat.limitSar) : null;
+            const usedSar = Number(cat.usedSar || 0);
             const limitUnits = cat.limitUnits ? Number(cat.limitUnits) : null;
             const usedUnits = cat.usedUnits ? Number(cat.usedUnits) : null;
-            const copay = Number(cat.copayPercent);
+            const copay = Number(cat.copayPercent || 0);
             const usedPercent =
-              limitSar > 0 ? Math.min((usedSar / limitSar) * 100, 100) : 0;
+              limitSar && limitSar > 0 ? Math.min((usedSar / limitSar) * 100, 100) :
+              limitUnits && limitUnits > 0 ? Math.min(((usedUnits ?? 0) / limitUnits) * 100, 100) : 0;
 
             return (
               <Card key={cat.benefitCategory} className="shadow-sm">
@@ -322,10 +323,13 @@ export default function MyCoveragePage() {
                   <div className="space-y-1">
                     <div className="flex justify-between text-xs text-muted-foreground">
                       <span>
-                        {usedSar.toLocaleString()} / {limitSar.toLocaleString()}{" "}
-                        SAR
+                        {limitSar !== null
+                          ? `${usedSar.toLocaleString()} / ${limitSar.toLocaleString()} SAR`
+                          : limitUnits !== null
+                            ? `${usedUnits ?? 0} / ${limitUnits} units`
+                            : "Unlimited"}
                       </span>
-                      <span>{usedPercent.toFixed(0)}%</span>
+                      <span>{usedPercent > 0 ? `${usedPercent.toFixed(0)}%` : ""}</span>
                     </div>
                     <Progress
                       value={usedPercent}

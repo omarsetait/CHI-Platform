@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Brain, Award, FileCode, Activity, BarChart, ClipboardCheck,
   TrendingUp, TrendingDown, AlertTriangle, CheckCircle2, ArrowRight,
@@ -83,7 +84,7 @@ export default function IntelligenceDashboard() {
             <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Providers Tracked</CardTitle>
           </CardHeader>
           <CardContent className="pt-0">
-            <div className="text-2xl font-bold">{accreditation?.summary.totalProviders ?? "..."}</div>
+            <div className="text-2xl font-bold">{accreditation ? accreditation.summary.totalProviders : <Skeleton className="h-8 w-24 inline-block" />}</div>
             <p className="text-xs text-muted-foreground mt-1">
               Avg Score: {accreditation?.summary.avgScore?.toFixed(1) ?? "--"}%
             </p>
@@ -95,7 +96,7 @@ export default function IntelligenceDashboard() {
             <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wide">SBS V3.0 Compliance</CardTitle>
           </CardHeader>
           <CardContent className="pt-0">
-            <div className="text-2xl font-bold">{sbs?.overallRate ?? "..."}%</div>
+            <div className="text-2xl font-bold">{sbs ? `${sbs.overallRate}%` : <Skeleton className="h-8 w-24 inline-block" />}</div>
             <p className="text-xs text-blue-600 flex items-center mt-1">
               <TrendingUp className="h-3 w-3 mr-1" /> Up from 41% in Oct
             </p>
@@ -107,7 +108,7 @@ export default function IntelligenceDashboard() {
             <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wide">DRG Ready</CardTitle>
           </CardHeader>
           <CardContent className="pt-0">
-            <div className="text-2xl font-bold">{drg?.overall.ready ?? "..."}%</div>
+            <div className="text-2xl font-bold">{drg ? `${drg.overall.ready}%` : <Skeleton className="h-8 w-24 inline-block" />}</div>
             <p className="text-xs text-muted-foreground mt-1">
               {drg?.overall.inProgress ?? "--"}% in progress
             </p>
@@ -119,7 +120,7 @@ export default function IntelligenceDashboard() {
             <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Rejection Rate</CardTitle>
           </CardHeader>
           <CardContent className="pt-0">
-            <div className="text-2xl font-bold">{rejections?.overallRate ?? "..."}%</div>
+            <div className="text-2xl font-bold">{rejections ? `${rejections.overallRate}%` : <Skeleton className="h-8 w-24 inline-block" />}</div>
             <p className="text-xs text-rose-500 flex items-center mt-1">
               <TrendingDown className="h-3 w-3 mr-1" /> Highest in Internal Med
             </p>
@@ -131,7 +132,7 @@ export default function IntelligenceDashboard() {
             <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Doc Quality Index</CardTitle>
           </CardHeader>
           <CardContent className="pt-0">
-            <div className="text-2xl font-bold">{docQuality?.overallIndex ?? "..."}/100</div>
+            <div className="text-2xl font-bold">{docQuality ? `${docQuality.overallIndex}/100` : <Skeleton className="h-8 w-24 inline-block" />}</div>
             <p className="text-xs text-muted-foreground mt-1">
               {docQuality?.impact.preventableRejections?.toLocaleString() ?? "--"} preventable rejections
             </p>
@@ -210,25 +211,25 @@ export default function IntelligenceDashboard() {
                 <span className="text-lg font-bold text-rose-600">
                   {docQuality?.impact.revenueAtRisk
                     ? `${(docQuality.impact.revenueAtRisk / 1000000).toFixed(1)}M SAR`
-                    : "..."}
+                    : <Skeleton className="h-5 w-16 inline-block" />}
                 </span>
               </div>
               <div className="flex items-center justify-between p-3 rounded-lg bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800">
                 <span className="text-sm font-medium">DRG Downgrades</span>
                 <span className="text-lg font-bold text-amber-600">
-                  {docQuality?.impact.drgDowngrades?.toLocaleString() ?? "..."}
+                  {docQuality ? docQuality.impact.drgDowngrades?.toLocaleString() : <Skeleton className="h-5 w-16 inline-block" />}
                 </span>
               </div>
               <div className="flex items-center justify-between p-3 rounded-lg bg-violet-50 dark:bg-violet-950/20 border border-violet-200 dark:border-violet-800">
                 <span className="text-sm font-medium">Preventable Rejections</span>
                 <span className="text-lg font-bold text-violet-600">
-                  {docQuality?.impact.preventableRejections?.toLocaleString() ?? "..."}
+                  {docQuality ? docQuality.impact.preventableRejections?.toLocaleString() : <Skeleton className="h-5 w-16 inline-block" />}
                 </span>
               </div>
               <div className="flex items-center justify-between p-3 rounded-lg bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800">
                 <span className="text-sm font-medium">SBS Compliance Gap</span>
                 <span className="text-lg font-bold text-blue-600">
-                  {sbs ? `${100 - sbs.overallRate}%` : "..."}
+                  {sbs ? `${100 - sbs.overallRate}%` : <Skeleton className="h-5 w-16 inline-block" />}
                 </span>
               </div>
             </div>

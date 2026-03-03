@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { QueryErrorState } from "@/components/error-boundary";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -581,11 +582,11 @@ export default function GraphAnalysisPage() {
   const [selectedRing, setSelectedRing] = useState<CollusionRing | null>(null);
   const [deleteGraphId, setDeleteGraphId] = useState<string | null>(null);
 
-  const { data: graphs, isLoading: isLoadingGraphs } = useQuery<RelationshipGraph[]>({
+  const { data: graphs, isLoading: isLoadingGraphs, error: graphsError, refetch: refetchGraphs } = useQuery<RelationshipGraph[]>({
     queryKey: ["/api/graph-analysis/graphs"],
   });
 
-  const { data: rings, isLoading: isLoadingRings } = useQuery<CollusionRing[]>({
+  const { data: rings, isLoading: isLoadingRings, error: ringsError, refetch: refetchRings } = useQuery<CollusionRing[]>({
     queryKey: ["/api/graph-analysis/collusion-rings"],
   });
 
@@ -616,7 +617,9 @@ export default function GraphAnalysisPage() {
           </h2>
         </div>
 
-        {isLoadingGraphs ? (
+        {graphsError ? (
+          <QueryErrorState error={graphsError} onRetry={() => refetchGraphs()} title="Failed to load relationship graphs" />
+        ) : isLoadingGraphs ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {[1, 2, 3].map((i) => (
               <GraphCardSkeleton key={i} />
@@ -759,7 +762,13 @@ export default function GraphAnalysisPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {isLoadingRings ? (
+                {ringsError ? (
+                  <TableRow>
+                    <TableCell colSpan={8}>
+                      <QueryErrorState error={ringsError} onRetry={() => refetchRings()} title="Failed to load collusion rings" />
+                    </TableCell>
+                  </TableRow>
+                ) : isLoadingRings ? (
                   [1, 2, 3].map((i) => <TableRowSkeleton key={i} />)
                 ) : !rings || rings.length === 0 ? (
                   <TableRow>

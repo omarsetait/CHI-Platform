@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   LineChart, Line,
@@ -71,7 +72,7 @@ export default function SbsCompliancePage() {
                 </defs>
               </svg>
               <div className="absolute inset-0 flex flex-col items-center justify-center">
-                <span className="text-4xl font-bold text-primary">{data?.overallRate ?? "..."}%</span>
+                <span className="text-4xl font-bold text-primary">{data ? `${data.overallRate}%` : <Skeleton className="h-8 w-24 inline-block" />}</span>
                 <span className="text-xs text-muted-foreground">compliant</span>
               </div>
             </div>

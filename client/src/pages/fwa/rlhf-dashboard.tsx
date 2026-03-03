@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { QueryErrorState } from "@/components/error-boundary";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -71,16 +72,16 @@ interface FeedbackEvent {
 const CHART_COLORS = ["#22c55e", "#ef4444", "#f59e0b", "#3b82f6"];
 
 export default function RLHFDashboardPage() {
-  const { data: metrics, isLoading: metricsLoading, refetch: refetchMetrics } = useQuery<RLHFMetrics>({
+  const { data: metrics, isLoading: metricsLoading, error: metricsError, refetch: refetchMetrics } = useQuery<RLHFMetrics>({
     queryKey: ["/api/rlhf/metrics"],
     refetchInterval: 30000,
   });
 
-  const { data: fwaFeedback, isLoading: fwaLoading, refetch: refetchFwa } = useQuery<FeedbackEvent[]>({
+  const { data: fwaFeedback, isLoading: fwaLoading, error: fwaError, refetch: refetchFwa } = useQuery<FeedbackEvent[]>({
     queryKey: ["/api/rlhf/feedback/fwa"],
   });
 
-  const { data: claimsFeedback, isLoading: claimsLoading, refetch: refetchClaims } = useQuery<FeedbackEvent[]>({
+  const { data: claimsFeedback, isLoading: claimsLoading, error: claimsError, refetch: refetchClaims } = useQuery<FeedbackEvent[]>({
     queryKey: ["/api/rlhf/feedback/claims"],
   });
 
@@ -130,7 +131,9 @@ export default function RLHFDashboardPage() {
             <Activity className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            {metricsLoading ? (
+            {metricsError ? (
+              <div className="text-sm text-destructive">Failed to load</div>
+            ) : metricsLoading ? (
               <Skeleton className="h-8 w-20" />
             ) : (
               <div className="text-2xl font-bold">{totalActions}</div>
@@ -145,7 +148,9 @@ export default function RLHFDashboardPage() {
             <Target className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            {metricsLoading ? (
+            {metricsError ? (
+              <div className="text-sm text-destructive">Failed to load</div>
+            ) : metricsLoading ? (
               <Skeleton className="h-8 w-20" />
             ) : (
               <div className="text-2xl font-bold text-green-600">{overallAcceptanceRate}%</div>
@@ -160,7 +165,9 @@ export default function RLHFDashboardPage() {
             <CheckCircle className="h-4 w-4 text-green-600" />
           </CardHeader>
           <CardContent>
-            {metricsLoading ? (
+            {metricsError ? (
+              <div className="text-sm text-destructive">Failed to load</div>
+            ) : metricsLoading ? (
               <Skeleton className="h-8 w-20" />
             ) : (
               <div className="text-2xl font-bold text-green-600">
@@ -177,7 +184,9 @@ export default function RLHFDashboardPage() {
             <XCircle className="h-4 w-4 text-amber-600" />
           </CardHeader>
           <CardContent>
-            {metricsLoading ? (
+            {metricsError ? (
+              <div className="text-sm text-destructive">Failed to load</div>
+            ) : metricsLoading ? (
               <Skeleton className="h-8 w-20" />
             ) : (
               <div className="text-2xl font-bold text-amber-600">
@@ -195,7 +204,9 @@ export default function RLHFDashboardPage() {
             <CardTitle className="text-lg">Acceptance vs Override by Module</CardTitle>
           </CardHeader>
           <CardContent>
-            {metricsLoading ? (
+            {metricsError ? (
+              <QueryErrorState error={metricsError} onRetry={() => refetchMetrics()} title="Failed to load chart data" />
+            ) : metricsLoading ? (
               <div className="h-[300px] flex items-center justify-center">
                 <Skeleton className="h-full w-full" />
               </div>
@@ -224,7 +235,9 @@ export default function RLHFDashboardPage() {
             <CardTitle className="text-lg">Overall Decision Distribution</CardTitle>
           </CardHeader>
           <CardContent>
-            {metricsLoading ? (
+            {metricsError ? (
+              <QueryErrorState error={metricsError} onRetry={() => refetchMetrics()} title="Failed to load distribution data" />
+            ) : metricsLoading ? (
               <div className="h-[300px] flex items-center justify-center">
                 <Skeleton className="h-full w-full" />
               </div>
@@ -266,7 +279,9 @@ export default function RLHFDashboardPage() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {metricsLoading ? (
+          {metricsError ? (
+            <QueryErrorState error={metricsError} onRetry={() => refetchMetrics()} title="Failed to load agent metrics" />
+          ) : metricsLoading ? (
             <div className="space-y-2">
               {Array.from({ length: 3 }).map((_, i) => (
                 <Skeleton key={i} className="h-12 w-full" />
@@ -323,7 +338,9 @@ export default function RLHFDashboardPage() {
               <CardTitle className="text-lg">Recent FWA Feedback Events</CardTitle>
             </CardHeader>
             <CardContent>
-              {fwaLoading ? (
+              {fwaError ? (
+                <QueryErrorState error={fwaError} onRetry={() => refetchFwa()} title="Failed to load FWA feedback" />
+              ) : fwaLoading ? (
                 <div className="space-y-2">
                   {Array.from({ length: 3 }).map((_, i) => (
                     <Skeleton key={i} className="h-12 w-full" />
@@ -389,7 +406,9 @@ export default function RLHFDashboardPage() {
               <CardTitle className="text-lg">Recent Claims Feedback Events</CardTitle>
             </CardHeader>
             <CardContent>
-              {claimsLoading ? (
+              {claimsError ? (
+                <QueryErrorState error={claimsError} onRetry={() => refetchClaims()} title="Failed to load claims feedback" />
+              ) : claimsLoading ? (
                 <div className="space-y-2">
                   {Array.from({ length: 3 }).map((_, i) => (
                     <Skeleton key={i} className="h-12 w-full" />

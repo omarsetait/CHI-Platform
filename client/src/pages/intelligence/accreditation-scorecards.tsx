@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Award, Users, TrendingUp, TrendingDown, Minus, AlertTriangle, CheckCircle2, ShieldAlert,
 } from "lucide-react";
@@ -96,7 +97,7 @@ export default function AccreditationScorecardsPage() {
           <CardContent className="pt-0">
             <div className="text-3xl font-bold flex items-center gap-2">
               <Users className="h-6 w-6 text-blue-500" />
-              {data?.summary.totalProviders ?? "..."}
+              {data ? data.summary.totalProviders : <Skeleton className="h-8 w-24 inline-block" />}
             </div>
             <p className="text-xs text-muted-foreground mt-1">Monitored facilities</p>
           </CardContent>
@@ -109,7 +110,7 @@ export default function AccreditationScorecardsPage() {
           <CardContent className="pt-0">
             <div className="text-3xl font-bold flex items-center gap-2">
               <CheckCircle2 className="h-6 w-6 text-emerald-500" />
-              {data?.summary.avgScore?.toFixed(1) ?? "..."}%
+              {data ? `${data.summary.avgScore?.toFixed(1)}%` : <Skeleton className="h-8 w-24 inline-block" />}
             </div>
             <p className="text-xs text-muted-foreground mt-1">Across all providers</p>
           </CardContent>
@@ -122,7 +123,7 @@ export default function AccreditationScorecardsPage() {
           <CardContent className="pt-0">
             <div className="text-3xl font-bold flex items-center gap-2">
               <TrendingUp className="h-6 w-6 text-violet-500" />
-              {data?.summary.drgReadyCount ?? "..."}
+              {data ? data.summary.drgReadyCount : <Skeleton className="h-8 w-24 inline-block" />}
             </div>
             <p className="text-xs text-muted-foreground mt-1">Providers meeting DRG criteria</p>
           </CardContent>
@@ -135,7 +136,7 @@ export default function AccreditationScorecardsPage() {
           <CardContent className="pt-0">
             <div className="text-3xl font-bold flex items-center gap-2">
               <ShieldAlert className="h-6 w-6 text-rose-500" />
-              {data?.summary.highRiskCount ?? "..."}
+              {data ? data.summary.highRiskCount : <Skeleton className="h-8 w-24 inline-block" />}
             </div>
             <p className="text-xs text-muted-foreground mt-1">Providers requiring intervention</p>
           </CardContent>

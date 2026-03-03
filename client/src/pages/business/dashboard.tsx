@@ -1,9 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
+import { MetricCard } from "@/components/metric-card";
+import { METRIC_GRID_5 } from "@/lib/grid";
 import {
   Building2, ShieldCheck, Landmark, GitMerge, Users, PiggyBank,
-  ArrowRight, TrendingUp, TrendingDown, AlertTriangle,
+  ArrowRight, AlertTriangle,
 } from "lucide-react";
 import { Link } from "wouter";
 
@@ -38,23 +41,23 @@ const quickLinks = [
 ];
 
 export default function BusinessDashboard() {
-  const { data: compliance } = useQuery<ComplianceData>({
+  const { data: compliance, isLoading: complianceLoading } = useQuery<ComplianceData>({
     queryKey: ["/api/business/employer-compliance"],
   });
 
-  const { data: insurerHealth } = useQuery<InsurerHealthData>({
+  const { data: insurerHealth, isLoading: insurerLoading } = useQuery<InsurerHealthData>({
     queryKey: ["/api/business/insurer-health"],
   });
 
-  const { data: concentration } = useQuery<ConcentrationData>({
+  const { data: concentration, isLoading: concentrationLoading } = useQuery<ConcentrationData>({
     queryKey: ["/api/business/market-concentration"],
   });
 
-  const { data: coverage } = useQuery<CoverageData>({
+  const { data: coverage, isLoading: coverageLoading } = useQuery<CoverageData>({
     queryKey: ["/api/business/coverage-expansion"],
   });
 
-  const { data: cost } = useQuery<CostData>({
+  const { data: cost, isLoading: costLoading } = useQuery<CostData>({
     queryKey: ["/api/business/cost-containment"],
   });
 
@@ -79,69 +82,42 @@ export default function BusinessDashboard() {
       </div>
 
       {/* Summary Metrics */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-        <Card className="border-l-4 border-l-emerald-500 shadow-sm hover:shadow-md transition-shadow">
-          <CardHeader className="py-3 pb-1">
-            <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Compliance Rate</CardTitle>
-          </CardHeader>
-          <CardContent className="pt-0">
-            <div className="text-2xl font-bold">{compliance?.summary.complianceRate ?? "..."}%</div>
-            <p className="text-xs text-emerald-600 flex items-center mt-1">
-              <TrendingUp className="h-3 w-3 mr-1" /> {(compliance?.summary.totalEmployers ?? 0).toLocaleString()} employers tracked
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card className="border-l-4 border-l-blue-500 shadow-sm hover:shadow-md transition-shadow">
-          <CardHeader className="py-3 pb-1">
-            <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Avg Loss Ratio</CardTitle>
-          </CardHeader>
-          <CardContent className="pt-0">
-            <div className="text-2xl font-bold">{avgLossRatio ?? "..."}%</div>
-            <p className="text-xs text-muted-foreground mt-1">
-              Across {insurerHealth?.insurers.length ?? "--"} insurers
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card className="border-l-4 border-l-violet-500 shadow-sm hover:shadow-md transition-shadow">
-          <CardHeader className="py-3 pb-1">
-            <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wide">HHI Index</CardTitle>
-          </CardHeader>
-          <CardContent className="pt-0">
-            <div className="text-2xl font-bold">{concentration?.herfindahlIndex ?? "..."}</div>
-            <p className="text-xs text-amber-600 flex items-center mt-1">
-              <AlertTriangle className="h-3 w-3 mr-1" /> Moderately concentrated
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card className="border-l-4 border-l-amber-500 shadow-sm hover:shadow-md transition-shadow">
-          <CardHeader className="py-3 pb-1">
-            <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Coverage Progress</CardTitle>
-          </CardHeader>
-          <CardContent className="pt-0">
-            <div className="text-2xl font-bold">
-              {coverage ? `${(coverage.current.covered / 1000000).toFixed(1)}M` : "..."}
-              <span className="text-sm font-normal text-muted-foreground"> / 25M</span>
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">
-              {coverage?.current.progress ?? "--"}% toward Vision 2030
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card className="border-l-4 border-l-rose-500 shadow-sm hover:shadow-md transition-shadow">
-          <CardHeader className="py-3 pb-1">
-            <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Admin Cost Ratio</CardTitle>
-          </CardHeader>
-          <CardContent className="pt-0">
-            <div className="text-2xl font-bold">{cost?.adminCostRatio ?? "..."}%</div>
-            <p className="text-xs text-rose-500 flex items-center mt-1">
-              <TrendingDown className="h-3 w-3 mr-1" /> OECD benchmark: {cost?.oecdBenchmark ?? "--"}%
-            </p>
-          </CardContent>
-        </Card>
+      <div className={METRIC_GRID_5}>
+        <MetricCard
+          title="Compliance Rate"
+          value={`${compliance?.summary.complianceRate}%`}
+          subtitle={`${(compliance?.summary.totalEmployers ?? 0).toLocaleString()} employers tracked`}
+          icon={ShieldCheck}
+          loading={complianceLoading}
+        />
+        <MetricCard
+          title="Avg Loss Ratio"
+          value={`${avgLossRatio}%`}
+          subtitle={`Across ${insurerHealth?.insurers.length ?? 0} insurers`}
+          icon={Landmark}
+          loading={insurerLoading}
+        />
+        <MetricCard
+          title="HHI Index"
+          value={`${concentration?.herfindahlIndex}`}
+          subtitle="Moderately concentrated"
+          icon={GitMerge}
+          loading={concentrationLoading}
+        />
+        <MetricCard
+          title="Coverage Progress"
+          value={coverage ? `${(coverage.current.covered / 1000000).toFixed(1)}M / 25M` : ""}
+          subtitle={`${coverage?.current.progress ?? 0}% toward Vision 2030`}
+          icon={Users}
+          loading={coverageLoading}
+        />
+        <MetricCard
+          title="Admin Cost Ratio"
+          value={`${cost?.adminCostRatio}%`}
+          subtitle={`OECD benchmark: ${cost?.oecdBenchmark ?? 0}%`}
+          icon={PiggyBank}
+          loading={costLoading}
+        />
       </div>
 
       {/* Quick Links */}
@@ -179,19 +155,19 @@ export default function BusinessDashboard() {
               <div className="flex items-center justify-between p-3 rounded-lg bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800">
                 <span className="text-sm font-medium">Compliant Employers</span>
                 <span className="text-lg font-bold text-emerald-600">
-                  {compliance ? (compliance.summary.totalEmployers - compliance.summary.violated).toLocaleString() : "..."}
+                  {compliance ? (compliance.summary.totalEmployers - compliance.summary.violated).toLocaleString() : <Skeleton className="h-5 w-16 inline-block" />}
                 </span>
               </div>
               <div className="flex items-center justify-between p-3 rounded-lg bg-rose-50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-800">
                 <span className="text-sm font-medium">Violated</span>
                 <span className="text-lg font-bold text-rose-600">
-                  {compliance?.summary.violated?.toLocaleString() ?? "..."}
+                  {compliance ? compliance.summary.violated?.toLocaleString() : <Skeleton className="h-5 w-16 inline-block" />}
                 </span>
               </div>
               <div className="flex items-center justify-between p-3 rounded-lg bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800">
                 <span className="text-sm font-medium">Fines Collected YTD</span>
                 <span className="text-lg font-bold text-amber-600">
-                  {compliance ? `${(compliance.summary.totalFinesYTD / 1000000).toFixed(1)}M SAR` : "..."}
+                  {compliance ? `${(compliance.summary.totalFinesYTD / 1000000).toFixed(1)}M SAR` : <Skeleton className="h-5 w-16 inline-block" />}
                 </span>
               </div>
             </div>

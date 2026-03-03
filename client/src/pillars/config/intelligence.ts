@@ -20,7 +20,7 @@ export const intelligencePillarConfig: PillarConfig = {
       items: [
         { label: "Provider Profile", href: "/intelligence/my-hospital", icon: User },
         { label: "Rejection Analysis", href: "/intelligence/my-hospital/rejections", icon: AlertCircle },
-        { label: "DRG Readiness", href: "/intelligence/my-hospital/drg", icon: Activity },
+        { label: "DRG Assessment", href: "/intelligence/my-hospital/drg", icon: Activity },
       ],
     },
     {

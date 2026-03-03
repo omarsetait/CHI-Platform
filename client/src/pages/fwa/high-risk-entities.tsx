@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { motion } from "framer-motion";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -43,35 +44,9 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
-
-function getRiskLevelBadgeClasses(level: string | null) {
-  switch (level) {
-    case "critical":
-      return "bg-red-100 text-red-700 border-red-200 dark:bg-red-900/30 dark:text-red-400 dark:border-red-800";
-    case "high":
-      return "bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-900/30 dark:text-orange-400 dark:border-orange-800";
-    case "medium":
-      return "bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:border-amber-800";
-    case "low":
-      return "bg-green-100 text-green-700 border-green-200 dark:bg-green-900/30 dark:text-green-400 dark:border-green-800";
-    default:
-      return "bg-gray-100 text-gray-700 border-gray-200 dark:bg-gray-900/30 dark:text-gray-400 dark:border-gray-800";
-  }
-}
-
-function formatCurrency(amount: number | string | null | undefined): string {
-  if (amount === null || amount === undefined) return "SAR 0";
-  const numAmount = typeof amount === "string" ? parseFloat(amount) : amount;
-  return `SAR ${Number(numAmount).toLocaleString()}`;
-}
-
-/** Returns the color for a risk score gauge */
-function getRiskScoreColor(score: number): string {
-  if (score >= 85) return "#ef4444"; // red
-  if (score >= 70) return "#f97316"; // orange
-  if (score >= 50) return "#eab308"; // yellow
-  return "#22c55e"; // green
-}
+import { formatCurrency } from "@/lib/format";
+import { getRiskLevelBadgeClasses, getRiskScoreColor } from "@/lib/risk-utils";
+import { METRIC_GRID } from "@/lib/grid";
 
 /** Risk Score Gauge - a linear gauge with color coding */
 function RiskScoreGauge({ score }: { score: number }) {
@@ -229,8 +204,8 @@ function ProviderDrillDown({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="sm:max-w-lg w-full overflow-y-auto">
-        <SheetHeader>
+      <SheetContent side="right" className="sm:max-w-lg w-full overflow-y-auto bg-white/80 dark:bg-slate-950/80 backdrop-blur-2xl border-l border-white/20 dark:border-white/10 shadow-2xl">
+        <SheetHeader className="pb-4 border-b border-white/20 dark:border-white/10">
           <SheetTitle className="text-lg">{provider.providerName}</SheetTitle>
           <SheetDescription className="space-y-1">
             {provider.organization && (
@@ -366,20 +341,20 @@ function FilterBar({
   onRiskTierChange: (value: string) => void;
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-3">
+    <div className="flex flex-wrap items-center gap-3 p-4 bg-white/40 dark:bg-slate-950/40 backdrop-blur-xl border border-white/20 dark:border-white/10 rounded-xl shadow-sm mb-6">
       <div className="relative flex-1 min-w-[200px]">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
         <Input
           placeholder={searchPlaceholder}
           value={search}
           onChange={(e) => onSearchChange(e.target.value)}
-          className="pl-9"
+          className="pl-9 bg-white/50 dark:bg-slate-900/50 border-white/20 dark:border-white/10 focus-visible:ring-violet-500 transition-all rounded-lg"
           data-testid={searchTestId}
         />
       </div>
 
       <Select value={regionFilter} onValueChange={onRegionChange}>
-        <SelectTrigger className="w-[160px]" data-testid="filter-region">
+        <SelectTrigger className="w-[160px] bg-white/50 dark:bg-slate-900/50 border-white/20 dark:border-white/10 rounded-lg" data-testid="filter-region">
           <SelectValue placeholder="Region" />
         </SelectTrigger>
         <SelectContent>
@@ -393,7 +368,7 @@ function FilterBar({
       </Select>
 
       <Select value={specialtyFilter} onValueChange={onSpecialtyChange}>
-        <SelectTrigger className="w-[160px]" data-testid="filter-specialty">
+        <SelectTrigger className="w-[160px] bg-white/50 dark:bg-slate-900/50 border-white/20 dark:border-white/10 rounded-lg" data-testid="filter-specialty">
           <SelectValue placeholder="Specialty" />
         </SelectTrigger>
         <SelectContent>
@@ -405,7 +380,7 @@ function FilterBar({
       </Select>
 
       <Select value={riskTierFilter} onValueChange={onRiskTierChange}>
-        <SelectTrigger className="w-[140px]" data-testid="filter-risk-tier">
+        <SelectTrigger className="w-[140px] bg-white/50 dark:bg-slate-900/50 border-white/20 dark:border-white/10 rounded-lg" data-testid="filter-risk-tier">
           <SelectValue placeholder="Risk Tier" />
         </SelectTrigger>
         <SelectContent>
@@ -479,48 +454,35 @@ function ProvidersTab() {
   };
 
   if (isLoading) {
-    return <div className="space-y-4">{[1,2,3].map(i => <Skeleton key={i} className="h-16 w-full" />)}</div>;
+    return <div className="space-y-4">{[1, 2, 3].map(i => <Skeleton key={i} className="h-16 w-full" />)}</div>;
   }
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card>
-          <CardContent className="pt-4">
-            <div className="flex items-center gap-2">
-              <Building2 className="h-4 w-4 text-muted-foreground" />
-              <span className="text-sm text-muted-foreground">Total Providers</span>
-            </div>
-            <p className="text-2xl font-bold mt-1">{stats.total}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4">
-            <div className="flex items-center gap-2">
-              <AlertTriangle className="h-4 w-4 text-red-500" />
-              <span className="text-sm text-muted-foreground">Critical Risk</span>
-            </div>
-            <p className="text-2xl font-bold mt-1 text-red-600">{stats.critical}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4">
-            <div className="flex items-center gap-2">
-              <TrendingUp className="h-4 w-4 text-orange-500" />
-              <span className="text-sm text-muted-foreground">High Risk</span>
-            </div>
-            <p className="text-2xl font-bold mt-1 text-orange-600">{stats.high}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4">
-            <div className="flex items-center gap-2">
-              <DollarSign className="h-4 w-4 text-muted-foreground" />
-              <span className="text-sm text-muted-foreground">Total Exposure</span>
-            </div>
-            <p className="text-2xl font-bold mt-1">{formatCurrency(stats.totalExposure)}</p>
-          </CardContent>
-        </Card>
+      <div className={METRIC_GRID}>
+        {[
+          { title: "Total Providers", value: stats.total, icon: Building2, color: "text-muted-foreground", delay: 0 },
+          { title: "Critical Risk", value: stats.critical, icon: AlertTriangle, color: "text-red-600", delay: 0.1 },
+          { title: "High Risk", value: stats.high, icon: TrendingUp, color: "text-orange-600", delay: 0.2 },
+          { title: "Total Exposure", value: formatCurrency(stats.totalExposure), icon: DollarSign, color: "text-muted-foreground", delay: 0.3 }
+        ].map((stat, i) => (
+          <motion.div
+            key={stat.title}
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: stat.delay, duration: 0.4 }}
+          >
+            <Card className="bg-white/40 dark:bg-slate-950/40 backdrop-blur-xl border-white/20 dark:border-white/10 shadow-lg hover:shadow-xl transition-all duration-300">
+              <CardContent className="pt-4">
+                <div className="flex items-center gap-2">
+                  <stat.icon className={`h-4 w-4 ${stat.color !== "text-muted-foreground" ? stat.color.replace('text-', 'text-').replace('-600', '-500') : 'text-muted-foreground'}`} />
+                  <span className="text-sm font-medium text-muted-foreground">{stat.title}</span>
+                </div>
+                <p className={`text-2xl font-bold mt-2 ${stat.color}`}>{stat.value}</p>
+              </CardContent>
+            </Card>
+          </motion.div>
+        ))}
       </div>
 
       <FilterBar
@@ -537,7 +499,7 @@ function ProvidersTab() {
         onRiskTierChange={setRiskTierFilter}
       />
 
-      <Card>
+      <Card className="bg-white/40 dark:bg-slate-950/40 backdrop-blur-xl border-white/20 dark:border-white/10 shadow-lg">
         <ScrollArea className="h-[400px]">
           <Table>
             <TableHeader>
@@ -672,48 +634,35 @@ function PatientsTab() {
   };
 
   if (isLoading) {
-    return <div className="space-y-4">{[1,2,3].map(i => <Skeleton key={i} className="h-16 w-full" />)}</div>;
+    return <div className="space-y-4">{[1, 2, 3].map(i => <Skeleton key={i} className="h-16 w-full" />)}</div>;
   }
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card>
-          <CardContent className="pt-4">
-            <div className="flex items-center gap-2">
-              <User className="h-4 w-4 text-muted-foreground" />
-              <span className="text-sm text-muted-foreground">Total Patients</span>
-            </div>
-            <p className="text-2xl font-bold mt-1">{stats.total}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4">
-            <div className="flex items-center gap-2">
-              <AlertTriangle className="h-4 w-4 text-red-500" />
-              <span className="text-sm text-muted-foreground">Critical Risk</span>
-            </div>
-            <p className="text-2xl font-bold mt-1 text-red-600">{stats.critical}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4">
-            <div className="flex items-center gap-2">
-              <TrendingUp className="h-4 w-4 text-orange-500" />
-              <span className="text-sm text-muted-foreground">High Risk</span>
-            </div>
-            <p className="text-2xl font-bold mt-1 text-orange-600">{stats.high}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4">
-            <div className="flex items-center gap-2">
-              <DollarSign className="h-4 w-4 text-muted-foreground" />
-              <span className="text-sm text-muted-foreground">Total Claims</span>
-            </div>
-            <p className="text-2xl font-bold mt-1">{formatCurrency(stats.totalAmount)}</p>
-          </CardContent>
-        </Card>
+      <div className={METRIC_GRID}>
+        {[
+          { title: "Total Patients", value: stats.total, icon: User, color: "text-muted-foreground", delay: 0 },
+          { title: "Critical Risk", value: stats.critical, icon: AlertTriangle, color: "text-red-600", delay: 0.1 },
+          { title: "High Risk", value: stats.high, icon: TrendingUp, color: "text-orange-600", delay: 0.2 },
+          { title: "Total Claims", value: formatCurrency(stats.totalAmount), icon: DollarSign, color: "text-muted-foreground", delay: 0.3 }
+        ].map((stat, i) => (
+          <motion.div
+            key={stat.title}
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: stat.delay, duration: 0.4 }}
+          >
+            <Card className="bg-white/40 dark:bg-slate-950/40 backdrop-blur-xl border-white/20 dark:border-white/10 shadow-lg hover:shadow-xl transition-all duration-300">
+              <CardContent className="pt-4">
+                <div className="flex items-center gap-2">
+                  <stat.icon className={`h-4 w-4 ${stat.color !== "text-muted-foreground" ? stat.color.replace('text-', 'text-').replace('-600', '-500') : 'text-muted-foreground'}`} />
+                  <span className="text-sm font-medium text-muted-foreground">{stat.title}</span>
+                </div>
+                <p className={`text-2xl font-bold mt-2 ${stat.color}`}>{stat.value}</p>
+              </CardContent>
+            </Card>
+          </motion.div>
+        ))}
       </div>
 
       <FilterBar
@@ -730,7 +679,7 @@ function PatientsTab() {
         onRiskTierChange={setRiskTierFilter}
       />
 
-      <Card>
+      <Card className="bg-white/40 dark:bg-slate-950/40 backdrop-blur-xl border-white/20 dark:border-white/10 shadow-lg">
         <ScrollArea className="h-[400px]">
           <Table>
             <TableHeader>
@@ -839,48 +788,35 @@ function DoctorsTab() {
   };
 
   if (isLoading) {
-    return <div className="space-y-4">{[1,2,3].map(i => <Skeleton key={i} className="h-16 w-full" />)}</div>;
+    return <div className="space-y-4">{[1, 2, 3].map(i => <Skeleton key={i} className="h-16 w-full" />)}</div>;
   }
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card>
-          <CardContent className="pt-4">
-            <div className="flex items-center gap-2">
-              <UserCog className="h-4 w-4 text-muted-foreground" />
-              <span className="text-sm text-muted-foreground">Total Doctors</span>
-            </div>
-            <p className="text-2xl font-bold mt-1">{stats.total}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4">
-            <div className="flex items-center gap-2">
-              <AlertTriangle className="h-4 w-4 text-red-500" />
-              <span className="text-sm text-muted-foreground">Critical Risk</span>
-            </div>
-            <p className="text-2xl font-bold mt-1 text-red-600">{stats.critical}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4">
-            <div className="flex items-center gap-2">
-              <TrendingUp className="h-4 w-4 text-orange-500" />
-              <span className="text-sm text-muted-foreground">High Risk</span>
-            </div>
-            <p className="text-2xl font-bold mt-1 text-orange-600">{stats.high}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4">
-            <div className="flex items-center gap-2">
-              <DollarSign className="h-4 w-4 text-muted-foreground" />
-              <span className="text-sm text-muted-foreground">Total Exposure</span>
-            </div>
-            <p className="text-2xl font-bold mt-1">{formatCurrency(stats.totalExposure)}</p>
-          </CardContent>
-        </Card>
+      <div className={METRIC_GRID}>
+        {[
+          { title: "Total Doctors", value: stats.total, icon: UserCog, color: "text-muted-foreground", delay: 0 },
+          { title: "Critical Risk", value: stats.critical, icon: AlertTriangle, color: "text-red-600", delay: 0.1 },
+          { title: "High Risk", value: stats.high, icon: TrendingUp, color: "text-orange-600", delay: 0.2 },
+          { title: "Total Exposure", value: formatCurrency(stats.totalExposure), icon: DollarSign, color: "text-muted-foreground", delay: 0.3 }
+        ].map((stat, i) => (
+          <motion.div
+            key={stat.title}
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: stat.delay, duration: 0.4 }}
+          >
+            <Card className="bg-white/40 dark:bg-slate-950/40 backdrop-blur-xl border-white/20 dark:border-white/10 shadow-lg hover:shadow-xl transition-all duration-300">
+              <CardContent className="pt-4">
+                <div className="flex items-center gap-2">
+                  <stat.icon className={`h-4 w-4 ${stat.color !== "text-muted-foreground" ? stat.color.replace('text-', 'text-').replace('-600', '-500') : 'text-muted-foreground'}`} />
+                  <span className="text-sm font-medium text-muted-foreground">{stat.title}</span>
+                </div>
+                <p className={`text-2xl font-bold mt-2 ${stat.color}`}>{stat.value}</p>
+              </CardContent>
+            </Card>
+          </motion.div>
+        ))}
       </div>
 
       <FilterBar
@@ -897,7 +833,7 @@ function DoctorsTab() {
         onRiskTierChange={setRiskTierFilter}
       />
 
-      <Card>
+      <Card className="bg-white/40 dark:bg-slate-950/40 backdrop-blur-xl border-white/20 dark:border-white/10 shadow-lg mt-6">
         <ScrollArea className="h-[400px]">
           <Table>
             <TableHeader>

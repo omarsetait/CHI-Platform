@@ -1309,10 +1309,153 @@ export async function seedDatabaseWithDemoData(): Promise<void> {
     console.log("[Seeder] Seeding KPI Definitions (25 best-practice KPIs)...");
     await seedKpiDefinitions();
     console.log("[Seeder] KPI Definitions seeding complete");
-    
+
+    // Seed Pre-Auth demo claims if empty
+    await seedPreAuthDemoData();
+
     console.log("[Seeder] All background seeding complete");
   } catch (error) {
     console.error("[Seeder] Critical error during background seeding:", error);
+  }
+}
+
+async function seedPreAuthDemoData(): Promise<void> {
+  try {
+    const { db } = await import("../db");
+    const { preAuthClaims } = await import("@shared/schema");
+    const { count } = await import("drizzle-orm");
+
+    const result = await db.select({ count: count() }).from(preAuthClaims);
+    if (Number(result[0]?.count || 0) > 0) {
+      console.log("[Seeder] Pre-Auth claims already seeded, skipping");
+      return;
+    }
+
+    console.log("[Seeder] Seeding Pre-Auth demo claims...");
+    const demoClaims = [
+      {
+        claimId: "PA-2026-0001",
+        payerId: "BUPA-001",
+        memberId: "MBR-5001",
+        memberDob: "1985-03-15",
+        memberGender: "Male",
+        policyPlanId: "BUPA-GOLD-2026",
+        providerId: "PRV-001",
+        specialty: "Orthopedic Surgery",
+        networkStatus: "in_network",
+        encounterType: "inpatient",
+        totalAmount: "45000.00",
+        diagnoses: [
+          { code_system: "ICD-10", code: "M54.5", desc: "Low back pain", type: "principal" },
+          { code_system: "ICD-10", code: "M51.16", desc: "Intervertebral disc degeneration, lumbar region" },
+        ],
+        lineItems: [
+          { line_id: "L1", code_type: "CPT", code: "63030", desc: "Lumbar laminotomy", units: 1, net_amount: 35000 },
+          { line_id: "L2", code_type: "CPT", code: "22612", desc: "Arthrodesis, lumbar", units: 1, net_amount: 10000 },
+        ],
+        status: "pending_review" as const,
+        priority: "HIGH" as const,
+        processingPhase: 3,
+      },
+      {
+        claimId: "PA-2026-0002",
+        payerId: "TAWUNIYA-001",
+        memberId: "MBR-5002",
+        memberDob: "1990-07-22",
+        memberGender: "Female",
+        policyPlanId: "TAW-SILVER-2026",
+        providerId: "PRV-013",
+        specialty: "General Surgery",
+        networkStatus: "in_network",
+        encounterType: "inpatient",
+        totalAmount: "28000.00",
+        diagnoses: [
+          { code_system: "ICD-10", code: "K80.20", desc: "Calculus of gallbladder without obstruction", type: "principal" },
+        ],
+        lineItems: [
+          { line_id: "L1", code_type: "CPT", code: "47562", desc: "Laparoscopic cholecystectomy", units: 1, net_amount: 28000 },
+        ],
+        status: "approved" as const,
+        priority: "NORMAL" as const,
+        processingPhase: 5,
+      },
+      {
+        claimId: "PA-2026-0003",
+        payerId: "MEDGULF-001",
+        memberId: "MBR-5003",
+        memberDob: "1972-11-08",
+        memberGender: "Male",
+        policyPlanId: "MED-PLATINUM-2026",
+        providerId: "PRV-004",
+        specialty: "Cardiology",
+        networkStatus: "in_network",
+        encounterType: "inpatient",
+        totalAmount: "120000.00",
+        diagnoses: [
+          { code_system: "ICD-10", code: "I25.10", desc: "Atherosclerotic heart disease of native coronary artery", type: "principal" },
+          { code_system: "ICD-10", code: "I10", desc: "Essential hypertension" },
+        ],
+        lineItems: [
+          { line_id: "L1", code_type: "CPT", code: "93458", desc: "Left heart catheterization", units: 1, net_amount: 40000 },
+          { line_id: "L2", code_type: "CPT", code: "92928", desc: "Percutaneous coronary stent placement", units: 2, net_amount: 80000 },
+        ],
+        status: "pending_review" as const,
+        priority: "HIGH" as const,
+        processingPhase: 2,
+      },
+      {
+        claimId: "PA-2026-0004",
+        payerId: "BUPA-001",
+        memberId: "MBR-5004",
+        memberDob: "1968-05-30",
+        memberGender: "Female",
+        policyPlanId: "BUPA-GOLD-2026",
+        providerId: "PRV-014",
+        specialty: "Oncology",
+        networkStatus: "in_network",
+        encounterType: "inpatient",
+        totalAmount: "85000.00",
+        diagnoses: [
+          { code_system: "ICD-10", code: "C50.911", desc: "Malignant neoplasm of unspecified site of right female breast", type: "principal" },
+        ],
+        lineItems: [
+          { line_id: "L1", code_type: "CPT", code: "19301", desc: "Mastectomy, partial", units: 1, net_amount: 55000 },
+          { line_id: "L2", code_type: "CPT", code: "38525", desc: "Biopsy or excision of lymph nodes", units: 1, net_amount: 30000 },
+        ],
+        status: "rejected" as const,
+        priority: "HIGH" as const,
+        processingPhase: 5,
+      },
+      {
+        claimId: "PA-2026-0005",
+        payerId: "TAWUNIYA-001",
+        memberId: "MBR-5005",
+        memberDob: "1995-01-12",
+        memberGender: "Male",
+        policyPlanId: "TAW-GOLD-2026",
+        providerId: "PRV-021",
+        specialty: "Orthopedic Surgery",
+        networkStatus: "in_network",
+        encounterType: "emergency",
+        totalAmount: "55000.00",
+        diagnoses: [
+          { code_system: "ICD-10", code: "S72.001A", desc: "Fracture of unspecified part of neck of right femur", type: "principal" },
+        ],
+        lineItems: [
+          { line_id: "L1", code_type: "CPT", code: "27236", desc: "Open treatment of femoral fracture", units: 1, net_amount: 55000 },
+        ],
+        status: "approved" as const,
+        priority: "NORMAL" as const,
+        processingPhase: 5,
+      },
+    ];
+
+    for (const claim of demoClaims) {
+      await db.insert(preAuthClaims).values(claim).onConflictDoNothing();
+    }
+    console.log(`[Seeder] Inserted ${demoClaims.length} Pre-Auth demo claims`);
+  } catch (error) {
+    console.error("[Seeder] Error seeding Pre-Auth claims:", error);
   }
 }
 

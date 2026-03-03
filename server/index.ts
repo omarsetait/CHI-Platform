@@ -8,6 +8,7 @@ import { seedDatabaseWithDemoData } from "./services/demo-data-seeder";
 import { createDatabaseIndexes } from "./db-indexes";
 import { createDatabaseConstraints } from "./db-constraints";
 import { closePool } from "./db";
+import { knowledgeUploadQueueService } from "./services/knowledge-upload-queue-service";
 
 const app = express();
 
@@ -17,9 +18,9 @@ app.use(helmet({
     directives: {
       defaultSrc: ["'self'"],
       scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"], // Needed for Vite in development
-      styleSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
       imgSrc: ["'self'", "data:", "blob:"],
-      fontSrc: ["'self'"],
+      fontSrc: ["'self'", "https://fonts.gstatic.com"],
       connectSrc: ["'self'", "ws:", "wss:"], // WebSocket for HMR
     },
   },
@@ -40,7 +41,7 @@ app.use(cors(corsOptions));
 // Rate limiting - protect against brute force and DoS attacks
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per windowMs
+  max: process.env.NODE_ENV === 'production' ? 300 : 1000,
   message: { error: 'Too many requests, please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
@@ -134,6 +135,7 @@ app.use((req, res, next) => {
   }
 
   const server = await registerRoutes(app);
+  knowledgeUploadQueueService.start();
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
@@ -167,6 +169,7 @@ app.use((req, res, next) => {
   // Graceful shutdown handlers
   const gracefulShutdown = async (signal: string) => {
     log(`Received ${signal}. Starting graceful shutdown...`);
+    knowledgeUploadQueueService.stop();
     
     server.close(async () => {
       log('HTTP server closed');

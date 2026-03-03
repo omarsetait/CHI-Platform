@@ -1,6 +1,8 @@
+import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import { InlineLoader } from "@/components/ui/loading";
 import {
   Users,
   Building,
@@ -16,95 +18,119 @@ import {
   Network,
   CheckCircle,
   Clock,
+  Bot,
+  type LucideIcon,
 } from "lucide-react";
 
-const patientHistoryAgents = [
-  {
-    name: "Lab Results Agent",
+// ---- Types for the API response ----
+interface AgentMetricRow {
+  id: string;
+  agentId: string;
+  agentName: string;
+  module: string;
+  totalRecommendations: number | null;
+  acceptedRecommendations: number | null;
+  overriddenRecommendations: number | null;
+  escalatedRecommendations: number | null;
+  acceptanceRate: string | null;
+  confidenceAccuracy: string | null;
+  avgRewardScore: string | null;
+  lastUpdated: string | null;
+}
+
+// ---- Mapped UI shape ----
+interface AgentDisplay {
+  name: string;
+  icon: LucideIcon;
+  description: string;
+  status: "active" | "idle";
+  processed: number;
+  accuracy: number;
+}
+
+// ---- Static metadata lookup (icons + descriptions not stored in DB) ----
+const agentMeta: Record<string, { icon: LucideIcon; description: string }> = {
+  "Lab Results Agent": {
     icon: FlaskConical,
-    description: "Validates current claims against historical lab values. Checks result consistency, timeline logic, duplicate testing.",
-    status: "active",
-    processed: 1247,
-    accuracy: 96,
+    description:
+      "Validates current claims against historical lab values. Checks result consistency, timeline logic, duplicate testing.",
   },
-  {
-    name: "Pre-existing Conditions Agent",
+  "Pre-existing Conditions Agent": {
     icon: HeartPulse,
-    description: "Validates declared vs. undeclared conditions. Checks condition conflicts, progression logic.",
-    status: "active",
-    processed: 892,
-    accuracy: 94,
+    description:
+      "Validates declared vs. undeclared conditions. Checks condition conflicts, progression logic.",
   },
-  {
-    name: "Family History Agent",
+  "Family History Agent": {
     icon: Users2,
-    description: "Validates genetic risk declarations. Checks undisclosed hereditary conditions.",
-    status: "active",
-    processed: 456,
-    accuracy: 91,
+    description:
+      "Validates genetic risk declarations. Checks undisclosed hereditary conditions.",
   },
-  {
-    name: "Claims History Agent",
+  "Claims History Agent": {
     icon: FileText,
-    description: "Validates service patterns, utilization trends. Checks duplicate services, frequency anomalies.",
-    status: "active",
-    processed: 2341,
-    accuracy: 97,
+    description:
+      "Validates service patterns, utilization trends. Checks duplicate services, frequency anomalies.",
   },
-  {
-    name: "Declarations Agent",
+  "Declarations Agent": {
     icon: FileCheck,
-    description: "Validates consistency with medical documentation. Checks statement conflicts, omission detection.",
-    status: "active",
-    processed: 678,
-    accuracy: 93,
+    description:
+      "Validates consistency with medical documentation. Checks statement conflicts, omission detection.",
   },
-  {
-    name: "Medication History Agent",
+  "Medication History Agent": {
     icon: Pill,
-    description: "Validates medication interactions, compliance. Checks conflicting prescriptions, diagnosis alignment.",
-    status: "active",
-    processed: 1123,
-    accuracy: 95,
+    description:
+      "Validates medication interactions, compliance. Checks conflicting prescriptions, diagnosis alignment.",
   },
-];
-
-const providerHistoryAgents = [
-  {
-    name: "Claims Pattern Agent",
+  "Claims Pattern Agent": {
     icon: TrendingUp,
-    description: "Validates historical billing patterns. Checks anomalous billing, code frequency shifts.",
-    status: "active",
-    processed: 3456,
-    accuracy: 98,
+    description:
+      "Validates historical billing patterns. Checks anomalous billing, code frequency shifts.",
   },
-  {
-    name: "Credentials Agent",
+  "Credentials Agent": {
     icon: Award,
-    description: "Validates scope of practice. Checks unauthorized procedures, specialty mismatches.",
-    status: "active",
-    processed: 234,
-    accuracy: 99,
+    description:
+      "Validates scope of practice. Checks unauthorized procedures, specialty mismatches.",
   },
-  {
-    name: "Quality Metrics Agent",
+  "Quality Metrics Agent": {
     icon: BarChart3,
-    description: "Validates historical quality scores. Checks pattern deviations, quality degradation.",
-    status: "active",
-    processed: 567,
-    accuracy: 92,
+    description:
+      "Validates historical quality scores. Checks pattern deviations, quality degradation.",
   },
-  {
-    name: "Network Agent",
+  "Network Agent": {
     icon: Network,
-    description: "Validates referral patterns, affiliations. Checks collusion indicators, suspicious networks.",
-    status: "active",
-    processed: 189,
-    accuracy: 94,
+    description:
+      "Validates referral patterns, affiliations. Checks collusion indicators, suspicious networks.",
   },
-];
+};
 
-function AgentCard({ agent }: { agent: typeof patientHistoryAgents[0] }) {
+const defaultMeta = {
+  icon: Bot,
+  description: "Specialized history analysis agent.",
+};
+
+// ---- Map a DB row to UI display shape ----
+function toAgentDisplay(row: AgentMetricRow): AgentDisplay {
+  const meta = agentMeta[row.agentName] ?? defaultMeta;
+  const accuracy = row.acceptanceRate
+    ? Math.round(parseFloat(row.acceptanceRate))
+    : row.confidenceAccuracy
+      ? Math.round(parseFloat(row.confidenceAccuracy))
+      : 0;
+  const processed = row.totalRecommendations ?? 0;
+
+  // Consider the agent "active" if it has processed any recommendations
+  const status: "active" | "idle" = processed > 0 ? "active" : "idle";
+
+  return {
+    name: row.agentName,
+    icon: meta.icon,
+    description: meta.description,
+    status,
+    processed,
+    accuracy,
+  };
+}
+
+function AgentCard({ agent }: { agent: AgentDisplay }) {
   return (
     <Card className="hover-elevate" data-testid={`agent-card-${agent.name.toLowerCase().replace(/\s/g, "-")}`}>
       <CardContent className="p-4">
@@ -142,10 +168,37 @@ function AgentCard({ agent }: { agent: typeof patientHistoryAgents[0] }) {
 }
 
 export default function HistoryAgents() {
+  const { data: allMetrics = [], isLoading } = useQuery<AgentMetricRow[]>({
+    queryKey: ["/api/fwa/agent-metrics"],
+  });
+
+  // Split by module field: "patient" vs "provider"
+  const patientHistoryAgents = allMetrics
+    .filter((r) => r.module === "patient")
+    .map(toAgentDisplay);
+
+  const providerHistoryAgents = allMetrics
+    .filter((r) => r.module === "provider")
+    .map(toAgentDisplay);
+
   const totalPatientProcessed = patientHistoryAgents.reduce((sum, a) => sum + a.processed, 0);
   const totalProviderProcessed = providerHistoryAgents.reduce((sum, a) => sum + a.processed, 0);
-  const avgPatientAccuracy = Math.round(patientHistoryAgents.reduce((sum, a) => sum + a.accuracy, 0) / patientHistoryAgents.length);
-  const avgProviderAccuracy = Math.round(providerHistoryAgents.reduce((sum, a) => sum + a.accuracy, 0) / providerHistoryAgents.length);
+  const avgPatientAccuracy =
+    patientHistoryAgents.length > 0
+      ? Math.round(patientHistoryAgents.reduce((sum, a) => sum + a.accuracy, 0) / patientHistoryAgents.length)
+      : 0;
+  const avgProviderAccuracy =
+    providerHistoryAgents.length > 0
+      ? Math.round(providerHistoryAgents.reduce((sum, a) => sum + a.accuracy, 0) / providerHistoryAgents.length)
+      : 0;
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-[50vh]" data-testid="loading-history-agents">
+        <InlineLoader size="lg" />
+      </div>
+    );
+  }
 
   return (
     <div className="p-6 space-y-6">
@@ -172,7 +225,7 @@ export default function HistoryAgents() {
               Critical Requirement: Specialized Agents Per History Type
             </p>
             <p className="text-sm text-amber-700 dark:text-amber-300">
-              Each agent has domain expertise in its specific history type - NO generalized history checking. 
+              Each agent has domain expertise in its specific history type - NO generalized history checking.
               Each specialized agent queries its specific database independently for precise discrepancy detection.
             </p>
           </div>
@@ -190,7 +243,11 @@ export default function HistoryAgents() {
               <p className="text-sm text-muted-foreground">Total Processed</p>
             </div>
             <div className="p-4 bg-muted/50 rounded-lg text-center">
-              <p className="text-2xl font-bold text-purple-600">{Math.round((avgPatientAccuracy + avgProviderAccuracy) / 2)}%</p>
+              <p className="text-2xl font-bold text-purple-600">
+                {patientHistoryAgents.length > 0 || providerHistoryAgents.length > 0
+                  ? Math.round((avgPatientAccuracy + avgProviderAccuracy) / (avgPatientAccuracy > 0 && avgProviderAccuracy > 0 ? 2 : 1))
+                  : 0}%
+              </p>
               <p className="text-sm text-muted-foreground">Avg Accuracy</p>
             </div>
           </div>

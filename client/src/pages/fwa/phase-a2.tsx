@@ -11,68 +11,41 @@ import {
   ArrowRight,
   ChevronDown,
   ChevronRight,
+  Loader2,
 } from "lucide-react";
 import { useState } from "react";
 import { Link } from "wouter";
+import { useQuery } from "@tanstack/react-query";
+import type { LucideIcon } from "lucide-react";
 
-const fwaCategories = [
-  {
-    name: "Coding Abuse",
-    icon: Code,
-    color: "orange",
-    description: "Fraudulent billing practices through code manipulation",
-    count: 45,
-    percentage: 38,
-    subCategories: [
-      { name: "Upcoding", description: "Billing for higher-level services", count: 18 },
-      { name: "Unbundling", description: "Separating bundled procedures", count: 12 },
-      { name: "Code manipulation", description: "Incorrect code usage", count: 9 },
-      { name: "Phantom billing codes", description: "Billing for services not rendered", count: 6 },
-    ],
-  },
-  {
-    name: "Management Abuse",
-    icon: Building,
-    color: "teal",
-    description: "Administrative fraud and policy violations",
-    count: 32,
-    percentage: 27,
-    subCategories: [
-      { name: "Administrative fraud patterns", description: "Systematic administrative manipulation", count: 14 },
-      { name: "Policy violations", description: "Non-compliance with policies", count: 8 },
-      { name: "Resource misallocation", description: "Improper resource usage", count: 6 },
-      { name: "Systematic abuse patterns", description: "Repeated abuse behaviors", count: 4 },
-    ],
-  },
-  {
-    name: "Physician Abuse",
-    icon: UserCog,
-    color: "rose",
-    description: "Provider-level fraud and documentation issues",
-    count: 25,
-    percentage: 21,
-    subCategories: [
-      { name: "Documentation fraud", description: "Falsified medical records", count: 10 },
-      { name: "Medical necessity violations", description: "Unnecessary procedures", count: 7 },
-      { name: "Signature fraud", description: "Forged or unauthorized signatures", count: 5 },
-      { name: "Credential misrepresentation", description: "False credentials", count: 3 },
-    ],
-  },
-  {
-    name: "Patient Abuse",
-    icon: Users,
-    color: "indigo",
-    description: "Patient-side fraud and collusion",
-    count: 17,
-    percentage: 14,
-    subCategories: [
-      { name: "Family shopping", description: "Sharing insurance credentials", count: 6 },
-      { name: "Phantom visiting", description: "Claiming services not received", count: 5 },
-      { name: "Provider-patient collusion", description: "Joint fraud schemes", count: 4 },
-      { name: "Credit utilization fraud", description: "Insurance benefit abuse", count: 2 },
-    ],
-  },
-];
+// ── Types matching the API response shape ──
+interface SubCategory {
+  name: string;
+  description: string;
+  count: number;
+}
+
+interface FwaCategoryFromAPI {
+  name: string;
+  color: string;
+  description: string;
+  count: number;
+  percentage: number;
+  subCategories: SubCategory[];
+}
+
+// Extended type with client-side icon
+interface FwaCategoryWithIcon extends FwaCategoryFromAPI {
+  icon: LucideIcon;
+}
+
+// Map category names to their icons (icons are React components, not serializable)
+const iconByName: Record<string, LucideIcon> = {
+  "Coding Abuse": Code,
+  "Management Abuse": Building,
+  "Physician Abuse": UserCog,
+  "Patient Abuse": Users,
+};
 
 const colorMap: Record<string, { bg: string; text: string; darkBg: string; darkText: string }> = {
   orange: { bg: "bg-orange-100", text: "text-orange-800", darkBg: "dark:bg-orange-900", darkText: "dark:text-orange-200" },
@@ -81,9 +54,9 @@ const colorMap: Record<string, { bg: string; text: string; darkBg: string; darkT
   indigo: { bg: "bg-indigo-100", text: "text-indigo-800", darkBg: "dark:bg-indigo-900", darkText: "dark:text-indigo-200" },
 };
 
-function CategoryCard({ category }: { category: typeof fwaCategories[0] }) {
+function CategoryCard({ category }: { category: FwaCategoryWithIcon }) {
   const [isExpanded, setIsExpanded] = useState(false);
-  const colors = colorMap[category.color];
+  const colors = colorMap[category.color] ?? colorMap.orange;
 
   return (
     <Card className="overflow-hidden" data-testid={`category-card-${category.name.toLowerCase().replace(/\s/g, "-")}`}>
@@ -140,6 +113,16 @@ function CategoryCard({ category }: { category: typeof fwaCategories[0] }) {
 }
 
 export default function PhaseA2() {
+  const { data: apiCategories, isLoading, error } = useQuery<FwaCategoryFromAPI[]>({
+    queryKey: ["/api/fwa/phase-a2/categories"],
+  });
+
+  // Merge server data with client-side icons
+  const fwaCategories: FwaCategoryWithIcon[] = (apiCategories ?? []).map((cat) => ({
+    ...cat,
+    icon: iconByName[cat.name] ?? Code,
+  }));
+
   const totalCases = fwaCategories.reduce((sum, cat) => sum + cat.count, 0);
 
   return (
@@ -195,36 +178,51 @@ export default function PhaseA2() {
         </CardContent>
       </Card>
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      {isLoading ? (
+        <div className="flex items-center justify-center py-12">
+          <Loader2 className="w-6 h-6 animate-spin text-purple-600 mr-2" />
+          <span className="text-muted-foreground">Loading category data...</span>
+        </div>
+      ) : error ? (
         <Card>
-          <CardContent className="p-6 text-center">
-            <p className="text-4xl font-bold text-purple-600">{totalCases}</p>
-            <p className="text-sm text-muted-foreground mt-1">Total Categorized Cases</p>
+          <CardContent className="p-6 text-center text-destructive">
+            Failed to load category data. Please try again later.
           </CardContent>
         </Card>
-        {fwaCategories.map((cat) => {
-          const colors = colorMap[cat.color];
-          return (
-            <Card key={cat.name}>
-              <CardContent className="p-6">
-                <div className="flex items-center gap-2 mb-2">
-                  <cat.icon className={`w-4 h-4 ${colors.text} ${colors.darkText}`} />
-                  <span className="text-sm font-medium">{cat.name.split(" ")[0]}</span>
-                </div>
-                <p className="text-2xl font-bold">{cat.count}</p>
-                <Progress value={cat.percentage} className="h-1 mt-2" />
+      ) : (
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <Card>
+              <CardContent className="p-6 text-center">
+                <p className="text-4xl font-bold text-purple-600">{totalCases}</p>
+                <p className="text-sm text-muted-foreground mt-1">Total Categorized Cases</p>
               </CardContent>
             </Card>
-          );
-        })}
-      </div>
+            {fwaCategories.map((cat) => {
+              const colors = colorMap[cat.color] ?? colorMap.orange;
+              return (
+                <Card key={cat.name}>
+                  <CardContent className="p-6">
+                    <div className="flex items-center gap-2 mb-2">
+                      <cat.icon className={`w-4 h-4 ${colors.text} ${colors.darkText}`} />
+                      <span className="text-sm font-medium">{cat.name.split(" ")[0]}</span>
+                    </div>
+                    <p className="text-2xl font-bold">{cat.count}</p>
+                    <Progress value={cat.percentage} className="h-1 mt-2" />
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
 
-      <div className="space-y-4">
-        <h2 className="text-lg font-semibold">FWA Categories Breakdown</h2>
-        {fwaCategories.map((category) => (
-          <CategoryCard key={category.name} category={category} />
-        ))}
-      </div>
+          <div className="space-y-4">
+            <h2 className="text-lg font-semibold">FWA Categories Breakdown</h2>
+            {fwaCategories.map((category) => (
+              <CategoryCard key={category.name} category={category} />
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }

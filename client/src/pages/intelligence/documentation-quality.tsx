@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from "recharts";
@@ -57,7 +58,7 @@ export default function DocumentationQualityPage() {
                 </defs>
               </svg>
               <div className="absolute inset-0 flex flex-col items-center justify-center">
-                <span className="text-4xl font-bold text-primary">{data?.overallIndex ?? "..."}</span>
+                <span className="text-4xl font-bold text-primary">{data ? data.overallIndex : <Skeleton className="h-8 w-24 inline-block" />}</span>
                 <span className="text-xs text-muted-foreground">/ 100</span>
               </div>
             </div>
@@ -82,7 +83,7 @@ export default function DocumentationQualityPage() {
                 <div className="text-2xl font-bold text-rose-600">
                   {data?.impact.revenueAtRisk
                     ? `${(data.impact.revenueAtRisk / 1000000).toFixed(1)}M`
-                    : "..."}
+                    : <Skeleton className="h-8 w-24 inline-block" />}
                 </div>
                 <div className="text-xs text-muted-foreground mt-1">SAR Revenue at Risk</div>
               </div>
@@ -92,7 +93,7 @@ export default function DocumentationQualityPage() {
                   <ArrowDownCircle className="h-6 w-6 text-amber-500" />
                 </div>
                 <div className="text-2xl font-bold text-amber-600">
-                  {data?.impact.drgDowngrades?.toLocaleString() ?? "..."}
+                  {data ? data.impact.drgDowngrades?.toLocaleString() : <Skeleton className="h-8 w-24 inline-block" />}
                 </div>
                 <div className="text-xs text-muted-foreground mt-1">DRG Downgrades</div>
               </div>
@@ -102,7 +103,7 @@ export default function DocumentationQualityPage() {
                   <ShieldAlert className="h-6 w-6 text-violet-500" />
                 </div>
                 <div className="text-2xl font-bold text-violet-600">
-                  {data?.impact.preventableRejections?.toLocaleString() ?? "..."}
+                  {data ? data.impact.preventableRejections?.toLocaleString() : <Skeleton className="h-8 w-24 inline-block" />}
                 </div>
                 <div className="text-xs text-muted-foreground mt-1">Preventable Rejections</div>
               </div>

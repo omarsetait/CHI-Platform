@@ -3,9 +3,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { 
-  FileText, 
-  CheckCircle, 
+import { MetricCard } from "@/components/metric-card";
+import { METRIC_GRID } from "@/lib/grid";
+import {
+  FileText,
+  CheckCircle,
   Clock,
   AlertTriangle,
   TrendingUp,
@@ -24,42 +26,6 @@ interface PreAuthDashboardStats {
   rejected: number;
   riskFlags: number;
   avgProcessingTime: string;
-}
-
-function PreAuthStatsCard({ 
-  title, 
-  value, 
-  description, 
-  icon: Icon,
-  trend 
-}: { 
-  title: string; 
-  value: number | string; 
-  description: string; 
-  icon: React.ElementType;
-  trend?: { value: number; isPositive: boolean };
-}) {
-  return (
-    <Card data-testid={`stats-card-${title.toLowerCase().replace(/\s+/g, "-")}`}>
-      <CardContent className="p-6">
-        <div className="flex items-center justify-between gap-2">
-          <div className="space-y-1">
-            <p className="text-sm text-muted-foreground">{title}</p>
-            <p className="text-3xl font-bold">{value}</p>
-            <p className="text-xs text-muted-foreground">{description}</p>
-          </div>
-          <div className="p-3 rounded-lg bg-muted">
-            <Icon className="w-5 h-5 text-muted-foreground" />
-          </div>
-        </div>
-        {trend && (
-          <div className={`mt-2 text-xs ${trend.isPositive ? "text-green-600" : "text-red-600"}`}>
-            {trend.isPositive ? "+" : "-"}{trend.value}% from last month
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
 }
 
 function PreAuthClaimCard({ claim }: { claim: PreAuthClaim }) {
@@ -130,48 +96,37 @@ export default function PreAuthDashboard() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        {statsLoading ? (
-          <>
-            {[...Array(4)].map((_, i) => (
-              <Card key={i}>
-                <CardContent className="p-6">
-                  <Skeleton className="h-4 w-24 mb-2" />
-                  <Skeleton className="h-8 w-16" />
-                </CardContent>
-              </Card>
-            ))}
-          </>
-        ) : (
-          <>
-            <PreAuthStatsCard
-              title="Total Requests"
-              value={stats?.totalClaims || 0}
-              description="Pre-auth requests in system"
-              icon={FileText}
-              trend={{ value: 12, isPositive: true }}
-            />
-            <PreAuthStatsCard
-              title="Pending Review"
-              value={stats?.pendingReview || 0}
-              description="Awaiting adjudicator"
-              icon={Clock}
-            />
-            <PreAuthStatsCard
-              title="Approved"
-              value={stats?.approved || 0}
-              description="This month"
-              icon={CheckCircle}
-              trend={{ value: 8, isPositive: true }}
-            />
-            <PreAuthStatsCard
-              title="Risk Flags"
-              value={stats?.riskFlags || 0}
-              description="Active alerts"
-              icon={AlertTriangle}
-            />
-          </>
-        )}
+      <div className={METRIC_GRID}>
+        <MetricCard
+          title="Total Requests"
+          value={String(stats?.totalClaims ?? 0)}
+          subtitle="Pre-auth requests in system"
+          icon={FileText}
+          trend={{ value: "12%", isPositive: true }}
+          loading={statsLoading}
+        />
+        <MetricCard
+          title="Pending Review"
+          value={String(stats?.pendingReview ?? 0)}
+          subtitle="Awaiting adjudicator"
+          icon={Clock}
+          loading={statsLoading}
+        />
+        <MetricCard
+          title="Approved"
+          value={String(stats?.approved ?? 0)}
+          subtitle="This month"
+          icon={CheckCircle}
+          trend={{ value: "8%", isPositive: true }}
+          loading={statsLoading}
+        />
+        <MetricCard
+          title="Risk Flags"
+          value={String(stats?.riskFlags ?? 0)}
+          subtitle="Active alerts"
+          icon={AlertTriangle}
+          loading={statsLoading}
+        />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -280,19 +235,23 @@ export default function PreAuthDashboard() {
             <CardContent className="space-y-3">
               <div className="flex items-center justify-between">
                 <span className="text-sm text-muted-foreground">Avg. Processing Time</span>
-                <span className="text-sm font-medium">{stats?.avgProcessingTime || "2.3s"}</span>
+                {statsLoading ? (
+                  <Skeleton className="h-4 w-12" />
+                ) : (
+                  <span className="text-sm font-medium">{stats?.avgProcessingTime ?? "—"}</span>
+                )}
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-sm text-muted-foreground">Auto-Approval Rate</span>
-                <span className="text-sm font-medium">68%</span>
+                <Skeleton className="h-4 w-12" />
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-sm text-muted-foreground">Override Rate</span>
-                <span className="text-sm font-medium">12%</span>
+                <Skeleton className="h-4 w-12" />
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-sm text-muted-foreground">RLHF Updates</span>
-                <span className="text-sm font-medium">47 this week</span>
+                <Skeleton className="h-4 w-12" />
               </div>
             </CardContent>
           </Card>

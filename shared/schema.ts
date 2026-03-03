@@ -2237,6 +2237,35 @@ export const insertEnforcementCaseSchema = createInsertSchema(enforcementCases).
 export type InsertEnforcementCase = z.infer<typeof insertEnforcementCaseSchema>;
 export type EnforcementCase = typeof enforcementCases.$inferSelect;
 
+// Enforcement Dossiers Table - Agentic workflow case dossiers
+export const enforcementDossiers = pgTable("enforcement_dossiers", {
+  id: serial("id").primaryKey(),
+  caseId: text("case_id").notNull(),
+  enforcementCaseId: text("enforcement_case_id").notNull(),
+  claimIds: jsonb("claim_ids").notNull().default([]),
+  entities: jsonb("entities").notNull().default({}),
+  currentStage: text("current_stage").notNull().default('finding'),
+  stageHistory: jsonb("stage_history").notNull().default([]),
+  evidence: jsonb("evidence").notNull().default({ engineResults: {}, agentFindings: {} }),
+  stageDecisions: jsonb("stage_decisions").notNull().default({}),
+  financialImpact: jsonb("financial_impact").notNull().default({ estimatedLoss: 0, recoveryAmount: 0 }),
+  regulatoryCitations: jsonb("regulatory_citations").notNull().default([]),
+  violationCodes: jsonb("violation_codes").notNull().default([]),
+  humanReviews: jsonb("human_reviews").notNull().default([]),
+  decisionPackage: jsonb("decision_package"),
+  status: text("status").notNull().default('active'),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertEnforcementDossierSchema = createInsertSchema(enforcementDossiers).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true
+});
+export type InsertEnforcementDossier = z.infer<typeof insertEnforcementDossierSchema>;
+export type EnforcementDossier = typeof enforcementDossiers.$inferSelect;
+
 // Regulatory Circulars Table - Official regulatory communications
 export const regulatoryCircularStatusEnum = pgEnum("regulatory_circular_status", [
   "draft",

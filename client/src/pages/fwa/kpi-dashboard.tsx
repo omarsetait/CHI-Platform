@@ -19,6 +19,7 @@ import {
   Clock,
   AlertTriangle,
   Activity,
+  AlertCircle,
 } from "lucide-react";
 import {
   BarChart,
@@ -43,6 +44,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { MetricCard } from "@/components/metric-card";
+import { formatCurrency } from "@/lib/format";
+import { METRIC_GRID_5 } from "@/lib/grid";
 
 interface KpiStats {
   totalImpact: number;
@@ -57,51 +61,6 @@ interface KpiStats {
   categoryBreakdown: { name: string; value: number; color: string }[];
   monthlyData: { month: string; prospective: number; retrospective: number }[];
   topProviders: { id: string; name: string; riskScore: number; flaggedClaims: number; totalAmount: number; status: string }[];
-}
-
-function formatCurrency(value: number): string {
-  // Handle NaN, undefined, or null values
-  if (value === null || value === undefined || isNaN(value)) {
-    return "SAR 0";
-  }
-  if (value >= 1000000) {
-    return `SAR ${(value / 1000000).toFixed(2)}M`;
-  }
-  if (value >= 1000) {
-    return `SAR ${(value / 1000).toFixed(0)}K`;
-  }
-  return `SAR ${value.toFixed(0)}`;
-}
-
-function StatsCard({
-  title,
-  value,
-  icon: Icon,
-  colorClass,
-  description,
-}: {
-  title: string;
-  value: string | number;
-  icon: React.ElementType;
-  colorClass: string;
-  description: string;
-}) {
-  return (
-    <Card data-testid={`kpi-card-${title.toLowerCase().replace(/\s+/g, "-")}`}>
-      <CardContent className="p-6">
-        <div className="flex items-center justify-between gap-2">
-          <div className="space-y-1">
-            <p className="text-sm text-muted-foreground">{title}</p>
-            <p className="text-3xl font-bold">{value}</p>
-            <p className="text-xs text-muted-foreground">{description}</p>
-          </div>
-          <div className={`p-3 rounded-lg ${colorClass}`}>
-            <Icon className="w-5 h-5" />
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
 }
 
 function getRiskScoreColor(score: number): string {
@@ -126,8 +85,10 @@ function getStatusBadgeClass(status: string): string {
 export default function FWAKPIDashboard() {
   const [dateRange, setDateRange] = useState("this-month");
   
-  const { data: stats, isLoading } = useQuery<KpiStats>({
+  const { data: stats, isLoading, error } = useQuery<KpiStats>({
     queryKey: ["/api/fwa/kpi-stats"],
+    retry: 2,
+    staleTime: 5 * 60 * 1000,
   });
 
   // Only render actual values when data is loaded, prevents flashing zeros
@@ -152,6 +113,25 @@ export default function FWAKPIDashboard() {
         </div>
         <Skeleton className="h-[350px] w-full" />
         <Skeleton className="h-[300px] w-full" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="p-6 space-y-6">
+        <div>
+          <h1 className="text-2xl font-bold">FWA Impact Dashboard</h1>
+          <p className="text-muted-foreground">Real-time fraud analytics</p>
+        </div>
+        <Card>
+          <CardContent className="flex flex-col items-center justify-center py-12 text-center">
+            <AlertCircle className="h-12 w-12 text-destructive mb-4" />
+            <h3 className="text-lg font-semibold mb-2">Failed to load KPI data</h3>
+            <p className="text-sm text-muted-foreground mb-4">{error.message}</p>
+            <Button variant="outline" onClick={() => window.location.reload()}>Retry</Button>
+          </CardContent>
+        </Card>
       </div>
     );
   }
@@ -195,41 +175,36 @@ export default function FWAKPIDashboard() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-        <StatsCard
+      <div className={METRIC_GRID_5}>
+        <MetricCard
               title="Total Impact"
               value={formatCurrency(displayStats.totalImpact)}
-              description="Prospective + Retrospective"
+              subtitle="Prospective + Retrospective"
               icon={DollarSign}
-              colorClass="bg-green-100 text-green-600 dark:bg-green-900/30 dark:text-green-400"
             />
-            <StatsCard
+            <MetricCard
               title="Prospective Impact"
               value={formatCurrency(displayStats.prospectiveImpact)}
-              description="Live claims rejected/flagged"
+              subtitle="Live claims rejected/flagged"
               icon={ShieldCheck}
-              colorClass="bg-purple-100 text-purple-600 dark:bg-purple-900/30 dark:text-purple-400"
             />
-            <StatsCard
+            <MetricCard
               title="Retrospective Findings"
               value={formatCurrency(displayStats.retrospectiveFindings)}
-              description="Historical inappropriate care identified"
+              subtitle="Historical inappropriate care identified"
               icon={RotateCcw}
-              colorClass="bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400"
             />
-            <StatsCard
+            <MetricCard
               title="Cases Resolved"
-              value={displayStats.casesResolved}
-              description="Completed investigations"
+              value={String(displayStats.casesResolved)}
+              subtitle="Completed investigations"
               icon={CheckCircle}
-              colorClass="bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400"
             />
-        <StatsCard
+        <MetricCard
           title="Avg Detection Time"
           value={`${displayStats.avgDetectionTime} hrs`}
-          description="Time to flag suspicious claims"
+          subtitle="Time to flag suspicious claims"
           icon={Clock}
-          colorClass="bg-gray-100 text-gray-600 dark:bg-gray-900/30 dark:text-gray-400"
         />
       </div>
 

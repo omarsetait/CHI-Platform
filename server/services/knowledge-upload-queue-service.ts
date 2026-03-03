@@ -1,3 +1,4 @@
+import { EventEmitter } from "events";
 import { sql } from "drizzle-orm";
 import { db } from "../db";
 import {
@@ -170,6 +171,17 @@ export class KnowledgeUploadQueueService {
   private tickInProgress = false;
   private activeWorkers = 0;
   private readonly concurrency = getWorkerConcurrency();
+  private readonly progressEmitter = new EventEmitter();
+
+  onJobProgress(jobId: string, listener: (data: any) => void): () => void {
+    const eventName = `job:${jobId}`;
+    this.progressEmitter.on(eventName, listener);
+    return () => this.progressEmitter.removeListener(eventName, listener);
+  }
+
+  private emitJobProgress(jobId: string, summary: any) {
+    this.progressEmitter.emit(`job:${jobId}`, summary);
+  }
 
   start(): void {
     if (this.running) return;
@@ -613,6 +625,12 @@ export class KnowledgeUploadQueueService {
       console.info(
         `[KnowledgeQueue] job complete job=${jobId} status=${status} completed=${completedFiles} failed=${failedFiles}`
       );
+    }
+
+    // Emit progress for SSE listeners
+    const summary = await this.getJob(jobId);
+    if (summary) {
+      this.emitJobProgress(jobId, summary);
     }
   }
 }

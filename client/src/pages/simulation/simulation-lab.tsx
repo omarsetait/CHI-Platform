@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { QueryErrorState } from "@/components/error-boundary";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -73,7 +74,7 @@ function DigitalTwinsTab() {
     notes: "",
   });
 
-  const { data: twins, isLoading } = useQuery<DigitalTwin[]>({
+  const { data: twins, isLoading, error: twinsError, refetch: refetchTwins } = useQuery<DigitalTwin[]>({
     queryKey: ["/api/simulation/digital-twins"],
   });
 
@@ -120,6 +121,10 @@ function DigitalTwinsTab() {
     training: { label: "Training", className: "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200" },
     validation: { label: "Validation", className: "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200" },
   };
+
+  if (twinsError) {
+    return <QueryErrorState error={twinsError} onRetry={() => refetchTwins()} title="Failed to load digital twins" />;
+  }
 
   if (isLoading) {
     return (
@@ -321,7 +326,7 @@ function DigitalTwinsTab() {
 function ShadowRulesTab() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
 
-  const { data: rules, isLoading } = useQuery<ShadowRule[]>({
+  const { data: rules, isLoading, error: rulesError, refetch: refetchRules } = useQuery<ShadowRule[]>({
     queryKey: ["/api/simulation/shadow-rules"],
   });
 
@@ -359,6 +364,10 @@ function ShadowRulesTab() {
       queryClient.invalidateQueries({ queryKey: ["/api/simulation/shadow-rules"] });
     },
   });
+
+  if (rulesError) {
+    return <QueryErrorState error={rulesError} onRetry={() => refetchRules()} title="Failed to load shadow rules" />;
+  }
 
   if (isLoading) {
     return (
@@ -531,7 +540,7 @@ function GhostRunsTab() {
   const [selectedRun, setSelectedRun] = useState<GhostRun | null>(null);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
 
-  const { data: runs, isLoading } = useQuery<GhostRun[]>({
+  const { data: runs, isLoading, error: runsError, refetch: refetchRuns } = useQuery<GhostRun[]>({
     queryKey: ["/api/simulation/ghost-runs"],
   });
 
@@ -541,6 +550,10 @@ function GhostRunsTab() {
     completed: { label: "Completed", className: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200", icon: CheckCircle },
     failed: { label: "Failed", className: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200", icon: XCircle },
   };
+
+  if (runsError) {
+    return <QueryErrorState error={runsError} onRetry={() => refetchRuns()} title="Failed to load ghost runs" />;
+  }
 
   if (isLoading) {
     return (

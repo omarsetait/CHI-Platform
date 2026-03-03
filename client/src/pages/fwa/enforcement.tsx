@@ -33,6 +33,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import {
   Search,
   Plus,
   Eye,
@@ -53,8 +60,45 @@ import {
   ExternalLink,
   User,
   ShieldCheck,
+  Bot,
+  Play,
+  FastForward,
+  StepForward,
+  ShieldAlert,
+  BookOpen,
+  Wrench,
+  Brain,
+  Loader2,
 } from "lucide-react";
-import type { EnforcementCase, ProviderDirectory } from "@shared/schema";
+import type { EnforcementCase, EnforcementDossier, ProviderDirectory } from "@shared/schema";
+
+// Types for workflow API responses
+interface WorkflowExecuteResponse {
+  decision: string;
+  reasoning: string;
+  confidence: number;
+  nextStage: string;
+  requiresHITL: boolean;
+  toolsInvoked?: string[];
+  stagesExecuted?: number;
+  dossier: any;
+}
+
+// HITL-gated stages that require human approval
+const HITL_GATED_STAGES = ["penalty_proposed", "penalty_applied", "appeal_review"];
+
+// Workflow stage badge colors (purple accent for FWA pillar)
+const workflowStageColors: Record<string, string> = {
+  finding: "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
+  warning_issued: "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300",
+  corrective_action: "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300",
+  penalty_proposed: "bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-300",
+  penalty_applied: "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300",
+  appeal_submitted: "bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300",
+  appeal_review: "bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300",
+  resolved: "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300",
+  closed: "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
+};
 
 interface ProviderOption {
   id: string;
@@ -143,6 +187,111 @@ export default function Enforcement() {
     findings: "",
   });
   const { toast } = useToast();
+
+  // AI Workflow state
+  const [hitlDialogOpen, setHitlDialogOpen] = useState(false);
+  const [hitlDossierId, setHitlDossierId] = useState<number | null>(null);
+  const [hitlDecision, setHitlDecision] = useState<"approved" | "rejected" | "modify">("approved");
+  const [hitlNotes, setHitlNotes] = useState("");
+  const [workflowRunning, setWorkflowRunning] = useState<Record<string, boolean>>({});
+
+  // Fetch all enforcement dossiers to map against cases
+  const { data: dossiers } = useQuery<EnforcementDossier[]>({
+    queryKey: ["/api/fwa/enforcement-workflows"],
+  });
+
+  // Build a lookup: enforcementCaseId -> dossier
+  const dossierByCaseId: Record<string, EnforcementDossier> = {};
+  (dossiers || []).forEach((d) => {
+    if (d.enforcementCaseId) {
+      dossierByCaseId[d.enforcementCaseId] = d;
+    }
+  });
+
+  // Create dossier + run workflow mutation
+  const startWorkflowMutation = useMutation({
+    mutationFn: async (enforcementCaseId: string) => {
+      setWorkflowRunning((prev) => ({ ...prev, [enforcementCaseId]: true }));
+      // Step 1: Create the dossier
+      const createRes = await apiRequest("POST", "/api/fwa/enforcement-workflow", {
+        enforcementCaseId,
+      });
+      const dossier = await createRes.json();
+      // Step 2: Run until HITL gate
+      const runRes = await apiRequest("POST", `/api/fwa/enforcement-workflow/${dossier.id}/run`);
+      return runRes.json() as Promise<WorkflowExecuteResponse>;
+    },
+    onSuccess: (_data, enforcementCaseId) => {
+      setWorkflowRunning((prev) => ({ ...prev, [enforcementCaseId]: false }));
+      queryClient.invalidateQueries({ queryKey: ["/api/fwa/enforcement-workflows"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/fwa/chi/enforcement-cases"] });
+      toast({ title: "AI Workflow Started", description: "Dossier created and workflow is running." });
+    },
+    onError: (error: Error, enforcementCaseId) => {
+      setWorkflowRunning((prev) => ({ ...prev, [enforcementCaseId]: false }));
+      toast({ title: "Workflow Error", description: error.message, variant: "destructive" });
+    },
+  });
+
+  // Execute next stage mutation
+  const executeNextMutation = useMutation({
+    mutationFn: async (dossierId: number) => {
+      const res = await apiRequest("POST", `/api/fwa/enforcement-workflow/${dossierId}/execute`);
+      return res.json() as Promise<WorkflowExecuteResponse>;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/fwa/enforcement-workflows"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/fwa/chi/enforcement-cases"] });
+      toast({ title: "Stage Executed", description: "One stage has been executed." });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Execute Error", description: error.message, variant: "destructive" });
+    },
+  });
+
+  // Run to gate mutation
+  const runToGateMutation = useMutation({
+    mutationFn: async (dossierId: number) => {
+      const res = await apiRequest("POST", `/api/fwa/enforcement-workflow/${dossierId}/run`);
+      return res.json() as Promise<WorkflowExecuteResponse>;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/fwa/enforcement-workflows"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/fwa/chi/enforcement-cases"] });
+      if (data.requiresHITL) {
+        toast({ title: "HITL Gate Reached", description: "Human review is required to continue." });
+      } else {
+        toast({ title: "Workflow Progressed", description: `Moved to stage: ${data.nextStage}` });
+      }
+    },
+    onError: (error: Error) => {
+      toast({ title: "Run Error", description: error.message, variant: "destructive" });
+    },
+  });
+
+  // HITL approval mutation
+  const hitlApprovalMutation = useMutation({
+    mutationFn: async ({ dossierId, decision, notes }: { dossierId: number; decision: string; notes: string }) => {
+      const res = await apiRequest("POST", `/api/fwa/enforcement-workflow/${dossierId}/approve`, {
+        reviewerId: "current-user",
+        reviewerName: "Current User",
+        decision,
+        notes,
+      });
+      return res.json() as Promise<WorkflowExecuteResponse>;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/fwa/enforcement-workflows"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/fwa/chi/enforcement-cases"] });
+      setHitlDialogOpen(false);
+      setHitlNotes("");
+      setHitlDecision("approved");
+      toast({ title: "Review Submitted", description: "Human review has been recorded." });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Approval Error", description: error.message, variant: "destructive" });
+    },
+  });
 
   // Fetch providers from Provider Directory for dropdown
   const { data: providers } = useQuery<ProviderOption[]>({
@@ -394,6 +543,7 @@ export default function Enforcement() {
                 <TableHead>Severity</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Penalty</TableHead>
+                <TableHead>AI Workflow</TableHead>
                 <TableHead>Investigator</TableHead>
                 <TableHead></TableHead>
               </TableRow>
@@ -433,6 +583,39 @@ export default function Enforcement() {
                       ) : (
                         <span className="text-muted-foreground">-</span>
                       )}
+                    </TableCell>
+                    <TableCell>
+                      {(() => {
+                        const dossier = dossierByCaseId[enfCase.id];
+                        if (!dossier) {
+                          return <span className="text-xs text-muted-foreground">--</span>;
+                        }
+                        const stage = (dossier.currentStage as string) || "finding";
+                        const isHitlPending = HITL_GATED_STAGES.includes(stage);
+                        const stageDecisions = (dossier.stageDecisions as Record<string, any>) || {};
+                        const lastDecision = stageDecisions[stage];
+                        return (
+                          <div className="flex flex-col gap-1">
+                            <div className="flex items-center gap-1.5">
+                              <Bot className="w-3.5 h-3.5 text-purple-500" />
+                              <Badge className={`text-[10px] px-1.5 py-0 ${workflowStageColors[stage] || workflowStageColors.finding}`}>
+                                {stage.replace(/_/g, " ")}
+                              </Badge>
+                            </div>
+                            {isHitlPending && (
+                              <Badge className="bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300 text-[10px] px-1.5 py-0 w-fit">
+                                <ShieldAlert className="w-3 h-3 mr-0.5" />
+                                HITL Pending
+                              </Badge>
+                            )}
+                            {lastDecision?.confidence != null && (
+                              <span className="text-[10px] text-muted-foreground">
+                                Conf: {(lastDecision.confidence * 100).toFixed(0)}%
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </TableCell>
                     <TableCell className="text-sm">{enfCase.assignedInvestigator || "-"}</TableCell>
                     <TableCell>
@@ -670,6 +853,328 @@ export default function Enforcement() {
                     </Button>
                   </div>
 
+                  {/* ---- AI Workflow Section ---- */}
+                  {(() => {
+                    const caseDossier = dossierByCaseId[selectedCase.id];
+                    const dossierStage = caseDossier ? (caseDossier.currentStage as string) : null;
+                    const isHitlPending = dossierStage ? HITL_GATED_STAGES.includes(dossierStage) : false;
+                    const stageDecisions = caseDossier ? ((caseDossier.stageDecisions as Record<string, any>) || {}) : {};
+                    const stageHistory = caseDossier ? ((caseDossier.stageHistory as any[]) || []) : [];
+                    const financialImpact = caseDossier ? ((caseDossier.financialImpact as any) || {}) : {};
+                    const regulatoryCitations = caseDossier ? ((caseDossier.regulatoryCitations as any[]) || []) : [];
+                    const humanReviews = caseDossier ? ((caseDossier.humanReviews as any[]) || []) : [];
+                    const isRunning = workflowRunning[selectedCase.id] || false;
+
+                    return (
+                      <div className="space-y-4 pt-2 border-t">
+                        <div className="flex items-center gap-2">
+                          <Bot className="w-5 h-5 text-purple-600" />
+                          <h4 className="text-sm font-semibold">AI Enforcement Workflow</h4>
+                          {caseDossier && dossierStage && (
+                            <Badge className={`ml-auto text-xs ${workflowStageColors[dossierStage] || workflowStageColors.finding}`}>
+                              {dossierStage.replace(/_/g, " ")}
+                            </Badge>
+                          )}
+                          {!caseDossier && (
+                            <Badge variant="outline" className="ml-auto text-xs text-muted-foreground">
+                              No workflow
+                            </Badge>
+                          )}
+                        </div>
+
+                        {/* HITL Approval Banner */}
+                        {isHitlPending && caseDossier && (
+                          <div className="p-3 rounded-lg border-2 border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950">
+                            <div className="flex items-center gap-2 mb-2">
+                              <ShieldAlert className="w-5 h-5 text-amber-600 dark:text-amber-400" />
+                              <p className="text-sm font-semibold text-amber-800 dark:text-amber-200">
+                                Human Review Required
+                              </p>
+                            </div>
+                            <p className="text-xs text-amber-700 dark:text-amber-300 mb-3">
+                              The AI workflow has reached stage <strong>{dossierStage?.replace(/_/g, " ")}</strong> which requires human-in-the-loop approval before proceeding.
+                            </p>
+                            <Button
+                              size="sm"
+                              className="bg-amber-600 hover:bg-amber-700 text-white"
+                              onClick={() => {
+                                setHitlDossierId(caseDossier.id);
+                                setHitlDialogOpen(true);
+                              }}
+                              data-testid="button-hitl-review"
+                            >
+                              <ShieldCheck className="w-4 h-4 mr-2" />
+                              Open Review
+                            </Button>
+                          </div>
+                        )}
+
+                        {/* Workflow Action Buttons */}
+                        <div className="flex flex-wrap gap-2">
+                          {!caseDossier ? (
+                            <Button
+                              size="sm"
+                              variant="default"
+                              className="bg-purple-600 hover:bg-purple-700 text-white"
+                              onClick={() => startWorkflowMutation.mutate(selectedCase.id)}
+                              disabled={isRunning || startWorkflowMutation.isPending}
+                              data-testid="button-start-ai-workflow"
+                            >
+                              {isRunning || startWorkflowMutation.isPending ? (
+                                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                              ) : (
+                                <Play className="w-4 h-4 mr-2" />
+                              )}
+                              Start AI Workflow
+                            </Button>
+                          ) : (
+                            <>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => executeNextMutation.mutate(caseDossier.id)}
+                                disabled={executeNextMutation.isPending || isHitlPending}
+                                data-testid="button-execute-next"
+                              >
+                                {executeNextMutation.isPending ? (
+                                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                ) : (
+                                  <StepForward className="w-4 h-4 mr-2" />
+                                )}
+                                Execute Next Stage
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => runToGateMutation.mutate(caseDossier.id)}
+                                disabled={runToGateMutation.isPending || isHitlPending}
+                                data-testid="button-run-to-gate"
+                              >
+                                {runToGateMutation.isPending ? (
+                                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                ) : (
+                                  <FastForward className="w-4 h-4 mr-2" />
+                                )}
+                                Run to Gate
+                              </Button>
+                            </>
+                          )}
+                        </div>
+
+                        {/* Dossier Viewer (Collapsible) */}
+                        {caseDossier && (
+                          <Accordion type="single" collapsible className="w-full">
+                            {/* Stage History Timeline */}
+                            <AccordionItem value="stage-history">
+                              <AccordionTrigger className="text-sm py-2 hover:no-underline">
+                                <div className="flex items-center gap-2">
+                                  <Clock className="w-4 h-4 text-purple-500" />
+                                  <span>Stage History ({stageHistory.length} transitions)</span>
+                                </div>
+                              </AccordionTrigger>
+                              <AccordionContent>
+                                {stageHistory.length === 0 ? (
+                                  <p className="text-xs text-muted-foreground py-2">No stage transitions yet.</p>
+                                ) : (
+                                  <ScrollArea className="max-h-[200px]">
+                                    <div className="space-y-3 pr-2">
+                                      {stageHistory.map((transition: any, idx: number) => (
+                                        <div key={idx} className="flex items-start gap-3 text-xs">
+                                          <div className="flex-shrink-0 mt-0.5">
+                                            <div className="w-2 h-2 rounded-full bg-purple-400" />
+                                          </div>
+                                          <div className="flex-1 min-w-0">
+                                            <div className="flex items-center gap-2 flex-wrap">
+                                              <Badge variant="outline" className="text-[10px] px-1 py-0">
+                                                {(transition.fromStage || "").replace(/_/g, " ")}
+                                              </Badge>
+                                              <ArrowRight className="w-3 h-3 text-muted-foreground" />
+                                              <Badge className={`text-[10px] px-1 py-0 ${workflowStageColors[transition.toStage] || ""}`}>
+                                                {(transition.toStage || "").replace(/_/g, " ")}
+                                              </Badge>
+                                            </div>
+                                            <p className="text-muted-foreground mt-1">
+                                              <span className="font-medium text-foreground">{transition.agentId}</span>
+                                              {" -- "}
+                                              Decision: <strong>{transition.decision}</strong>
+                                              {transition.confidence != null && (
+                                                <span> (confidence: {(transition.confidence * 100).toFixed(0)}%)</span>
+                                              )}
+                                            </p>
+                                            {transition.reasoning && (
+                                              <p className="text-muted-foreground mt-0.5 italic">"{transition.reasoning}"</p>
+                                            )}
+                                            {transition.timestamp && (
+                                              <p className="text-muted-foreground/70 mt-0.5">
+                                                {new Date(transition.timestamp).toLocaleString()}
+                                              </p>
+                                            )}
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </ScrollArea>
+                                )}
+                              </AccordionContent>
+                            </AccordionItem>
+
+                            {/* Agent Reasoning & Decisions */}
+                            <AccordionItem value="agent-decisions">
+                              <AccordionTrigger className="text-sm py-2 hover:no-underline">
+                                <div className="flex items-center gap-2">
+                                  <Brain className="w-4 h-4 text-purple-500" />
+                                  <span>Agent Decisions ({Object.keys(stageDecisions).length} stages)</span>
+                                </div>
+                              </AccordionTrigger>
+                              <AccordionContent>
+                                {Object.keys(stageDecisions).length === 0 ? (
+                                  <p className="text-xs text-muted-foreground py-2">No agent decisions recorded.</p>
+                                ) : (
+                                  <ScrollArea className="max-h-[250px]">
+                                    <div className="space-y-3 pr-2">
+                                      {Object.entries(stageDecisions).map(([stage, record]: [string, any]) => (
+                                        <div key={stage} className="p-2 rounded-md border bg-muted/30">
+                                          <div className="flex items-center justify-between mb-1">
+                                            <Badge className={`text-[10px] px-1.5 py-0 ${workflowStageColors[stage] || ""}`}>
+                                              {stage.replace(/_/g, " ")}
+                                            </Badge>
+                                            <span className="text-[10px] text-muted-foreground">
+                                              {record.confidence != null ? `${(record.confidence * 100).toFixed(0)}% confidence` : ""}
+                                            </span>
+                                          </div>
+                                          <p className="text-xs mt-1">
+                                            <span className="font-medium">Agent:</span> {record.agentId || "unknown"}
+                                          </p>
+                                          <p className="text-xs">
+                                            <span className="font-medium">Decision:</span> {record.decision}
+                                          </p>
+                                          {record.reasoning && (
+                                            <p className="text-xs text-muted-foreground mt-1 italic">"{record.reasoning}"</p>
+                                          )}
+                                          {record.toolsInvoked && record.toolsInvoked.length > 0 && (
+                                            <div className="flex items-center gap-1 mt-1.5 flex-wrap">
+                                              <Wrench className="w-3 h-3 text-muted-foreground" />
+                                              {record.toolsInvoked.map((tool: string, i: number) => (
+                                                <Badge key={i} variant="outline" className="text-[10px] px-1 py-0">
+                                                  {tool}
+                                                </Badge>
+                                              ))}
+                                            </div>
+                                          )}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </ScrollArea>
+                                )}
+                              </AccordionContent>
+                            </AccordionItem>
+
+                            {/* Financial Impact */}
+                            <AccordionItem value="financial-impact">
+                              <AccordionTrigger className="text-sm py-2 hover:no-underline">
+                                <div className="flex items-center gap-2">
+                                  <DollarSign className="w-4 h-4 text-purple-500" />
+                                  <span>Financial Impact</span>
+                                </div>
+                              </AccordionTrigger>
+                              <AccordionContent>
+                                <div className="grid grid-cols-3 gap-3 text-center">
+                                  <div className="p-2 rounded-md border bg-muted/30">
+                                    <p className="text-[10px] text-muted-foreground">Estimated Loss</p>
+                                    <p className="text-sm font-semibold text-red-600 dark:text-red-400">
+                                      SAR {(financialImpact.estimatedLoss || 0).toLocaleString()}
+                                    </p>
+                                  </div>
+                                  <div className="p-2 rounded-md border bg-muted/30">
+                                    <p className="text-[10px] text-muted-foreground">Recovery Amount</p>
+                                    <p className="text-sm font-semibold text-green-600 dark:text-green-400">
+                                      SAR {(financialImpact.recoveryAmount || 0).toLocaleString()}
+                                    </p>
+                                  </div>
+                                  <div className="p-2 rounded-md border bg-muted/30">
+                                    <p className="text-[10px] text-muted-foreground">Penalty</p>
+                                    <p className="text-sm font-semibold text-orange-600 dark:text-orange-400">
+                                      SAR {(financialImpact.penaltyAmount || 0).toLocaleString()}
+                                    </p>
+                                  </div>
+                                </div>
+                              </AccordionContent>
+                            </AccordionItem>
+
+                            {/* Regulatory Citations */}
+                            <AccordionItem value="regulatory-citations">
+                              <AccordionTrigger className="text-sm py-2 hover:no-underline">
+                                <div className="flex items-center gap-2">
+                                  <BookOpen className="w-4 h-4 text-purple-500" />
+                                  <span>Regulatory Citations ({regulatoryCitations.length})</span>
+                                </div>
+                              </AccordionTrigger>
+                              <AccordionContent>
+                                {regulatoryCitations.length === 0 ? (
+                                  <p className="text-xs text-muted-foreground py-2">No citations recorded.</p>
+                                ) : (
+                                  <div className="space-y-2">
+                                    {regulatoryCitations.map((citation: any, idx: number) => (
+                                      <div key={idx} className="p-2 rounded-md border bg-muted/30 text-xs">
+                                        <div className="flex items-center gap-2">
+                                          <Badge variant="outline" className="text-[10px] px-1 py-0">{citation.source}</Badge>
+                                          <span className="font-mono font-medium">{citation.code}</span>
+                                        </div>
+                                        <p className="mt-1">{citation.description}</p>
+                                        {citation.relevance && (
+                                          <p className="text-muted-foreground mt-0.5 italic">{citation.relevance}</p>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </AccordionContent>
+                            </AccordionItem>
+
+                            {/* Human Reviews */}
+                            {humanReviews.length > 0 && (
+                              <AccordionItem value="human-reviews">
+                                <AccordionTrigger className="text-sm py-2 hover:no-underline">
+                                  <div className="flex items-center gap-2">
+                                    <ShieldCheck className="w-4 h-4 text-purple-500" />
+                                    <span>Human Reviews ({humanReviews.length})</span>
+                                  </div>
+                                </AccordionTrigger>
+                                <AccordionContent>
+                                  <div className="space-y-2">
+                                    {humanReviews.map((review: any, idx: number) => (
+                                      <div key={idx} className="p-2 rounded-md border bg-muted/30 text-xs">
+                                        <div className="flex items-center justify-between">
+                                          <span className="font-medium">{review.reviewerName || review.reviewerId}</span>
+                                          <Badge className={
+                                            review.decision === "approved"
+                                              ? "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300"
+                                              : review.decision === "rejected"
+                                                ? "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300"
+                                                : "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300"
+                                          }>
+                                            {review.decision}
+                                          </Badge>
+                                        </div>
+                                        <p className="text-muted-foreground mt-1">
+                                          Stage: {(review.stage || "").replace(/_/g, " ")}
+                                        </p>
+                                        {review.notes && <p className="mt-1 italic">"{review.notes}"</p>}
+                                        {review.timestamp && (
+                                          <p className="text-muted-foreground/70 mt-0.5">{new Date(review.timestamp).toLocaleString()}</p>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+                                </AccordionContent>
+                              </AccordionItem>
+                            )}
+                          </Accordion>
+                        )}
+                      </div>
+                    );
+                  })()}
+
                   {/* Actions */}
                   <div className="flex justify-end gap-2 pt-2 border-t">
                     <Button variant="outline" onClick={() => setDetailOpen(false)} data-testid="button-close-dialog">Close</Button>
@@ -792,6 +1297,113 @@ export default function Enforcement() {
                 data-testid="button-submit-case"
               >
                 {createMutation.isPending ? "Creating..." : "Create Case"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* HITL Approval Dialog */}
+      <Dialog open={hitlDialogOpen} onOpenChange={setHitlDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ShieldCheck className="w-5 h-5 text-purple-600" />
+              Human Review Required
+            </DialogTitle>
+            <DialogDescription>
+              The AI workflow has reached a stage that requires human approval before proceeding.
+              Review the agent decisions and choose how to proceed.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Decision</Label>
+              <Select
+                value={hitlDecision}
+                onValueChange={(value) => setHitlDecision(value as "approved" | "rejected" | "modify")}
+              >
+                <SelectTrigger data-testid="select-hitl-decision">
+                  <SelectValue placeholder="Select decision" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="approved">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle className="w-4 h-4 text-green-500" />
+                      <span>Approve - Continue workflow</span>
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="rejected">
+                    <div className="flex items-center gap-2">
+                      <XCircle className="w-4 h-4 text-red-500" />
+                      <span>Reject - Stop and review</span>
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="modify">
+                    <div className="flex items-center gap-2">
+                      <RefreshCw className="w-4 h-4 text-amber-500" />
+                      <span>Modify - Adjust and continue</span>
+                    </div>
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="hitl-notes">Reviewer Notes</Label>
+              <Textarea
+                id="hitl-notes"
+                placeholder="Provide your review notes, reasoning, or modifications..."
+                value={hitlNotes}
+                onChange={(e) => setHitlNotes(e.target.value)}
+                rows={4}
+                data-testid="textarea-hitl-notes"
+              />
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setHitlDialogOpen(false);
+                  setHitlNotes("");
+                  setHitlDecision("approved");
+                }}
+                data-testid="button-hitl-cancel"
+              >
+                Cancel
+              </Button>
+              <Button
+                className={
+                  hitlDecision === "approved"
+                    ? "bg-green-600 hover:bg-green-700 text-white"
+                    : hitlDecision === "rejected"
+                      ? "bg-red-600 hover:bg-red-700 text-white"
+                      : "bg-amber-600 hover:bg-amber-700 text-white"
+                }
+                onClick={() => {
+                  if (hitlDossierId != null) {
+                    hitlApprovalMutation.mutate({
+                      dossierId: hitlDossierId,
+                      decision: hitlDecision,
+                      notes: hitlNotes,
+                    });
+                  }
+                }}
+                disabled={hitlApprovalMutation.isPending}
+                data-testid="button-hitl-submit"
+              >
+                {hitlApprovalMutation.isPending ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Submitting...
+                  </>
+                ) : (
+                  <>
+                    {hitlDecision === "approved" && <CheckCircle className="w-4 h-4 mr-2" />}
+                    {hitlDecision === "rejected" && <XCircle className="w-4 h-4 mr-2" />}
+                    {hitlDecision === "modify" && <RefreshCw className="w-4 h-4 mr-2" />}
+                    Submit Review
+                  </>
+                )}
               </Button>
             </div>
           </div>

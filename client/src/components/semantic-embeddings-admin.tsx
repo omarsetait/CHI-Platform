@@ -7,6 +7,7 @@ import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
+import { QueryErrorState } from "@/components/error-boundary";
 import {
   Database,
   Upload,
@@ -50,7 +51,7 @@ export function SemanticEmbeddingsAdmin() {
   const [importJobs, setImportJobs] = useState<ImportProgress[]>([]);
   const [pollingJobs, setPollingJobs] = useState<Set<string>>(new Set());
 
-  const { data: stats, isLoading: statsLoading, refetch: refetchStats } = useQuery<EmbeddingStats>({
+  const { data: stats, isLoading: statsLoading, error: statsError, refetch: refetchStats } = useQuery<EmbeddingStats>({
     queryKey: ["/api/semantic/stats"],
     refetchInterval: 30000,
   });
@@ -183,7 +184,9 @@ export function SemanticEmbeddingsAdmin() {
               <CardDescription>Procedure codes with clinical explanations</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              {statsLoading ? (
+              {statsError ? (
+                <QueryErrorState error={statsError} onRetry={() => refetchStats()} title="Failed to load CPT stats" />
+              ) : statsLoading ? (
                 <div className="flex items-center gap-2 text-muted-foreground">
                   <Loader2 className="h-4 w-4 animate-spin" />
                   Loading stats...
@@ -198,7 +201,7 @@ export function SemanticEmbeddingsAdmin() {
                   </div>
                   <div className="flex items-center justify-between text-sm">
                     <span>With Embeddings</span>
-                    <Badge 
+                    <Badge
                       variant={stats?.cpt?.withEmbeddings ? "default" : "secondary"}
                       data-testid="badge-cpt-embedded"
                     >
@@ -212,8 +215,8 @@ export function SemanticEmbeddingsAdmin() {
                         {(stats?.cpt?.embeddingCoverage || 0).toFixed(1)}%
                       </span>
                     </div>
-                    <Progress 
-                      value={stats?.cpt?.embeddingCoverage || 0} 
+                    <Progress
+                      value={stats?.cpt?.embeddingCoverage || 0}
                       className="h-2"
                       data-testid="progress-cpt-coverage"
                     />
@@ -270,7 +273,9 @@ export function SemanticEmbeddingsAdmin() {
               <CardDescription>Diagnosis codes with clinical context</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              {statsLoading ? (
+              {statsError ? (
+                <QueryErrorState error={statsError} onRetry={() => refetchStats()} title="Failed to load ICD-10 stats" />
+              ) : statsLoading ? (
                 <div className="flex items-center gap-2 text-muted-foreground">
                   <Loader2 className="h-4 w-4 animate-spin" />
                   Loading stats...
@@ -285,7 +290,7 @@ export function SemanticEmbeddingsAdmin() {
                   </div>
                   <div className="flex items-center justify-between text-sm">
                     <span>With Embeddings</span>
-                    <Badge 
+                    <Badge
                       variant={stats?.icd10?.withEmbeddings ? "default" : "secondary"}
                       data-testid="badge-icd10-embedded"
                     >
@@ -299,8 +304,8 @@ export function SemanticEmbeddingsAdmin() {
                         {(stats?.icd10?.embeddingCoverage || 0).toFixed(1)}%
                       </span>
                     </div>
-                    <Progress 
-                      value={stats?.icd10?.embeddingCoverage || 0} 
+                    <Progress
+                      value={stats?.icd10?.embeddingCoverage || 0}
                       className="h-2"
                       data-testid="progress-icd10-coverage"
                     />

@@ -58,6 +58,8 @@ import {
   Hospital,
   Activity,
   Eye,
+  ChevronRight,
+  ShieldAlert,
 } from "lucide-react";
 import {
   AlertDialog,
@@ -72,6 +74,10 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { ReconciliationPanel } from "@/components/shared/reconciliation-panel";
+import { formatCurrency } from "@/lib/format";
+import { getRiskLevelBadgeClasses } from "@/lib/risk-utils";
+import { METRIC_GRID } from "@/lib/grid";
+import { MetricCard } from "@/components/metric-card";
 import type { FwaHighRiskProvider } from "@shared/schema";
 
 interface ProviderStats {
@@ -87,21 +93,6 @@ const defaultStats: ProviderStats = {
   totalExposure: 0,
   activeCases: 0,
 };
-
-function getRiskLevelBadgeClasses(level: string | null) {
-  switch (level) {
-    case "critical":
-      return "bg-red-100 text-red-700 border-red-200 dark:bg-red-900/30 dark:text-red-400 dark:border-red-800";
-    case "high":
-      return "bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-900/30 dark:text-orange-400 dark:border-orange-800";
-    case "medium":
-      return "bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:border-amber-800";
-    case "low":
-      return "bg-green-100 text-green-700 border-green-200 dark:bg-green-900/30 dark:text-green-400 dark:border-green-800";
-    default:
-      return "bg-gray-100 text-gray-700 border-gray-200 dark:bg-gray-900/30 dark:text-gray-400 dark:border-gray-800";
-  }
-}
 
 function getProviderTypeBadgeClasses(type: string | null) {
   switch (type) {
@@ -142,17 +133,6 @@ function getReasonBadgeClasses(reason: string) {
   return "bg-gray-100 text-gray-700 border-gray-200 dark:bg-gray-900/30 dark:text-gray-400 dark:border-gray-800";
 }
 
-function formatCurrency(amount: number | string | null | undefined): string {
-  if (amount === null || amount === undefined) return "$0.00";
-  const numAmount = typeof amount === "string" ? parseFloat(amount) : amount;
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  }).format(numAmount);
-}
-
 function formatNumber(value: number | string | null | undefined): string {
   if (value === null || value === undefined) return "0";
   const numValue = typeof value === "string" ? parseFloat(value) : value;
@@ -160,41 +140,6 @@ function formatNumber(value: number | string | null | undefined): string {
     minimumFractionDigits: 0,
     maximumFractionDigits: 2,
   }).format(numValue);
-}
-
-function StatsCard({
-  title,
-  value,
-  description,
-  icon: Icon,
-  isLoading,
-}: {
-  title: string;
-  value: number | string;
-  description: string;
-  icon: React.ElementType;
-  isLoading?: boolean;
-}) {
-  return (
-    <Card data-testid={`stats-card-${title.toLowerCase().replace(/\s+/g, "-")}`}>
-      <CardContent className="p-6">
-        <div className="flex items-center justify-between gap-2">
-          <div className="space-y-1">
-            <p className="text-sm text-muted-foreground">{title}</p>
-            {isLoading ? (
-              <Skeleton className="h-9 w-24" />
-            ) : (
-              <p className="text-3xl font-bold">{value}</p>
-            )}
-            <p className="text-xs text-muted-foreground">{description}</p>
-          </div>
-          <div className="p-3 rounded-lg bg-purple-100 dark:bg-purple-900/30">
-            <Icon className="w-5 h-5 text-purple-600 dark:text-purple-400" />
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
 }
 
 function ProviderDetailSheet({
@@ -226,156 +171,115 @@ function ProviderDetailSheet({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="right"
-        className="w-full sm:max-w-lg border-l-purple-300 dark:border-l-purple-800"
+        className="w-full sm:max-w-[500px] p-0 bg-slate-50/95 dark:bg-slate-950/95 backdrop-blur-2xl border-l border-white/40 dark:border-white/10 shadow-2xl flex flex-col"
         data-testid="sheet-provider-detail"
       >
-        <SheetHeader className="pb-4 border-b border-purple-200 dark:border-purple-800">
-          <div className="flex items-center gap-2">
-            <ProviderIcon className="w-5 h-5 text-purple-600 dark:text-purple-400" />
-            <SheetTitle className="text-purple-700 dark:text-purple-300">
-              Facility Details
-            </SheetTitle>
+        <SheetHeader className="p-6 pb-4 border-b border-white/40 dark:border-white/10 bg-gradient-to-br from-violet-500/5 to-fuchsia-500/5 relative overflow-hidden flex-shrink-0">
+          <div className="flex items-center gap-3 relative z-10">
+            <div className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-violet-100 dark:border-violet-800/50 shadow-sm">
+              <ProviderIcon className="w-5 h-5 text-violet-600 dark:text-violet-400" />
+            </div>
+            <div>
+              <SheetTitle className="text-xl font-bold text-slate-900 dark:text-white">
+                Facility Details
+              </SheetTitle>
+              <SheetDescription className="mt-1 text-slate-500 dark:text-slate-400">
+                Review facility risk profile and operational intelligence
+              </SheetDescription>
+            </div>
           </div>
-          <SheetDescription>
-            Review facility risk profile and CPM metrics
-          </SheetDescription>
         </SheetHeader>
 
-        <ScrollArea className="h-[calc(100vh-180px)] pr-4">
-          <div className="py-4 space-y-6">
+        <ScrollArea className="flex-1 p-6">
+          <div className="space-y-8">
+            {/* Facility Summary Panel */}
             <div className="space-y-3">
-              <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
-                Facility Summary
+              <h3 className="text-xs font-bold text-violet-600 dark:text-violet-400 uppercase tracking-widest flex items-center gap-2">
+                <span className="w-1 h-1 rounded-full bg-violet-600 dark:bg-violet-400" /> Summary
               </h3>
-              <Card className="border-purple-200 dark:border-purple-800">
-                <CardContent className="p-4 space-y-3">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 rounded-lg bg-purple-100 dark:bg-purple-900/30">
-                      <ProviderIcon className="w-5 h-5 text-purple-600 dark:text-purple-400" />
-                    </div>
+              <Card className="bg-white/60 dark:bg-slate-900/40 backdrop-blur-xl border-white/60 dark:border-white/10 shadow-sm">
+                <CardContent className="p-5 space-y-4">
+                  <div className="flex items-start gap-4">
                     <div className="flex-1">
-                      <p className="font-semibold" data-testid="text-provider-name">
+                      <p className="font-bold text-lg text-slate-900 dark:text-white leading-tight" data-testid="text-provider-name">
                         {provider.providerName}
                       </p>
-                      <p className="text-sm text-muted-foreground" data-testid="text-provider-id">
-                        ID: {provider.providerId}
+                      <div className="flex items-center gap-2 mt-1.5">
+                        <Badge
+                          variant="secondary"
+                          className={`${getProviderTypeBadgeClasses(provider.providerType || null)} shadow-sm text-[10px] font-semibold tracking-wide uppercase px-2 py-0.5`}
+                          data-testid="badge-provider-type"
+                        >
+                          {provider.providerType || "Unknown"}
+                        </Badge>
+                        <p className="text-xs text-slate-500 dark:text-slate-400 font-mono" data-testid="text-provider-id">
+                          ID: {provider.providerId}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <Separator className="bg-slate-200/50 dark:bg-slate-700/50" />
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                      <p className="text-[10px] text-slate-500 dark:text-slate-400 uppercase tracking-wider font-semibold flex items-center gap-1.5">
+                        <Stethoscope className="w-3.5 h-3.5 text-violet-500" /> Specialty
+                      </p>
+                      <p className="text-sm font-medium text-slate-700 dark:text-slate-200" data-testid="text-specialty">
+                        {provider.specialty || "N/A"}
                       </p>
                     </div>
-                    <Badge
-                      variant="outline"
-                      className={getProviderTypeBadgeClasses(provider.providerType || null)}
-                      data-testid="badge-provider-type"
-                    >
-                      {provider.providerType || "Unknown"}
-                    </Badge>
-                  </div>
-                  <Separator />
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="flex items-center gap-2">
-                      <Stethoscope className="w-4 h-4 text-muted-foreground" />
-                      <div>
-                        <p className="text-xs text-muted-foreground">Specialty</p>
-                        <p className="text-sm font-medium" data-testid="text-specialty">
-                          {provider.specialty || "N/A"}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Building2 className="w-4 h-4 text-muted-foreground" />
-                      <div>
-                        <p className="text-xs text-muted-foreground">Organization</p>
-                        <p className="text-sm font-medium" data-testid="text-organization">
-                          {provider.organization || "N/A"}
-                        </p>
-                      </div>
+                    <div className="space-y-1">
+                      <p className="text-[10px] text-slate-500 dark:text-slate-400 uppercase tracking-wider font-semibold flex items-center gap-1.5">
+                        <Building2 className="w-3.5 h-3.5 text-fuchsia-500" /> Organization
+                      </p>
+                      <p className="text-sm font-medium text-slate-700 dark:text-slate-200 truncate max-w-[140px]" title={provider.organization || "N/A"} data-testid="text-organization">
+                        {provider.organization || "N/A"}
+                      </p>
                     </div>
                   </div>
                 </CardContent>
               </Card>
             </div>
 
+            {/* Risk Metrics */}
             <div className="space-y-3">
-              <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
-                CPM Insights
+              <h3 className="text-xs font-bold text-red-500 dark:text-red-400 uppercase tracking-widest flex items-center gap-2">
+                <span className="w-1 h-1 rounded-full bg-red-500 dark:bg-red-400" /> Risk Intelligence
               </h3>
-              <Card className="border-purple-200 dark:border-purple-800">
-                <CardContent className="p-4 space-y-4">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-muted-foreground">Claims Per Month</span>
-                    <span className="text-lg font-semibold" data-testid="text-cpm">
-                      {formatNumber(claimsPerMonth)}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-muted-foreground">CPM Trend</span>
-                    <div className="flex items-center gap-1">
-                      {cpmTrend >= 0 ? (
-                        <TrendingUp className="w-4 h-4 text-red-500" />
-                      ) : (
-                        <TrendingDown className="w-4 h-4 text-green-500" />
-                      )}
-                      <span
-                        className={`text-sm font-medium ${cpmTrend >= 0 ? "text-red-600" : "text-green-600"}`}
-                        data-testid="text-cpm-trend"
+              <Card className="bg-gradient-to-br from-red-50/50 to-orange-50/50 dark:from-red-950/20 dark:to-orange-950/20 backdrop-blur-xl border-red-100/50 dark:border-red-900/30 shadow-sm relative overflow-hidden">
+                <CardContent className="p-5 space-y-5">
+                  <div className="space-y-3">
+                    <div className="flex items-end justify-between">
+                      <div>
+                        <p className="text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wider mb-1">Risk Score</p>
+                        <span className={`text-3xl font-bold tracking-tight ${riskScore > 75 ? 'text-red-600 dark:text-red-400' : riskScore > 50 ? 'text-orange-500' : 'text-emerald-500'}`} data-testid="text-risk-score">
+                          {riskScore.toFixed(0)}<span className="text-lg opacity-50">%</span>
+                        </span>
+                      </div>
+                      <Badge
+                        variant="outline"
+                        className={`${getRiskLevelBadgeClasses(provider.riskLevel)} shadow-sm uppercase tracking-wider text-[10px] font-bold px-2.5 py-1`}
+                        data-testid="badge-risk-level"
                       >
-                        {cpmTrend >= 0 ? "+" : ""}{cpmTrend.toFixed(1)}%
-                      </span>
+                        {provider.riskLevel || "unknown"}
+                      </Badge>
                     </div>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-muted-foreground">Peer Average</span>
-                    <span className="text-sm font-medium" data-testid="text-cpm-peer">
-                      {formatNumber(cpmPeerAverage)}
-                    </span>
-                  </div>
-                  <Separator />
-                  <div className="p-3 rounded-lg bg-muted/50">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-xs text-muted-foreground">CPM vs Peer Average</span>
-                      <span className={`text-xs font-medium ${claimsPerMonth > cpmPeerAverage ? "text-red-600" : "text-green-600"}`}>
-                        {claimsPerMonth > cpmPeerAverage ? "Above" : "Below"} Average
-                      </span>
-                    </div>
-                    <Progress 
-                      value={Math.min((claimsPerMonth / cpmPeerAverage) * 50, 100)} 
-                      className="h-2" 
-                    />
-                    <p className="text-xs text-muted-foreground mt-1">
-                      {((claimsPerMonth / cpmPeerAverage - 1) * 100).toFixed(1)}% {claimsPerMonth > cpmPeerAverage ? "above" : "below"} peer average
-                    </p>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
 
-            <div className="space-y-3">
-              <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
-                Risk Metrics
-              </h3>
-              <Card className="border-purple-200 dark:border-purple-800">
-                <CardContent className="p-4 space-y-4">
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-muted-foreground">Risk Score</span>
-                      <span className="text-sm font-semibold" data-testid="text-risk-score">
-                        {riskScore.toFixed(0)}%
-                      </span>
-                    </div>
-                    <Progress value={riskScore} className="h-2" />
+                    <Progress
+                      value={riskScore}
+                      className="h-2.5 bg-white dark:bg-slate-900 shadow-inner border border-slate-200 dark:border-slate-800"
+                      style={{
+                        color: riskScore > 75 ? '#ef4444' : riskScore > 50 ? '#f97316' : '#10b981',
+                        boxShadow: `0 0 10px ${riskScore > 75 ? 'rgba(239,68,68,0.3)' : riskScore > 50 ? 'rgba(249,115,22,0.3)' : 'rgba(16,185,129,0.3)'}`
+                      } as React.CSSProperties}
+                    />
                   </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-muted-foreground">Risk Level</span>
-                    <Badge
-                      variant="outline"
-                      className={getRiskLevelBadgeClasses(provider.riskLevel)}
-                      data-testid="badge-risk-level"
-                    >
-                      {provider.riskLevel || "unknown"}
-                    </Badge>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-muted-foreground">Denial Rate</span>
-                    <span className="text-sm font-medium" data-testid="text-denial-rate">
+
+                  <div className="flex items-center justify-between bg-white/60 dark:bg-slate-900/40 p-3 rounded-xl border border-white/60 dark:border-white/5 shadow-sm">
+                    <span className="text-xs font-semibold text-slate-600 dark:text-slate-400">Denial Rate History</span>
+                    <span className="text-sm font-bold text-slate-800 dark:text-slate-200" data-testid="text-denial-rate">
                       {denialRate.toFixed(1)}%
                     </span>
                   </div>
@@ -383,111 +287,171 @@ function ProviderDetailSheet({
               </Card>
             </div>
 
+            {/* CPM Insights */}
             <div className="space-y-3">
-              <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
-                Claim Statistics
+              <h3 className="text-xs font-bold text-violet-600 dark:text-violet-400 uppercase tracking-widest flex items-center gap-2">
+                <span className="w-1 h-1 rounded-full bg-violet-600 dark:bg-violet-400" /> Activity Metrics
               </h3>
-              <Card className="border-purple-200 dark:border-purple-800">
-                <CardContent className="p-4">
+              <Card className="bg-white/60 dark:bg-slate-900/40 backdrop-blur-xl border-white/60 dark:border-white/10 shadow-sm relative overflow-hidden">
+                <CardContent className="p-5 space-y-4">
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-1">
-                      <p className="text-xs text-muted-foreground">Total Claims</p>
-                      <div className="flex items-center gap-2">
-                        <ClipboardList className="w-4 h-4 text-purple-600 dark:text-purple-400" />
-                        <span className="text-lg font-semibold" data-testid="text-total-claims">
-                          {provider.totalClaims?.toLocaleString() || 0}
-                        </span>
-                      </div>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 font-medium tracking-wide">Claims / Month</p>
+                      <p className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-violet-600 to-fuchsia-600 dark:from-violet-400 dark:to-fuchsia-400" data-testid="text-cpm">
+                        {formatNumber(claimsPerMonth)}
+                      </p>
                     </div>
                     <div className="space-y-1">
-                      <p className="text-xs text-muted-foreground">Flagged Claims</p>
-                      <div className="flex items-center gap-2">
-                        <Flag className="w-4 h-4 text-orange-600 dark:text-orange-400" />
-                        <span className="text-lg font-semibold" data-testid="text-flagged-claims">
-                          {provider.flaggedClaims?.toLocaleString() || 0}
+                      <p className="text-xs text-slate-500 dark:text-slate-400 font-medium tracking-wide">Peer Average</p>
+                      <p className="text-xl font-bold text-slate-700 dark:text-slate-300" data-testid="text-cpm-peer">
+                        {formatNumber(cpmPeerAverage)}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-900/50 border border-slate-200/60 dark:border-slate-800/60 shadow-inner space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider">Benchmark</span>
+                      <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-sm">
+                        {cpmTrend >= 0 ? (
+                          <TrendingUp className="w-3.5 h-3.5 text-red-500" />
+                        ) : (
+                          <TrendingDown className="w-3.5 h-3.5 text-emerald-500" />
+                        )}
+                        <span className={`text-[10px] font-bold ${cpmTrend >= 0 ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"}`} data-testid="text-cpm-trend">
+                          {cpmTrend >= 0 ? "+" : ""}{cpmTrend.toFixed(1)}%
                         </span>
                       </div>
                     </div>
-                    <div className="space-y-1">
-                      <p className="text-xs text-muted-foreground">Avg Claim Amount</p>
-                      <div className="flex items-center gap-2">
-                        <DollarSign className="w-4 h-4 text-purple-600 dark:text-purple-400" />
-                        <span className="text-lg font-semibold" data-testid="text-avg-amount">
-                          {formatCurrency(avgClaimAmount)}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="space-y-1">
-                      <p className="text-xs text-muted-foreground">Total Exposure</p>
-                      <div className="flex items-center gap-2">
-                        <TrendingUp className="w-4 h-4 text-red-600 dark:text-red-400" />
-                        <span className="text-lg font-semibold" data-testid="text-total-exposure">
-                          {formatCurrency(totalExposure)}
-                        </span>
-                      </div>
-                    </div>
+                    <Progress
+                      value={Math.min((claimsPerMonth / cpmPeerAverage) * 50, 100)}
+                      className="h-1.5 bg-slate-200 dark:bg-slate-800 [&>div]:bg-current"
+                      style={{ color: claimsPerMonth > cpmPeerAverage ? '#ef4444' : '#10b981' } as React.CSSProperties}
+                    />
+                    <p className="text-[10px] text-slate-500 dark:text-slate-400 font-medium">
+                      Tracking <strong className={claimsPerMonth > cpmPeerAverage ? "text-red-500" : "text-emerald-500"}>{((claimsPerMonth / cpmPeerAverage - 1) * 100).toFixed(1)}%</strong> {claimsPerMonth > cpmPeerAverage ? "above" : "below"} peer average
+                    </p>
                   </div>
                 </CardContent>
               </Card>
             </div>
 
+            {/* Claim Statistics */}
             <div className="space-y-3">
-              <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
-                Quick Actions
+              <h3 className="text-xs font-bold text-violet-600 dark:text-violet-400 uppercase tracking-widest flex items-center gap-2">
+                <span className="w-1 h-1 rounded-full bg-violet-600 dark:bg-violet-400" /> Claim Volumes
+              </h3>
+              <Card className="bg-white/60 dark:bg-slate-900/40 backdrop-blur-xl border-white/60 dark:border-white/10 shadow-sm">
+                <CardContent className="p-4">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1 bg-violet-50/50 dark:bg-violet-900/10 p-3 rounded-xl border border-violet-100 dark:border-violet-800/30">
+                      <p className="text-[10px] text-violet-600 dark:text-violet-400 font-bold uppercase tracking-wider flex items-center gap-1">
+                        <ClipboardList className="w-3 h-3" /> Total
+                      </p>
+                      <p className="text-lg font-bold text-slate-800 dark:text-slate-200" data-testid="text-total-claims">
+                        {provider.totalClaims?.toLocaleString() || 0}
+                      </p>
+                    </div>
+                    <div className="space-y-1 bg-orange-50/50 dark:bg-orange-900/10 p-3 rounded-xl border border-orange-100 dark:border-orange-800/30">
+                      <p className="text-[10px] text-orange-600 dark:text-orange-400 font-bold uppercase tracking-wider flex items-center gap-1">
+                        <Flag className="w-3 h-3" /> Flagged
+                      </p>
+                      <p className="text-lg font-bold text-slate-800 dark:text-slate-200" data-testid="text-flagged-claims">
+                        {provider.flaggedClaims?.toLocaleString() || 0}
+                      </p>
+                    </div>
+                    <div className="space-y-1 bg-fuchsia-50/50 dark:bg-fuchsia-900/10 p-3 rounded-xl border border-fuchsia-100 dark:border-fuchsia-800/30">
+                      <p className="text-[10px] text-fuchsia-600 dark:text-fuchsia-400 font-bold uppercase tracking-wider flex items-center gap-1">
+                        <DollarSign className="w-3 h-3" /> Avg Amount
+                      </p>
+                      <p className="text-lg font-bold text-slate-800 dark:text-slate-200" data-testid="text-avg-amount">
+                        {formatCurrency(avgClaimAmount)}
+                      </p>
+                    </div>
+                    <div className="space-y-1 bg-red-50/50 dark:bg-red-900/10 p-3 rounded-xl border border-red-200/50 dark:border-900/30">
+                      <p className="text-[10px] text-red-600 dark:text-red-400 font-bold uppercase tracking-wider flex items-center gap-1">
+                        <TrendingUp className="w-3 h-3" /> Total Exposure
+                      </p>
+                      <p className="text-lg font-bold text-slate-800 dark:text-slate-200" data-testid="text-total-exposure">
+                        {formatCurrency(totalExposure)}
+                      </p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+            <div className="space-y-3">
+              <h3 className="text-xs font-bold text-violet-600 dark:text-violet-400 uppercase tracking-widest flex items-center gap-2">
+                <span className="w-1 h-1 rounded-full bg-violet-600 dark:bg-violet-400" /> Quick Actions
               </h3>
               <div className="space-y-2">
-                <Button
-                  className="w-full bg-purple-600 hover:bg-purple-700 text-white"
-                  onClick={onReconcile}
-                  data-testid="button-reconcile"
-                >
-                  <Shield className="w-4 h-4 mr-2" />
-                  Reconcile
-                </Button>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <Button variant="outline" className="w-full" data-testid="button-agent-workflow">
-                      <Brain className="w-4 h-4 mr-2" />
-                      Agent Workflow
-                      <ChevronDown className="w-4 h-4 ml-auto" />
+                    <Button variant="outline" className="w-full bg-white/60 dark:bg-slate-900/40 border-violet-100 dark:border-violet-900/50 hover:bg-violet-50 dark:hover:bg-violet-900/40 hover:text-violet-700 dark:hover:text-violet-300 transition-colors shadow-sm" data-testid="button-agent-workflow">
+                      <Brain className="w-4 h-4 mr-2 text-violet-500" />
+                      AI Agent Workflow
+                      <ChevronDown className="w-4 h-4 ml-auto opacity-50" />
                     </Button>
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-56">
+                  <DropdownMenuContent align="end" className="w-56 bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl border-white/20 dark:border-white/10 shadow-xl">
                     <DropdownMenuItem
                       onClick={() => navigate(`/fwa/agent-workflow?entityId=${provider.providerId}&entityType=provider&entityName=${encodeURIComponent(provider.providerName)}&phase=A1`)}
                       data-testid="menu-item-phase-a1"
+                      className="cursor-pointer hover:bg-violet-50 dark:hover:bg-violet-900/30 font-medium"
                     >
-                      <Activity className="w-4 h-4 mr-2" />
+                      <Activity className="w-4 h-4 mr-2 text-violet-500" />
                       Analysis & Intelligence
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       onClick={() => navigate(`/fwa/agent-workflow?entityId=${provider.providerId}&entityType=provider&entityName=${encodeURIComponent(provider.providerName)}&phase=A2`)}
                       data-testid="menu-item-phase-a2"
+                      className="cursor-pointer hover:bg-violet-50 dark:hover:bg-violet-900/30 font-medium"
                     >
-                      <ClipboardList className="w-4 h-4 mr-2" />
+                      <ClipboardList className="w-4 h-4 mr-2 text-violet-500" />
                       Abuse Categorization
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       onClick={() => navigate(`/fwa/agent-workflow?entityId=${provider.providerId}&entityType=provider&entityName=${encodeURIComponent(provider.providerName)}&phase=A3`)}
                       data-testid="menu-item-phase-a3"
+                      className="cursor-pointer hover:bg-violet-50 dark:hover:bg-violet-900/30 font-medium"
                     >
-                      <Shield className="w-4 h-4 mr-2" />
+                      <Shield className="w-4 h-4 mr-2 text-violet-500" />
                       Prospective Actions
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
-                <Button variant="outline" className="w-full" data-testid="button-view-cases">
-                  <FileText className="w-4 h-4 mr-2" />
-                  View IC Cases
-                </Button>
-                <Button variant="outline" className="w-full" data-testid="button-view-claims">
-                  <ClipboardList className="w-4 h-4 mr-2" />
-                  View All Claims
-                </Button>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <Button variant="outline" className="w-full bg-white/60 dark:bg-slate-900/40 border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/80 shadow-sm" data-testid="button-view-cases">
+                    <FileText className="w-4 h-4 mr-2 text-slate-500" />
+                    View IC Cases
+                  </Button>
+                  <Button variant="outline" className="w-full bg-white/60 dark:bg-slate-900/40 border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/80 shadow-sm" data-testid="button-view-claims">
+                    <ClipboardList className="w-4 h-4 mr-2 text-slate-500" />
+                    View All Claims
+                  </Button>
+                </div>
               </div>
             </div>
           </div>
         </ScrollArea>
+
+        <div className="p-6 border-t border-white/40 dark:border-white/10 bg-slate-50/95 dark:bg-slate-950/95 backdrop-blur-xl relative overflow-hidden flex-shrink-0">
+          <div className="absolute inset-0 bg-gradient-to-t from-violet-500/5 to-transparent pointer-events-none" />
+          <Button
+            className="w-full relative group overflow-hidden bg-slate-900 hover:bg-slate-800 text-white dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100 shadow-xl shadow-slate-900/10 dark:shadow-white/10 transition-all duration-300"
+            size="lg"
+            onClick={onReconcile}
+            data-testid="button-reconcile"
+          >
+            <div className="absolute inset-0 bg-gradient-to-r from-violet-600/20 to-fuchsia-600/20 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+            <div className="flex items-center justify-center gap-2 relative z-10 w-full font-bold tracking-wide">
+              <ShieldAlert className="w-5 h-5 text-violet-400 dark:text-violet-600" />
+              <span>Initiate Review Protocol</span>
+              <ChevronRight className="w-4 h-4 ml-2 group-hover:translate-x-1 transition-transform" />
+            </div>
+          </Button>
+        </div>
       </SheetContent>
     </Sheet>
   );
@@ -517,7 +481,7 @@ export default function FWAProviders() {
     },
     onSuccess: () => {
       if (providerToWatch) {
-        setWatchedProviders((prev) => new Set([...prev, providerToWatch.providerId]));
+        setWatchedProviders((prev) => new Set([...Array.from(prev), providerToWatch.providerId]));
       }
       toast({
         title: "Provider added to watch list",
@@ -529,7 +493,7 @@ export default function FWAProviders() {
     },
     onError: (error: Error) => {
       if (providerToWatch) {
-        setWatchedProviders((prev) => new Set([...prev, providerToWatch.providerId]));
+        setWatchedProviders((prev) => new Set([...Array.from(prev), providerToWatch.providerId]));
       }
       toast({
         title: "Provider added to watch list",
@@ -614,7 +578,7 @@ export default function FWAProviders() {
           </p>
         </div>
         <Button
-          variant="outline"
+          className="bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-700 hover:to-fuchsia-700 text-white shadow-md shadow-violet-500/20 border-0"
           size="sm"
           data-testid="button-refresh"
           onClick={() => refetch()}
@@ -624,39 +588,39 @@ export default function FWAProviders() {
         </Button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatsCard
+      <div className={METRIC_GRID}>
+        <MetricCard
           title="Total Facilities"
-          value={stats.totalProviders}
-          description="Facilities in system"
+          value={String(stats.totalProviders)}
+          subtitle="Facilities in system"
           icon={Building2}
-          isLoading={isLoading}
+          loading={isLoading}
         />
-        <StatsCard
+        <MetricCard
           title="High Risk"
-          value={stats.highRiskCount}
-          description="Critical & high risk"
+          value={String(stats.highRiskCount)}
+          subtitle="Critical & high risk"
           icon={AlertTriangle}
-          isLoading={isLoading}
+          loading={isLoading}
         />
-        <StatsCard
+        <MetricCard
           title="Total Exposure"
           value={formatCurrency(stats.totalExposure)}
-          description="Combined exposure amount"
+          subtitle="Combined exposure amount"
           icon={DollarSign}
-          isLoading={isLoading}
+          loading={isLoading}
         />
-        <StatsCard
+        <MetricCard
           title="Active Cases"
-          value={stats.activeCases}
-          description="Open FWA cases"
+          value={String(stats.activeCases)}
+          subtitle="Open FWA cases"
           icon={FileText}
-          isLoading={isLoading}
+          loading={isLoading}
         />
       </div>
 
-      <Card>
-        <CardHeader className="pb-4">
+      <Card className="bg-white/40 dark:bg-slate-950/40 backdrop-blur-xl border-white/20 dark:border-white/10 shadow-lg mt-6 overflow-hidden">
+        <CardHeader className="pb-4 bg-white/50 dark:bg-slate-900/50 border-b border-white/20 dark:border-white/10">
           <div className="flex flex-wrap items-center gap-4">
             <div className="relative flex-1 min-w-[200px]">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -664,12 +628,12 @@ export default function FWAProviders() {
                 placeholder="Search by facility name..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-9"
+                className="pl-9 bg-white/50 dark:bg-slate-900/50 border-white/20 dark:border-white/10 focus-visible:ring-violet-500 transition-all rounded-lg"
                 data-testid="input-search"
               />
             </div>
             <Select value={providerTypeFilter} onValueChange={setProviderTypeFilter}>
-              <SelectTrigger className="w-[160px]" data-testid="select-provider-type">
+              <SelectTrigger className="w-[160px] bg-white/50 dark:bg-slate-900/50 border-white/20 dark:border-white/10 rounded-lg" data-testid="select-provider-type">
                 <SelectValue placeholder="Provider Type" />
               </SelectTrigger>
               <SelectContent>
@@ -680,7 +644,7 @@ export default function FWAProviders() {
               </SelectContent>
             </Select>
             <Select value={riskLevelFilter} onValueChange={setRiskLevelFilter}>
-              <SelectTrigger className="w-[160px]" data-testid="select-risk-level">
+              <SelectTrigger className="w-[160px] bg-white/50 dark:bg-slate-900/50 border-white/20 dark:border-white/10 rounded-lg" data-testid="select-risk-level">
                 <SelectValue placeholder="Risk Level" />
               </SelectTrigger>
               <SelectContent>
@@ -899,7 +863,7 @@ export default function FWAProviders() {
           <AlertDialogHeader>
             <AlertDialogTitle>Add to Watch List</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to add <strong>{providerToWatch?.providerName}</strong> to your watch list? 
+              Are you sure you want to add <strong>{providerToWatch?.providerName}</strong> to your watch list?
               You will receive alerts about any new activity or risk changes for this provider.
             </AlertDialogDescription>
           </AlertDialogHeader>

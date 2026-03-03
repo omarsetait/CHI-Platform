@@ -3,9 +3,12 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { 
-  FileText, 
-  CheckCircle, 
+import { MetricCard } from "@/components/metric-card";
+import { METRIC_GRID } from "@/lib/grid";
+import { EmptyState } from "@/components/ui/empty-state";
+import {
+  FileText,
+  CheckCircle,
   Clock,
   AlertTriangle,
   RefreshCw,
@@ -65,48 +68,6 @@ function mapDemoClaimToSummary(c: DemoClaim): ClaimSummary {
     totalAmount: parseFloat(c.claimAmount),
     submittedAt: c.submissionDate,
   };
-}
-
-function StatsCard({ 
-  title, 
-  value, 
-  description, 
-  icon: Icon,
-  trend,
-  isLoading
-}: { 
-  title: string; 
-  value: number | string; 
-  description: string; 
-  icon: React.ElementType;
-  trend?: { value: number; isPositive: boolean };
-  isLoading?: boolean;
-}) {
-  return (
-    <Card data-testid={`stats-card-${title.toLowerCase().replace(/\s+/g, "-")}`}>
-      <CardContent className="p-6">
-        <div className="flex items-center justify-between gap-2">
-          <div className="space-y-1">
-            <p className="text-sm text-muted-foreground">{title}</p>
-            {isLoading ? (
-              <Skeleton className="h-9 w-16" />
-            ) : (
-              <p className="text-3xl font-bold">{value}</p>
-            )}
-            <p className="text-xs text-muted-foreground">{description}</p>
-          </div>
-          <div className="p-3 rounded-lg bg-muted">
-            <Icon className="w-5 h-5 text-muted-foreground" />
-          </div>
-        </div>
-        {trend && !isLoading && (
-          <div className={`mt-2 text-xs ${trend.isPositive ? "text-green-600" : "text-red-600"}`}>
-            {trend.isPositive ? "+" : "-"}{trend.value}% from last month
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
 }
 
 function ClaimCard({ claim }: { claim: ClaimSummary }) {
@@ -227,36 +188,36 @@ export default function ClaimsGovernanceDashboard() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatsCard
+      <div className={METRIC_GRID}>
+        <MetricCard
           title="Total in Pipeline"
-          value={stats.totalInPipeline}
-          description="Claims being processed"
+          value={String(stats.totalInPipeline)}
+          subtitle="Claims being processed"
           icon={FileText}
-          trend={{ value: 8, isPositive: true }}
-          isLoading={isLoading}
+          trend={{ value: "8%", isPositive: true }}
+          loading={isLoading}
         />
-        <StatsCard
+        <MetricCard
           title="Pending Review"
-          value={stats.pendingReview}
-          description="Awaiting adjudicator"
+          value={String(stats.pendingReview)}
+          subtitle="Awaiting adjudicator"
           icon={Clock}
-          isLoading={isLoading}
+          loading={isLoading}
         />
-        <StatsCard
+        <MetricCard
           title="Auto-Approved"
-          value={stats.autoApproved}
-          description="Today"
+          value={String(stats.autoApproved)}
+          subtitle="Today"
           icon={CheckCircle}
-          trend={{ value: 15, isPositive: true }}
-          isLoading={isLoading}
+          trend={{ value: "15%", isPositive: true }}
+          loading={isLoading}
         />
-        <StatsCard
+        <MetricCard
           title="Flagged for Review"
-          value={stats.flagged}
-          description="Requires attention"
+          value={String(stats.flagged)}
+          subtitle="Requires attention"
           icon={Flag}
-          isLoading={isLoading}
+          loading={isLoading}
         />
       </div>
 
@@ -282,10 +243,11 @@ export default function ClaimsGovernanceDashboard() {
                   ))}
                 </div>
               ) : claims.length === 0 ? (
-                <div className="text-center py-8 text-muted-foreground">
-                  <FileText className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                  <p>No claims in the pipeline</p>
-                </div>
+                <EmptyState
+                  variant="no-data"
+                  icon={FileText}
+                  title="No claims in the pipeline"
+                />
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {claims.slice(0, 4).map(claim => (

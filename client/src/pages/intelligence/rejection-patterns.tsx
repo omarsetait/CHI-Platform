@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
@@ -48,10 +49,10 @@ export default function RejectionPatternsPage() {
           </div>
           <div>
             <div className="text-sm font-medium text-muted-foreground">Overall Rejection Rate</div>
-            <div className="text-4xl font-bold text-rose-600">{data?.overallRate ?? "..."}%</div>
+            <div className="text-4xl font-bold text-rose-600">{data ? `${data.overallRate}%` : <Skeleton className="h-8 w-24 inline-block" />}</div>
             <div className="flex items-center gap-1 text-xs text-muted-foreground mt-1">
               <TrendingDown className="h-3 w-3" />
-              Across {data ? data.bySpecialty.reduce((sum, s) => sum + s.claims, 0).toLocaleString() : "..."} total claims
+              Across {data ? data.bySpecialty.reduce((sum, s) => sum + s.claims, 0).toLocaleString() : <Skeleton className="h-3 w-12 inline-block" />} total claims
             </div>
           </div>
         </CardContent>
