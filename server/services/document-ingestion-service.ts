@@ -307,22 +307,19 @@ export class DocumentIngestionService {
         const batchChunks = chunks.slice(i, i + BATCH_SIZE);
         const embeddings = await generateEmbeddingsBatch(batchChunks);
         
-        for (let j = 0; j < batchChunks.length; j++) {
+        const valuesClauses = batchChunks.map((chunk, j) => {
           const chunkIndex = i + j;
-          const embedding = embeddings[j];
-          const embeddingStr = `[${embedding.join(",")}]`;
-          
-          await db.execute(sql`
-            INSERT INTO knowledge_chunks (
-              document_id, chunk_index, content, token_count, embedding
-            ) VALUES (
-              ${documentId}, ${chunkIndex}, ${batchChunks[j]}, 
-              ${Math.ceil(batchChunks[j].length / 4)},
-              ${embeddingStr}::vector
-            )
-          `);
-          processedChunks++;
-        }
+          const embeddingStr = `[${embeddings[j].join(",")}]`;
+          const tokenCount = Math.ceil(chunk.length / 4);
+          return sql`(${documentId}, ${chunkIndex}, ${chunk}, ${tokenCount}, ${embeddingStr}::vector)`;
+        });
+
+        await db.execute(sql`
+          INSERT INTO knowledge_chunks (document_id, chunk_index, content, token_count, embedding)
+          VALUES ${sql.join(valuesClauses, sql`, `)}
+        `);
+
+        processedChunks += batchChunks.length;
       }
 
       console.info(`[RAG][Ingestion] Generated embeddings for ${processedChunks} chunks in ${Date.now() - embeddingsStart}ms`);
