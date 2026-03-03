@@ -5,6 +5,7 @@ import OpenAI from "openai";
 import multer from "multer";
 import { documentIngestionService, DocumentCategory } from "../services/document-ingestion-service";
 import { knowledgeUploadQueueService } from "../services/knowledge-upload-queue-service";
+import { requireAuth } from "../middleware/auth";
 import { z } from "zod";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -452,7 +453,7 @@ Only return valid JSON, no other text.`;
   // =============================================
 
   // Upload a single knowledge document (queue-backed)
-  app.post("/api/knowledge-documents/upload", uploadMiddleware.single("file"), async (req: Request, res: Response) => {
+  app.post("/api/knowledge-documents/upload", requireAuth, uploadMiddleware.single("file"), async (req: Request, res: Response) => {
     try {
       if (!(await ensureKnowledgeQueueReady(res))) return;
 
@@ -511,7 +512,7 @@ Only return valid JSON, no other text.`;
   });
 
   // Upload multiple knowledge documents (queue-backed batch)
-  app.post("/api/knowledge-documents/upload-batch", uploadMiddleware.array("files", 50), async (req: Request, res: Response) => {
+  app.post("/api/knowledge-documents/upload-batch", requireAuth, uploadMiddleware.array("files", 50), async (req: Request, res: Response) => {
     try {
       if (!(await ensureKnowledgeQueueReady(res))) return;
 
@@ -675,7 +676,7 @@ Only return valid JSON, no other text.`;
   });
 
   // Retry only failed items for a completed/failed batch
-  app.post("/api/knowledge-documents/upload-jobs/:jobId/retry-failed", async (req: Request, res: Response) => {
+  app.post("/api/knowledge-documents/upload-jobs/:jobId/retry-failed", requireAuth, async (req: Request, res: Response) => {
     try {
       if (!(await ensureKnowledgeQueueReady(res))) return;
 
@@ -797,7 +798,7 @@ Only return valid JSON, no other text.`;
   });
 
   // Delete a knowledge document
-  app.delete("/api/knowledge-documents/:id", async (req: Request, res: Response) => {
+  app.delete("/api/knowledge-documents/:id", requireAuth, async (req: Request, res: Response) => {
     try {
       await documentIngestionService.deleteDocument(req.params.id);
       res.json({
@@ -811,7 +812,7 @@ Only return valid JSON, no other text.`;
   });
 
   // Re-process a knowledge document (clear chunks, reset status, re-run ingestion)
-  app.post("/api/knowledge-documents/:id/reprocess", async (req: Request, res: Response) => {
+  app.post("/api/knowledge-documents/:id/reprocess", requireAuth, async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
 
