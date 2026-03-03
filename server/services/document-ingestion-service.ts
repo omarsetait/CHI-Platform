@@ -1,5 +1,5 @@
 import { db } from "../db";
-import { sql } from "drizzle-orm";
+import { sql, SQL } from "drizzle-orm";
 import OpenAI from "openai";
 import fs from "fs";
 import path from "path";
@@ -411,32 +411,33 @@ export class DocumentIngestionService {
     offset?: number;
   } = {}): Promise<{ documents: any[]; total: number }> {
     const { category, status, limit = 50, offset = 0 } = options;
-    
-    let whereClause = "1=1";
-    if (category) whereClause += ` AND category = '${category}'`;
-    if (status) whereClause += ` AND processing_status = '${status}'`;
-    
-    const countResult = await db.execute(sql.raw(`
-      SELECT COUNT(*) as total FROM knowledge_documents WHERE ${whereClause}
-    `));
+    const safeLimit = Math.min(Math.max(1, Number(limit) || 50), 500);
+    const safeOffset = Math.max(0, Number(offset) || 0);
+
+    const conditions: SQL[] = [];
+    if (category) conditions.push(sql`category = ${category}`);
+    if (status) conditions.push(sql`processing_status = ${status}`);
+
+    const whereClause = conditions.length > 0
+      ? sql`WHERE ${sql.join(conditions, sql` AND `)}`
+      : sql``;
+
+    const countResult = await db.execute(sql`
+      SELECT COUNT(*) as total FROM knowledge_documents ${whereClause}
+    `);
     const total = parseInt((countResult.rows[0] as any).total);
-    
-    const documents = await db.execute(sql.raw(`
-      SELECT 
-        id, filename, original_filename, file_type, category,
-        title, title_ar, description, source_authority,
-        file_size, page_count, processing_status, processing_error,
-        chunk_count, created_at, updated_at
-      FROM knowledge_documents 
-      WHERE ${whereClause}
+
+    const documents = await db.execute(sql`
+      SELECT id, filename, original_filename, file_type, category,
+             title, title_ar, description, source_authority,
+             file_size, page_count, processing_status, processing_error,
+             chunk_count, created_at, updated_at
+      FROM knowledge_documents ${whereClause}
       ORDER BY created_at DESC
-      LIMIT ${limit} OFFSET ${offset}
-    `));
-    
-    return {
-      documents: documents.rows as any[],
-      total
-    };
+      LIMIT ${safeLimit} OFFSET ${safeOffset}
+    `);
+
+    return { documents: documents.rows as any[], total };
   }
   
   async getDocumentById(id: string): Promise<any> {
