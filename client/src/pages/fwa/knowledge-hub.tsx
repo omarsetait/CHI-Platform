@@ -1,5 +1,6 @@
 import { useMemo, useState, useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -249,13 +250,9 @@ export default function KnowledgeHub() {
   const retryFailedMutation = useMutation({
     mutationFn: async () => {
       if (!activeJobId) throw new Error("No active job selected");
-      const response = await fetch(`/api/knowledge-documents/upload-jobs/${activeJobId}/retry-failed`, {
-        method: "POST",
-      });
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || "Retry failed");
-      }
+      const response = await apiRequest("POST",
+        `/api/knowledge-documents/upload-jobs/${activeJobId}/retry-failed`
+      );
       return response.json();
     },
     onSuccess: async () => {
@@ -270,13 +267,7 @@ export default function KnowledgeHub() {
 
   const deleteDocumentMutation = useMutation({
     mutationFn: async (id: string) => {
-      const response = await fetch(`/api/knowledge-documents/${id}`, {
-        method: "DELETE",
-      });
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || "Delete failed");
-      }
+      const response = await apiRequest("DELETE", `/api/knowledge-documents/${id}`);
       return response.json();
     },
     onSuccess: () => {
@@ -291,13 +282,7 @@ export default function KnowledgeHub() {
 
   const reprocessDocumentMutation = useMutation({
     mutationFn: async (id: string) => {
-      const response = await fetch(`/api/knowledge-documents/${id}/reprocess`, {
-        method: "POST",
-      });
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || "Reprocess failed");
-      }
+      const response = await apiRequest("POST", `/api/knowledge-documents/${id}/reprocess`);
       return response.json();
     },
     onSuccess: () => {
