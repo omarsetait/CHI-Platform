@@ -9,6 +9,7 @@ import {
   Database,
   MessageCircle,
   Settings2,
+  BookOpen,
 } from "lucide-react";
 import type { PillarConfig } from "@/pillars/types";
 
@@ -24,7 +25,6 @@ export const fwaPillarConfig: PillarConfig = {
       title: "Detection & Analysis",
       items: [
         { label: "Detection Engine", href: "/fwa/detection-engine", icon: Shield },
-        { label: "5 Detection Methods", href: "/fwa/engine-config", icon: Settings2 },
         { label: "Coding Intelligence", href: "/fwa/coding-intelligence", icon: Stethoscope },
         { label: "Flagged Claims", href: "/fwa/flagged-claims", icon: FileSearch },
       ],
@@ -48,6 +48,13 @@ export const fwaPillarConfig: PillarConfig = {
       items: [
         { label: "Knowledge Hub", href: "/fwa/knowledge-hub", icon: Database },
         { label: "Daman AI Chat", href: "/fwa/chat", icon: MessageCircle },
+      ],
+    },
+    {
+      title: "Configurations",
+      items: [
+        { label: "Rule Management Studio", href: "/fwa/rule-studio", icon: BookOpen },
+        { label: "Engine Configurations", href: "/fwa/engine-config", icon: Settings2 },
       ],
     },
   ],
