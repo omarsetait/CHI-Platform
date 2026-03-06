@@ -190,7 +190,7 @@ export default function Enforcement() {
 
   // AI Workflow state
   const [hitlDialogOpen, setHitlDialogOpen] = useState(false);
-  const [hitlDossierId, setHitlDossierId] = useState<number | null>(null);
+  const [hitlDossierId, setHitlDossierId] = useState<string | null>(null);
   const [hitlDecision, setHitlDecision] = useState<"approved" | "rejected" | "modify">("approved");
   const [hitlNotes, setHitlNotes] = useState("");
   const [workflowRunning, setWorkflowRunning] = useState<Record<string, boolean>>({});
@@ -235,7 +235,7 @@ export default function Enforcement() {
 
   // Execute next stage mutation
   const executeNextMutation = useMutation({
-    mutationFn: async (dossierId: number) => {
+    mutationFn: async (dossierId: string) => {
       const res = await apiRequest("POST", `/api/fwa/enforcement-workflow/${dossierId}/execute`);
       return res.json() as Promise<WorkflowExecuteResponse>;
     },
@@ -251,7 +251,7 @@ export default function Enforcement() {
 
   // Run to gate mutation
   const runToGateMutation = useMutation({
-    mutationFn: async (dossierId: number) => {
+    mutationFn: async (dossierId: string) => {
       const res = await apiRequest("POST", `/api/fwa/enforcement-workflow/${dossierId}/run`);
       return res.json() as Promise<WorkflowExecuteResponse>;
     },
@@ -271,7 +271,7 @@ export default function Enforcement() {
 
   // HITL approval mutation
   const hitlApprovalMutation = useMutation({
-    mutationFn: async ({ dossierId, decision, notes }: { dossierId: number; decision: string; notes: string }) => {
+    mutationFn: async ({ dossierId, decision, notes }: { dossierId: string; decision: string; notes: string }) => {
       const res = await apiRequest("POST", `/api/fwa/enforcement-workflow/${dossierId}/approve`, {
         reviewerId: "current-user",
         reviewerName: "Current User",

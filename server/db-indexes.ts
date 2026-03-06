@@ -194,6 +194,27 @@ export async function createDatabaseIndexes(): Promise<void> {
     console.error("[DB] Error creating indexes:", error);
   }
 
+  // Migrate enforcementDossiers PK from serial to UUID text
+  try {
+    const colCheck = await db.execute(sql`
+      SELECT data_type FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'enforcement_dossiers' AND column_name = 'id'
+    `);
+    if (colCheck.rows.length > 0 && colCheck.rows[0].data_type === 'integer') {
+      await db.execute(sql`
+        ALTER TABLE enforcement_dossiers ADD COLUMN new_id TEXT DEFAULT gen_random_uuid();
+        UPDATE enforcement_dossiers SET new_id = gen_random_uuid() WHERE new_id IS NULL;
+        ALTER TABLE enforcement_dossiers DROP CONSTRAINT enforcement_dossiers_pkey;
+        ALTER TABLE enforcement_dossiers DROP COLUMN id;
+        ALTER TABLE enforcement_dossiers RENAME COLUMN new_id TO id;
+        ALTER TABLE enforcement_dossiers ADD PRIMARY KEY (id);
+      `);
+      console.log("[DB] Migrated enforcementDossiers PK from serial to UUID text");
+    }
+  } catch (error) {
+    console.error("[DB] Error migrating enforcementDossiers PK:", error);
+  }
+
   // Migrate legacy tables: rename to _backup if they still exist as tables
   try {
     // Check if legacy 'claims' table exists as a BASE TABLE (not a view)

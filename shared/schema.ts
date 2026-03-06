@@ -2095,7 +2095,7 @@ export type EnforcementCase = typeof enforcementCases.$inferSelect;
 
 // Enforcement Dossiers Table - Agentic workflow case dossiers
 export const enforcementDossiers = pgTable("enforcement_dossiers", {
-  id: serial("id").primaryKey(),
+  id: text("id").primaryKey().default(sql`gen_random_uuid()`),
   caseId: text("case_id").notNull(),
   enforcementCaseId: text("enforcement_case_id").notNull(),
   claimIds: jsonb("claim_ids").notNull().default([]),
