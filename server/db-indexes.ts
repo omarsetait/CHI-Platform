@@ -193,4 +193,26 @@ export async function createDatabaseIndexes(): Promise<void> {
   } catch (error) {
     console.error("[DB] Error creating indexes:", error);
   }
+
+  // Create backward-compatibility views for legacy table names
+  try {
+    await db.execute(sql`
+      CREATE OR REPLACE VIEW fwa_analyzed_claims AS
+      SELECT
+        id,
+        claim_number as claim_reference,
+        member_id as patient_id,
+        provider_id,
+        primary_diagnosis as icd,
+        cpt_codes[1] as cpt,
+        amount as total_amount,
+        status,
+        service_date,
+        created_at
+      FROM claims_v2;
+    `);
+    console.log("[DB] Backward-compatibility views created successfully");
+  } catch (error) {
+    console.error("[DB] Error creating backward-compatibility views:", error);
+  }
 }
