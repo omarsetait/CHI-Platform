@@ -1,6 +1,13 @@
 import OpenAI from "openai";
 
-const openai = new OpenAI();
+let _openai: OpenAI | null = null;
+function getOpenAI(): OpenAI {
+  if (!_openai) {
+    if (!process.env.OPENAI_API_KEY) throw new Error("OPENAI_API_KEY is not set");
+    _openai = new OpenAI();
+  }
+  return _openai;
+}
 
 interface MergerInput {
   userMessage: string;
@@ -32,7 +39,7 @@ export async function mergeResponses(input: MergerInput): Promise<string> {
   }
 
   const start = Date.now();
-  const response = await openai.chat.completions.create({
+  const response = await getOpenAI().chat.completions.create({
     model: "gpt-4o",
     temperature: 0.3,
     max_tokens: 2000,

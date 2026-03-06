@@ -3,11 +3,18 @@ import { db } from "../db";
 import { sql } from "drizzle-orm";
 import { EMBEDDING_MODEL } from "./embedding-config";
 
-const openai = new OpenAI();
+let _openai: OpenAI | null = null;
+function getOpenAI(): OpenAI {
+  if (!_openai) {
+    if (!process.env.OPENAI_API_KEY) throw new Error("OPENAI_API_KEY is not set");
+    _openai = new OpenAI();
+  }
+  return _openai;
+}
 
 // Generate embedding for text using OpenAI
 export async function generateEmbedding(text: string): Promise<number[]> {
-  const response = await openai.embeddings.create({
+  const response = await getOpenAI().embeddings.create({
     model: EMBEDDING_MODEL,
     input: text.slice(0, 8000), // Limit input length
   });
@@ -242,7 +249,7 @@ export async function ragKnowledgeBaseQuery(query: string): Promise<{
   const context = contextParts.join('\n\n');
 
   // Generate answer using LLM with retrieved context
-  const response = await openai.chat.completions.create({
+  const response = await getOpenAI().chat.completions.create({
     model: "gpt-4o",
     messages: [
       {

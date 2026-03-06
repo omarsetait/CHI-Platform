@@ -101,10 +101,16 @@ const kbQuerySchema = z.object({
   context: z.any().optional(),
 });
 
-const openai = new OpenAI({
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY
-});
+let _openai: OpenAI | null = null;
+function getOpenAI(): OpenAI {
+  if (!_openai) {
+    const apiKey = process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY;
+    const baseURL = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
+    if (!apiKey) throw new Error("No OpenAI API key configured");
+    _openai = new OpenAI({ apiKey, baseURL });
+  }
+  return _openai;
+}
 
 export function registerFwaRoutes(
   app: Express,
@@ -394,7 +400,7 @@ Generate a formal letter that:
 
 The tone should be firm, authoritative, and leave no ambiguity about the seriousness of the findings. Use specific dollar amounts and percentages where available.`;
 
-      const response = await withRetry(() => openai.chat.completions.create({
+      const response = await withRetry(() => getOpenAI().chat.completions.create({
         model: "gpt-4o",
         messages: [
           {
@@ -9255,7 +9261,7 @@ Available claim fields: amount, procedureCode, diagnosisCode, providerId, patien
 Respond ONLY with valid JSON, no markdown or explanations.`;
 
       const response = await withRetry(async () => {
-        return openai.chat.completions.create({
+        return getOpenAI().chat.completions.create({
           model: "gpt-4o",
           messages: [
             { role: "system", content: systemPrompt },
@@ -9372,7 +9378,7 @@ Respond with JSON:
 }`;
 
       const response = await withRetry(async () => {
-        return openai.chat.completions.create({
+        return getOpenAI().chat.completions.create({
           model: "gpt-4o",
           messages: [
             { role: "system", content: systemPrompt },

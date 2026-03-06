@@ -3,10 +3,16 @@ import { storage } from "../storage";
 import { withRetry } from "../utils/openai-utils";
 import type { ProviderDirectory, InsertClaim } from "@shared/schema";
 
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+let _openai: OpenAI | null = null;
+function getOpenAI(): OpenAI {
+  if (!_openai) {
+    const apiKey = process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY;
+    const baseURL = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
+    if (!apiKey) throw new Error("No OpenAI API key configured");
+    _openai = new OpenAI({ apiKey, baseURL });
+  }
+  return _openai;
+}
 
 interface GeneratedClaim {
   claimNumber: string;
@@ -109,7 +115,7 @@ export class DemoClaimsSeeder {
     const prompt = this.buildClaimsPrompt(provider);
     
     const response = await withRetry(async () => {
-      return await openai.chat.completions.create({
+      return await getOpenAI().chat.completions.create({
         model: this.MODEL,
         messages: [
           {

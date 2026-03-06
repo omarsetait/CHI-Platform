@@ -12,7 +12,14 @@ const require = createRequire(import.meta.url);
 const pdfParse = require("pdf-parse");
 const mammoth = require("mammoth");
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+let _openai: OpenAI | null = null;
+function getOpenAI(): OpenAI {
+  if (!_openai) {
+    if (!process.env.OPENAI_API_KEY) throw new Error("OPENAI_API_KEY is not set");
+    _openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  }
+  return _openai;
+}
 
 const MAX_CHUNK_TOKENS = 500;
 const CHUNK_OVERLAP = 50;
@@ -100,7 +107,7 @@ async function extractTextFromImage(filePath: string): Promise<{ text: string; p
   
   const response = await withRetry(
     () =>
-      openai.chat.completions.create({
+      getOpenAI().chat.completions.create({
         model: "gpt-4o",
         messages: [
           {
@@ -174,7 +181,7 @@ function chunkText(text: string, maxTokens: number = MAX_CHUNK_TOKENS, overlap: 
 async function generateEmbedding(text: string): Promise<number[]> {
   const response = await withRetry(
     () =>
-      openai.embeddings.create({
+      getOpenAI().embeddings.create({
         model: EMBEDDING_MODEL,
         input: text.slice(0, 8000)
       }),
@@ -187,7 +194,7 @@ async function generateEmbeddingsBatch(texts: string[]): Promise<number[][]> {
   const truncatedTexts = texts.map(t => t.slice(0, 8000));
   const response = await withRetry(
     () =>
-      openai.embeddings.create({
+      getOpenAI().embeddings.create({
         model: EMBEDDING_MODEL,
         input: truncatedTexts
       }),

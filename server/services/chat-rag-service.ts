@@ -8,7 +8,14 @@ import { queryPlatformData } from "./chat-data-agent";
 import { mergeResponses } from "./chat-response-merger";
 import { EMBEDDING_MODEL } from "./embedding-config";
 
-const openai = new OpenAI();
+let _openai: OpenAI | null = null;
+function getOpenAI(): OpenAI {
+  if (!_openai) {
+    if (!process.env.OPENAI_API_KEY) throw new Error("OPENAI_API_KEY is not set");
+    _openai = new OpenAI();
+  }
+  return _openai;
+}
 
 const SYSTEM_PROMPT = `You are Daman AI, the intelligent assistant for CHI's (Council of Health Insurance) regulatory platform — TachyHealth.
 You are currently assisting in the {pillarName} module on the {pagePath} page.
@@ -75,7 +82,7 @@ async function searchKnowledgeChunks(
     return [];
   }
 
-  const embeddingResponse = await openai.embeddings.create({
+  const embeddingResponse = await getOpenAI().embeddings.create({
     model: EMBEDDING_MODEL,
     input: query,
   });
@@ -136,7 +143,7 @@ async function rerankChunks(
   if (chunks.length <= topK) return chunks;
 
   try {
-    const response = await openai.chat.completions.create({
+    const response = await getOpenAI().chat.completions.create({
       model: "gpt-4o-mini",
       temperature: 0,
       response_format: { type: "json_object" },
@@ -292,7 +299,7 @@ export async function queryDocuments(
   // 4. Generate response — streaming when sseRes is provided, non-streaming otherwise
   if (sseRes) {
     let content = "";
-    const stream = await openai.chat.completions.create({
+    const stream = await getOpenAI().chat.completions.create({
       model: "gpt-4o",
       temperature: 0.4,
       max_tokens: 2000,
@@ -310,7 +317,7 @@ export async function queryDocuments(
   }
 
   // Non-streaming path (used by mixed intent and response merger)
-  const response = await openai.chat.completions.create({
+  const response = await getOpenAI().chat.completions.create({
     model: "gpt-4o",
     temperature: 0.4,
     max_tokens: 2000,
@@ -398,7 +405,7 @@ export async function streamChatResponse(
     switch (routerResult.intent) {
       case "general": {
         // Direct GPT-4o response — no RAG, no data — streamed in real time
-        const generalStream = await openai.chat.completions.create({
+        const generalStream = await getOpenAI().chat.completions.create({
           model: "gpt-4o",
           temperature: 0.4,
           max_tokens: 2000,
@@ -511,7 +518,7 @@ export async function streamChatResponse(
   } catch (agentError) {
     // If all agent dispatch fails, produce a direct GPT response as last-resort fallback
     try {
-      const fallbackResponse = await openai.chat.completions.create({
+      const fallbackResponse = await getOpenAI().chat.completions.create({
         model: "gpt-4o",
         temperature: 0.4,
         max_tokens: 2000,

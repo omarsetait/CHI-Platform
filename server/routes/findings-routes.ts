@@ -6,10 +6,16 @@ import * as XLSX from "xlsx";
 import { withRetry } from "../utils/openai-utils";
 import { sanitizeForAI } from "../utils/input-sanitizer";
 
-const openai = new OpenAI({
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY
-});
+let _openai: OpenAI | null = null;
+function getOpenAI(): OpenAI {
+  if (!_openai) {
+    const apiKey = process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY;
+    const baseURL = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
+    if (!apiKey) throw new Error("No OpenAI API key configured");
+    _openai = new OpenAI({ apiKey, baseURL });
+  }
+  return _openai;
+}
 
 const findingsClaimsQuerySchema = z.object({
   source: z.enum(["dream_report", "operational", "fwa"]),
@@ -329,7 +335,7 @@ Format your response in clear sections with bullet points where appropriate.`;
 
       let aiAnalysis = "";
       try {
-        const response = await withRetry(() => openai.chat.completions.create({
+        const response = await withRetry(() => getOpenAI().chat.completions.create({
           model: "gpt-4o",
           messages: [
             {

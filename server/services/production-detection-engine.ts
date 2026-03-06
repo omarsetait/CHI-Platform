@@ -27,7 +27,14 @@ function validateRuleField(field: string, ruleCode: string): string {
   return field;
 }
 
-const openai = new OpenAI();
+let _openai: OpenAI | null = null;
+function getOpenAI(): OpenAI {
+  if (!_openai) {
+    if (!process.env.OPENAI_API_KEY) throw new Error("OPENAI_API_KEY is not set");
+    _openai = new OpenAI();
+  }
+  return _openai;
+}
 
 const DEFAULT_WEIGHTS = {
   rule_engine: 0.35,
@@ -1285,7 +1292,7 @@ Provide a structured assessment:
 4. RECOMMENDATION: Specific action for CHI regulatory review
 5. EVIDENCE: List 2-3 specific evidence points from the knowledge base`;
 
-      const response = await openai.chat.completions.create({
+      const response = await getOpenAI().chat.completions.create({
         model: "gpt-4o",
         messages: [
           {
