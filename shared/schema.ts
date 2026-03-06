@@ -1241,7 +1241,8 @@ export const insertReconciliationEntitySchema = createInsertSchema(reconciliatio
 export type InsertReconciliationEntity = z.infer<typeof insertReconciliationEntitySchema>;
 export type ReconciliationEntity = typeof reconciliationEntities.$inferSelect;
 
-// FWA Category Enum for findings
+// DEPRECATED: Duplicate of fwaCategoryTypeEnum (line 568) with same values but different DB name.
+// Use fwaCategoryTypeEnum for new code. This enum kept for backward compat with reconciliation_findings.fwa_category column.
 export const fwaCategoryEnum = pgEnum("fwa_category", [
   "coding",
   "management",
