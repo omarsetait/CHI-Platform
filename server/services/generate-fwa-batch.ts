@@ -191,36 +191,34 @@ export async function generateFwaBatch(batchSize: number = 100): Promise<{
     const claim = {
       id: claimId,
       claimNumber,
-      policyNumber: `POL-${Math.floor(Math.random() * 100000)}`,
       registrationDate: new Date(),
       claimType: randomElement(["Inpatient", "Outpatient", "Emergency", "Surgery", "Lab"]),
       hospital: provider.name,
       amount: String(Math.round(amount * 100) / 100),
       outlierScore: String(Math.round(outlierScore * 100) / 100),
-      description: hasFwa 
+      description: hasFwa
         ? `${diagnosis.desc}. [FWA Indicator: ${fwaType?.label}]`
         : `${diagnosis.desc}. Standard care provided.`,
-      icd: diagnosis.code,
+      primaryDiagnosis: diagnosis.code,
       hasSurgery: Math.random() > 0.7 ? "Yes" : "No",
       surgeryFee: Math.random() > 0.7 ? String(Math.round(amount * 0.4)) : null,
       hasIcu: Math.random() > 0.8 ? "Yes" : "No",
       lengthOfStay: Math.floor(Math.random() * 14) + 1,
-      similarClaims: Math.floor(Math.random() * 20),
-      similarClaimsInHospital: Math.floor(Math.random() * 10),
       providerId: provider.id,
-      providerName: provider.name,
-      patientId: patient.id,
-      patientName: patient.name,
+      memberId: patient.id,
+      practitionerId: null,
+      specialty: null,
+      city: provider.city,
+      providerType: provider.type,
       serviceDate,
-      status: hasFwa 
+      status: hasFwa
         ? randomElement(["pending", "under_review", "rejected"])
         : randomElement(["approved", "approved", "approved", "pending"]),
       category: randomElement(["Surgery", "Consultation", "Therapy", "Diagnostics", "Emergency"]),
       flagged: hasFwa,
       flagReason: hasFwa ? fwaType?.label : null,
-      cptCodes: [],
-      diagnosisCodes: [diagnosis.code],
-      principalDiagnosisCode: diagnosis.code,
+      cptCodes: [] as string[],
+      icdCodes: [diagnosis.code],
       batchNumber: batchId,
     };
 

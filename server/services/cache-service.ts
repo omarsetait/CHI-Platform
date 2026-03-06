@@ -110,7 +110,7 @@ class FWACacheService {
     const regex = new RegExp(pattern);
     let count = 0;
     
-    for (const key of this.cache.keys()) {
+    for (const key of Array.from(this.cache.keys())) {
       if (regex.test(key)) {
         this.cache.delete(key);
         count++;
@@ -136,7 +136,7 @@ class FWACacheService {
     const now = Date.now();
     let expiredCount = 0;
     
-    for (const [key, entry] of this.cache.entries()) {
+    for (const [key, entry] of Array.from(this.cache.entries())) {
       if (now > entry.expiresAt) {
         this.cache.delete(key);
         expiredCount++;
@@ -156,7 +156,7 @@ class FWACacheService {
     
     // Rough memory estimate
     let memoryEstimate = 0;
-    for (const [key, entry] of this.cache.entries()) {
+    for (const [key, entry] of Array.from(this.cache.entries())) {
       memoryEstimate += key.length * 2; // String overhead
       memoryEstimate += JSON.stringify(entry.data).length * 2;
       memoryEstimate += 64; // Entry metadata

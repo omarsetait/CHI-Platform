@@ -291,7 +291,7 @@ export function registerClaimsRoutes(
             context: e.aiRecommendation,
             notes: e.reviewerNotes || undefined,
             entityType: e.entityType,
-            phase: e.phase || undefined,
+            phase: e.phase || "review",
           }));
         updateFwaExemplars(acceptedExemplars);
         console.log(`[RLHF] Updated FWA exemplars with ${acceptedExemplars.length} accepted actions`);
@@ -722,8 +722,8 @@ export async function registerClaimsPipelineRoutes(
       const { limit = 20, claimIds, skipRagLlm = true } = req.body;
       const { inArray, sql, eq } = await import("drizzle-orm");
       const { claims } = await import("@shared/schema");
-      
-      // Get claims from the claims table
+
+      // Get claims from the claims_v2 table
       let claimsToProcess;
       if (claimIds && Array.isArray(claimIds) && claimIds.length > 0) {
         claimsToProcess = await db.select().from(claims)
@@ -758,37 +758,26 @@ export async function registerClaimsPipelineRoutes(
       
       for (const claim of claimsToProcess) {
         try {
-          // Map claims table format to AnalyzedClaimData format with enhanced FWA fields
+          // Map claims table format to AnalyzedClaimData format
           const analyzedClaim = {
             id: claim.id,
-            claimReference: claim.claimNumber || claim.id,
+            claimNumber: claim.claimNumber || claim.id,
             providerId: claim.providerId || "UNKNOWN",
-            patientId: claim.patientId || "UNKNOWN",
-            practitionerLicense: claim.practitionerId,
-            specialtyCode: claim.specialtyCode,
-            city: claim.providerCity,
+            memberId: claim.memberId || "UNKNOWN",
+            practitionerId: claim.practitionerId,
+            specialty: claim.specialty,
+            city: claim.city,
             providerType: claim.providerType,
-            providerRegion: (claim as any).providerRegion,
-            unitPrice: claim.unitPrice ? parseFloat(claim.unitPrice) : null,
-            totalAmount: claim.amount ? parseFloat(claim.amount) : null,
-            quantity: claim.rQuantity,
-            principalDiagnosisCode: claim.icd,
-            serviceCode: claim.serviceCode,
-            serviceDescription: claim.serviceDescription || claim.description,
+            unitPrice: null as number | null,
+            amount: claim.amount ? parseFloat(claim.amount) : null,
+            quantity: null as number | null,
+            primaryDiagnosis: claim.primaryDiagnosis,
+            cptCodes: claim.cptCodes,
+            description: claim.description,
             claimType: claim.claimType,
             lengthOfStay: claim.lengthOfStay,
-            originalStatus: claim.status,
-            // Enhanced FWA fields
-            isPreAuthorized: claim.isPreAuthorized || claim.preAuthorizationStatus === "approved" || claim.preAuthorizationStatus === "Approved",
-            isPreAuthorizationRequired: claim.isPreAuthorizationRequired,
-            preAuthorizationStatus: claim.preAuthorizationStatus,
-            preAuthorizationId: claim.preAuthorizationId,
-            chronicFlag: claim.chronicFlag,
-            preExistingFlag: claim.preExistingFlag,
-            maternityFlag: claim.maternityFlag,
-            newbornFlag: claim.newbornFlag,
-            policyEffectiveDate: (claim as any).policyEffectiveDate,
-            serviceDate: claim.serviceDate
+            status: claim.status,
+            isPreAuthorized: claim.isPreAuthorized || false,
           };
           
           const detection = await runProductionDetection(analyzedClaim, undefined, skipRagLlm);
@@ -797,7 +786,7 @@ export async function registerClaimsPipelineRoutes(
           await db.insert(fwaDetectionResults).values({
             claimId: detection.claimId,
             providerId: claim.providerId,
-            patientId: claim.patientId,
+            patientId: claim.memberId,
             compositeScore: String(detection.compositeScore),
             compositeRiskLevel: detection.compositeRiskLevel as any,
             ruleEngineScore: String(detection.ruleEngineScore),

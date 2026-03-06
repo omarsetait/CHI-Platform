@@ -1,5 +1,5 @@
 import { db } from "../db";
-import { fwaAnalyzedClaims } from "@shared/schema";
+import { claims } from "@shared/schema";
 
 const fwaPatterns = [
   { type: "upcoding", description: "Billing higher-cost procedures than performed" },
@@ -39,7 +39,7 @@ const doctors = Array.from({ length: 25 }, (_, i) => ({
 export async function generateTestClaims(count: number = 500): Promise<{ generated: number; fraudulent: number }> {
   console.log(`[TestGen] Generating ${count} test claims with FWA patterns...`);
   
-  const claims: any[] = [];
+  const generatedClaims: any[] = [];
   const now = new Date();
   let fraudulentCount = 0;
   
@@ -77,46 +77,38 @@ export async function generateTestClaims(count: number = 500): Promise<{ generat
     }
     
     const claim = {
-      claimReference: `CLM-GEN-${Date.now().toString(36).toUpperCase()}-${String(i).padStart(4, "0")}`,
+      claimNumber: `CLM-GEN-${Date.now().toString(36).toUpperCase()}-${String(i).padStart(4, "0")}`,
       providerId: provider.id,
-      patientId: patient.id,
-      doctorId: doctor.id,
+      memberId: patient.id,
+      practitionerId: doctor.id,
       claimType: randomElement(claimTypes),
       serviceDate,
-      submissionDate: new Date(serviceDate.getTime() + Math.random() * 7 * 24 * 60 * 60 * 1000),
-      totalAmount: String(amount),
+      registrationDate: new Date(serviceDate.getTime() + Math.random() * 7 * 24 * 60 * 60 * 1000),
+      amount: String(amount),
       approvedAmount: isFraudulent ? String(Math.round(amount * 0.2 * 100) / 100) : String(Math.round(amount * 0.85 * 100) / 100),
-      status: isFraudulent 
+      status: isFraudulent
         ? (Math.random() > 0.6 ? "rejected" : (Math.random() > 0.5 ? "pending" : "approved"))
         : (Math.random() > 0.1 ? "approved" : "pending"),
-      diagnosisCode: randomElement(diagnosisCodes),
-      procedureCode: randomElement(cptCodes),
-      serviceDescription: isFraudulent 
+      primaryDiagnosis: randomElement(diagnosisCodes),
+      cptCodes: [randomElement(cptCodes)],
+      description: isFraudulent
         ? `[FWA:${fwaPattern?.type}] ${fwaPattern?.description}`
         : `Standard ${randomElement(claimTypes)} medical service`,
-      providerSpecialty: provider.specialty,
-      facilityType: randomElement(["Hospital", "Clinic", "Lab", "Pharmacy", "Ambulatory Center"]),
-      currency: "SAR",
-      rawData: {
-        generated: true,
-        testBatch: Date.now(),
-        fwaIndicator: isFraudulent,
-        fwaType: fwaPattern?.type || null,
-        expectedRiskLevel: isFraudulent ? (amount > 40000 ? "critical" : "high") : "low",
-      },
+      specialty: provider.specialty,
+      hospital: randomElement(["Hospital", "Clinic", "Lab", "Pharmacy", "Ambulatory Center"]),
     };
     
-    claims.push(claim);
+    generatedClaims.push(claim);
   }
-  
+
   // Insert in batches
   const batchSize = 100;
-  for (let i = 0; i < claims.length; i += batchSize) {
-    const batch = claims.slice(i, i + batchSize);
-    await db.insert(fwaAnalyzedClaims).values(batch);
-    console.log(`[TestGen] Inserted batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(claims.length / batchSize)}`);
+  for (let i = 0; i < generatedClaims.length; i += batchSize) {
+    const batch = generatedClaims.slice(i, i + batchSize);
+    await db.insert(claims).values(batch);
+    console.log(`[TestGen] Inserted batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(generatedClaims.length / batchSize)}`);
   }
-  
-  console.log(`[TestGen] Generated ${claims.length} claims (${fraudulentCount} fraudulent)`);
-  return { generated: claims.length, fraudulent: fraudulentCount };
+
+  console.log(`[TestGen] Generated ${generatedClaims.length} claims (${fraudulentCount} fraudulent)`);
+  return { generated: generatedClaims.length, fraudulent: fraudulentCount };
 }

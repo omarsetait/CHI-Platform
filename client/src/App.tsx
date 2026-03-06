@@ -72,7 +72,6 @@ import FWARegulatoryOversight from "@/pages/fwa/regulatory-oversight";
 import FWAEngineConfig from "@/pages/fwa/engine-config";
 import FWAClaimsImport from "@/pages/fwa/claims-import";
 import FWARuleStudio from "@/pages/fwa/rule-studio";
-import FWAProviderProfile from "@/pages/fwa/provider-profile";
 import FWAMLAnalysis from "@/pages/fwa/ml-analysis";
 import GraphAnalysisPage from "@/pages/graph-analysis/graph-analysis";
 import SimulationLabPage from "@/pages/simulation/simulation-lab";
@@ -80,6 +79,7 @@ import FWAClaimView from "@/pages/fwa/claim-view";
 import FWAFlaggedClaims from "@/pages/fwa/flagged-claims";
 import CodingIntelligencePage from "@/pages/fwa/coding-intelligence";
 import KnowledgeHub from "@/pages/fwa/knowledge-hub";
+import FWAEntityProfile from "@/pages/fwa/entity-profile";
 
 import { PreAuthLayout } from "@/components/pre-auth/pre-auth-layout";
 import PreAuthDashboard from "@/pages/pre-auth/dashboard";
@@ -204,9 +204,12 @@ function FWARouter() {
         <Route path="/fwa/batch-upload">{() => <Redirect to="/fwa/detection-engine" />}</Route>
         <Route path="/fwa/claims-import" component={FWAClaimsImport} />
         <Route path="/fwa/high-risk-entities" component={FWAHighRiskEntities} />
-        <Route path="/fwa/providers">{() => <Redirect to="/fwa/high-risk-entities" />}</Route>
-        <Route path="/fwa/patients">{() => <Redirect to="/fwa/high-risk-entities" />}</Route>
-        <Route path="/fwa/doctors">{() => <Redirect to="/fwa/high-risk-entities" />}</Route>
+        <Route path="/fwa/high-risk-entities/provider/:entityId" component={FWAEntityProfile} />
+        <Route path="/fwa/high-risk-entities/doctor/:entityId" component={FWAEntityProfile} />
+        <Route path="/fwa/high-risk-entities/patient/:entityId" component={FWAEntityProfile} />
+        <Route path="/fwa/providers">{() => <Redirect to="/fwa/high-risk-entities?tab=providers" />}</Route>
+        <Route path="/fwa/patients">{() => <Redirect to="/fwa/high-risk-entities?tab=patients" />}</Route>
+        <Route path="/fwa/doctors">{() => <Redirect to="/fwa/high-risk-entities?tab=doctors" />}</Route>
         <Route path="/fwa/phase-a1" component={FWAPhaseA1} />
         <Route path="/fwa/phase-a2" component={FWAPhaseA2} />
         <Route path="/fwa/phase-a3" component={FWAPhaseA3} />
@@ -230,7 +233,9 @@ function FWARouter() {
         <Route path="/fwa/ml-analysis" component={FWAMLAnalysis} />
         <Route path="/fwa/engine-config" component={FWAEngineConfig} />
         <Route path="/fwa/rule-studio" component={FWARuleStudio} />
-        <Route path="/fwa/provider/:providerId" component={FWAProviderProfile} />
+        <Route path="/fwa/provider/:providerId">
+          {(params) => <Redirect to={`/fwa/high-risk-entities/provider/${params.providerId}`} />}
+        </Route>
         <Route path="/fwa/graph-analysis" component={GraphAnalysisPage} />
         <Route path="/fwa/simulation-lab" component={SimulationLabPage} />
         <Route path="/fwa/rlhf-dashboard" component={FWARLHFDashboard} />

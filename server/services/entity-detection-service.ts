@@ -1,6 +1,6 @@
 import { db } from "../db";
 import {
-  fwaAnalyzedClaims,
+  claims,
   fwaDetectionResults,
   provider360,
   patient360,
@@ -66,19 +66,19 @@ async function getPopulationStats(entityType: "provider" | "doctor" | "patient")
   p95ClaimAmount: number;
   hasData: boolean;
 }> {
-  const groupColumn = entityType === "provider" ? "provider_id" : 
-                      entityType === "doctor" ? "practitioner_license" : "patient_id";
+  const groupColumn = entityType === "provider" ? "provider_id" :
+                      entityType === "doctor" ? "practitioner_id" : "member_id";
   
   const stats = await db.execute(sql`
     SELECT 
-      AVG(COALESCE(total_amount::numeric, 0)) as avg_amount,
-      STDDEV(COALESCE(total_amount::numeric, 0)) as std_dev_amount,
-      PERCENTILE_CONT(0.90) WITHIN GROUP (ORDER BY COALESCE(total_amount::numeric, 0)) as p90,
-      PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY COALESCE(total_amount::numeric, 0)) as p95,
+      AVG(COALESCE(amount::numeric, 0)) as avg_amount,
+      STDDEV(COALESCE(amount::numeric, 0)) as std_dev_amount,
+      PERCENTILE_CONT(0.90) WITHIN GROUP (ORDER BY COALESCE(amount::numeric, 0)) as p90,
+      PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY COALESCE(amount::numeric, 0)) as p95,
       COUNT(DISTINCT ${sql.raw(groupColumn)}) as entity_count,
       COUNT(*) as total_claims
-    FROM fwa_analyzed_claims
-    WHERE total_amount IS NOT NULL
+    FROM claims_v2
+    WHERE amount IS NOT NULL
   `);
   
   const row = stats.rows[0] as any;
@@ -163,11 +163,11 @@ async function getProviderPeerBaseline(providerId: string): Promise<{
     // Compute from global claims data - no hardcoded defaults
     const globalStats = await db.execute(sql`
       SELECT 
-        AVG(COALESCE(total_amount::numeric, 0)) as avg_amount,
+        AVG(COALESCE(amount::numeric, 0)) as avg_amount,
         COUNT(*) / NULLIF(COUNT(DISTINCT provider_id), 0) as claims_per_provider,
         AVG(CASE WHEN status = 'denied' THEN 1.0 ELSE 0.0 END) as denial_rate
-      FROM fwa_analyzed_claims
-      WHERE total_amount IS NOT NULL
+      FROM claims_v2
+      WHERE amount IS NOT NULL
     `);
     const globalRow = globalStats.rows[0] as any;
     const avgAmount = parseFloat(globalRow?.avg_amount) || 0;
@@ -240,10 +240,10 @@ async function getDoctorPeerBaseline(doctorId: string): Promise<{
     // Compute baseline from global claims data
     const globalStats = await db.execute(sql`
       SELECT 
-        AVG(COALESCE(total_amount::numeric, 0)) as avg_amount,
-        COUNT(*) / NULLIF(COUNT(DISTINCT practitioner_license), 0) as claims_per_doctor
-      FROM fwa_analyzed_claims
-      WHERE practitioner_license IS NOT NULL AND total_amount IS NOT NULL
+        AVG(COALESCE(amount::numeric, 0)) as avg_amount,
+        COUNT(*) / NULLIF(COUNT(DISTINCT practitioner_id), 0) as claims_per_doctor
+      FROM claims_v2
+      WHERE practitioner_id IS NOT NULL AND amount IS NOT NULL
     `);
     const globalRow = globalStats.rows[0] as any;
     
@@ -303,22 +303,22 @@ async function getPatientPeerBaseline(patientId: string): Promise<{
     // Compute baseline from global claims data
     const globalStats = await db.execute(sql`
       SELECT 
-        AVG(COALESCE(total_amount::numeric, 0)) as avg_amount,
-        COUNT(*) / NULLIF(COUNT(DISTINCT patient_id), 0) as claims_per_patient,
+        AVG(COALESCE(amount::numeric, 0)) as avg_amount,
+        COUNT(*) / NULLIF(COUNT(DISTINCT member_id), 0) as claims_per_patient,
         AVG(unique_providers) as avg_providers
       FROM (
-        SELECT 
-          patient_id, 
+        SELECT
+          member_id,
           COUNT(DISTINCT provider_id) as unique_providers
-        FROM fwa_analyzed_claims
-        WHERE patient_id IS NOT NULL
-        GROUP BY patient_id
+        FROM claims_v2
+        WHERE member_id IS NOT NULL
+        GROUP BY member_id
       ) subq
       CROSS JOIN (
-        SELECT AVG(COALESCE(total_amount::numeric, 0)) as avg_amount, 
-               COUNT(*) / NULLIF(COUNT(DISTINCT patient_id), 0) as claims_per_patient
-        FROM fwa_analyzed_claims
-        WHERE total_amount IS NOT NULL
+        SELECT AVG(COALESCE(amount::numeric, 0)) as avg_amount,
+               COUNT(*) / NULLIF(COUNT(DISTINCT member_id), 0) as claims_per_patient
+        FROM claims_v2
+        WHERE amount IS NOT NULL
       ) amounts
     `);
     const globalRow = globalStats.rows[0] as any;
@@ -369,9 +369,9 @@ async function runProviderRuleEngine(providerId: string, metrics: EntityMetrics,
   
   const weekendClaims = await db.execute(sql`
     SELECT COUNT(*) as count
-    FROM fwa_analyzed_claims
+    FROM claims_v2
     WHERE provider_id = ${providerId}
-    AND EXTRACT(DOW FROM claim_occurrence_date) IN (0, 6)
+    AND EXTRACT(DOW FROM service_date) IN (0, 6)
   `);
   const weekendCount = parseInt((weekendClaims.rows[0] as any)?.count) || 0;
   const weekendRatio = metrics.totalClaims > 0 ? weekendCount / metrics.totalClaims : 0;
@@ -381,10 +381,10 @@ async function runProviderRuleEngine(providerId: string, metrics: EntityMetrics,
   // Compute expected weekend ratio from actual claims data
   const globalWeekendStats = await db.execute(sql`
     SELECT 
-      COUNT(CASE WHEN EXTRACT(DOW FROM claim_occurrence_date::date) IN (0, 6) THEN 1 END)::float / 
+      COUNT(CASE WHEN EXTRACT(DOW FROM service_date::date) IN (0, 6) THEN 1 END)::float / 
       NULLIF(COUNT(*), 0) as weekend_ratio
-    FROM fwa_analyzed_claims
-    WHERE claim_occurrence_date IS NOT NULL
+    FROM claims_v2
+    WHERE service_date IS NOT NULL
   `);
   const expectedWeekendRatio = parseFloat((globalWeekendStats.rows[0] as any)?.weekend_ratio) || 0;
   
@@ -407,12 +407,12 @@ async function runProviderRuleEngine(providerId: string, metrics: EntityMetrics,
   }
   
   const serviceBundling = await db.execute(sql`
-    SELECT patient_id, claim_occurrence_date, COUNT(DISTINCT service_code) as service_count
-    FROM fwa_analyzed_claims
+    SELECT member_id, service_date, COUNT(DISTINCT code) as service_count
+    FROM claims_v2, unnest(cpt_codes) as code
     WHERE provider_id = ${providerId}
-    AND claim_occurrence_date IS NOT NULL
-    GROUP BY patient_id, claim_occurrence_date
-    HAVING COUNT(DISTINCT service_code) > 5
+    AND service_date IS NOT NULL
+    GROUP BY member_id, service_date
+    HAVING COUNT(DISTINCT code) > 5
   `);
   
   if (serviceBundling.rows.length > 0) {
@@ -465,30 +465,30 @@ async function runDoctorRuleEngine(doctorId: string, metrics: EntityMetrics, pee
   let totalScore = 0;
   
   const procedureFrequency = await db.execute(sql`
-    SELECT service_code, COUNT(*) as count
-    FROM fwa_analyzed_claims
-    WHERE practitioner_license = ${doctorId}
-    AND service_code IS NOT NULL
-    GROUP BY service_code
+    SELECT code as service_code, COUNT(*) as count
+    FROM claims_v2, unnest(cpt_codes) as code
+    WHERE practitioner_id = ${doctorId}
+    AND cpt_codes IS NOT NULL
+    GROUP BY code
     ORDER BY count DESC
     LIMIT 5
   `);
-  
+
   for (const row of procedureFrequency.rows as any[]) {
     const peerFrequency = await db.execute(sql`
       SELECT AVG(proc_count) as avg_count
       FROM (
-        SELECT practitioner_license, COUNT(*) as proc_count
-        FROM fwa_analyzed_claims
-        WHERE service_code = ${row.service_code}
-        AND practitioner_license IS NOT NULL
-        GROUP BY practitioner_license
+        SELECT practitioner_id, COUNT(*) as proc_count
+        FROM claims_v2, unnest(cpt_codes) as code
+        WHERE code = ${row.service_code}
+        AND practitioner_id IS NOT NULL
+        GROUP BY practitioner_id
       ) sub
     `);
-    
+
     const peerAvg = parseFloat((peerFrequency.rows[0] as any)?.avg_count) || 0;
     const deviation = peerAvg > 0 ? (parseInt(row.count) - peerAvg) / peerAvg : 0;
-    
+
     // Only flag if we have valid peer data
     if (deviation > thresholds.doctor.procedureDeviationWarning && peerAvg > 0) {
       matchedRules.push({
@@ -509,9 +509,9 @@ async function runDoctorRuleEngine(doctorId: string, metrics: EntityMetrics, pee
   }
   
   const uniquePatients = await db.execute(sql`
-    SELECT COUNT(DISTINCT patient_id) as count
-    FROM fwa_analyzed_claims
-    WHERE practitioner_license = ${doctorId}
+    SELECT COUNT(DISTINCT member_id) as count
+    FROM claims_v2
+    WHERE practitioner_id = ${doctorId}
   `);
   const patientCount = parseInt((uniquePatients.rows[0] as any)?.count) || 0;
   
@@ -519,10 +519,10 @@ async function runDoctorRuleEngine(doctorId: string, metrics: EntityMetrics, pee
     // Compute actual days from claims date range
     const dateRange = await db.execute(sql`
       SELECT 
-        EXTRACT(epoch FROM (MAX(claim_occurrence_date::date) - MIN(claim_occurrence_date::date)))::int / 86400 + 1 as days
-      FROM fwa_analyzed_claims
-      WHERE practitioner_license = ${doctorId}
-      AND claim_occurrence_date IS NOT NULL
+        EXTRACT(epoch FROM (MAX(service_date::date) - MIN(service_date::date)))::int / 86400 + 1 as days
+      FROM claims_v2
+      WHERE practitioner_id = ${doctorId}
+      AND service_date IS NOT NULL
     `);
     const estimatedDays = parseInt((dateRange.rows[0] as any)?.days) || 0;
     
@@ -576,11 +576,11 @@ async function runPatientRuleEngine(patientId: string, metrics: EntityMetrics, p
   let totalScore = 0;
   
   const diagnosisProviders = await db.execute(sql`
-    SELECT principal_diagnosis_code, COUNT(DISTINCT provider_id) as provider_count
-    FROM fwa_analyzed_claims
-    WHERE patient_id = ${patientId}
-    AND principal_diagnosis_code IS NOT NULL
-    GROUP BY principal_diagnosis_code
+    SELECT primary_diagnosis, COUNT(DISTINCT provider_id) as provider_count
+    FROM claims_v2
+    WHERE member_id = ${patientId}
+    AND primary_diagnosis IS NOT NULL
+    GROUP BY primary_diagnosis
     HAVING COUNT(DISTINCT provider_id) > 3
   `);
   
@@ -593,11 +593,11 @@ async function runPatientRuleEngine(patientId: string, metrics: EntityMetrics, p
         category: "doctor_shopping",
         severity: providerCount > 6 ? "high" : "medium",
         confidence: Math.min(0.9, 0.4 + providerCount * 0.08),
-        description: `${providerCount} different providers for diagnosis ${row.principal_diagnosis_code}`
+        description: `${providerCount} different providers for diagnosis ${row.primary_diagnosis}`
       });
       utilizationPatterns.push({
         patternType: "doctor_shopping",
-        description: `Diagnosis ${row.principal_diagnosis_code} treated by ${providerCount} providers`,
+        description: `Diagnosis ${row.primary_diagnosis} treated by ${providerCount} providers`,
         evidenceCount: providerCount
       });
       totalScore += Math.min(25, providerCount * 3);
@@ -626,8 +626,8 @@ async function runPatientRuleEngine(patientId: string, metrics: EntityMetrics, p
   
   const geographicSpread = await db.execute(sql`
     SELECT COUNT(DISTINCT city) as city_count, array_agg(DISTINCT city) as cities
-    FROM fwa_analyzed_claims
-    WHERE patient_id = ${patientId}
+    FROM claims_v2
+    WHERE member_id = ${patientId}
     AND city IS NOT NULL
   `);
   
@@ -716,10 +716,10 @@ async function runEntityStatisticalAnalysis(
     SELECT STDDEV(claim_count)::float as std_dev
     FROM (
       SELECT COUNT(*) as claim_count
-      FROM fwa_analyzed_claims
-      GROUP BY ${entityType === "provider" ? sql`provider_id` : 
-                entityType === "doctor" ? sql`practitioner_license` : 
-                sql`patient_id`}
+      FROM claims_v2
+      GROUP BY ${entityType === "provider" ? sql`provider_id` :
+                entityType === "doctor" ? sql`practitioner_id` :
+                sql`member_id`}
     ) sub
   `);
   const claimsStdDev = parseFloat((claimsStdDevQuery.rows[0] as any)?.std_dev) || 0;
@@ -1029,15 +1029,15 @@ async function getEntityMetrics(
   entityId: string,
   batchId?: string
 ): Promise<EntityMetrics> {
-  const idColumn = entityType === "provider" ? "provider_id" : 
-                   entityType === "doctor" ? "practitioner_license" : "patient_id";
+  const idColumn = entityType === "provider" ? "provider_id" :
+                   entityType === "doctor" ? "practitioner_id" : "member_id";
   
   let claimsQuery = sql`
     SELECT 
       COUNT(*) as total_claims,
-      COALESCE(SUM(total_amount::numeric), 0) as total_amount,
-      COALESCE(AVG(total_amount::numeric), 0) as avg_amount
-    FROM fwa_analyzed_claims
+      COALESCE(SUM(amount::numeric), 0) as total_amount,
+      COALESCE(AVG(amount::numeric), 0) as avg_amount
+    FROM claims_v2
     WHERE ${sql.raw(idColumn)} = ${entityId}
   `;
   
@@ -1045,9 +1045,9 @@ async function getEntityMetrics(
     claimsQuery = sql`
       SELECT 
         COUNT(*) as total_claims,
-        COALESCE(SUM(total_amount::numeric), 0) as total_amount,
-        COALESCE(AVG(total_amount::numeric), 0) as avg_amount
-      FROM fwa_analyzed_claims
+        COALESCE(SUM(amount::numeric), 0) as total_amount,
+        COALESCE(AVG(amount::numeric), 0) as avg_amount
+      FROM claims_v2
       WHERE ${sql.raw(idColumn)} = ${entityId}
       AND batch_number = ${batchId}
     `;
@@ -1063,7 +1063,7 @@ async function getEntityMetrics(
   let flaggedQuery = sql`
     SELECT COUNT(*) as flagged_count
     FROM fwa_detection_results dr
-    JOIN fwa_analyzed_claims ac ON dr.claim_id = ac.id
+    JOIN claims_v2 ac ON dr.claim_id = ac.id
     WHERE ac.${sql.raw(idColumn)} = ${entityId}
     AND dr.composite_score::numeric >= 60
   `;
@@ -1072,7 +1072,7 @@ async function getEntityMetrics(
     flaggedQuery = sql`
       SELECT COUNT(*) as flagged_count
       FROM fwa_detection_results dr
-      JOIN fwa_analyzed_claims ac ON dr.claim_id = ac.id
+      JOIN claims_v2 ac ON dr.claim_id = ac.id
       WHERE ac.${sql.raw(idColumn)} = ${entityId}
       AND ac.batch_number = ${batchId}
       AND dr.composite_score::numeric >= 60
@@ -1085,7 +1085,7 @@ async function getEntityMetrics(
   let highRiskQuery = sql`
     SELECT COUNT(*) as high_risk_count
     FROM fwa_detection_results dr
-    JOIN fwa_analyzed_claims ac ON dr.claim_id = ac.id
+    JOIN claims_v2 ac ON dr.claim_id = ac.id
     WHERE ac.${sql.raw(idColumn)} = ${entityId}
     AND dr.composite_score::numeric >= 80
   `;
@@ -1094,14 +1094,14 @@ async function getEntityMetrics(
   const highRiskCount = parseInt((highRiskStats.rows[0] as any)?.high_risk_count) || 0;
   
   const topProceduresQuery = sql`
-    SELECT 
-      service_code as code,
+    SELECT
+      code,
       COUNT(*) as count,
-      COALESCE(SUM(total_amount::numeric), 0) as amount
-    FROM fwa_analyzed_claims
+      COALESCE(SUM(amount::numeric), 0) as amount
+    FROM claims_v2, unnest(cpt_codes) as code
     WHERE ${sql.raw(idColumn)} = ${entityId}
-    AND service_code IS NOT NULL
-    GROUP BY service_code
+    AND cpt_codes IS NOT NULL
+    GROUP BY code
     ORDER BY count DESC
     LIMIT 5
   `;
@@ -1109,12 +1109,12 @@ async function getEntityMetrics(
   
   const topDiagnosesQuery = sql`
     SELECT 
-      principal_diagnosis_code as code,
+      primary_diagnosis as code,
       COUNT(*) as count
-    FROM fwa_analyzed_claims
+    FROM claims_v2
     WHERE ${sql.raw(idColumn)} = ${entityId}
-    AND principal_diagnosis_code IS NOT NULL
-    GROUP BY principal_diagnosis_code
+    AND primary_diagnosis IS NOT NULL
+    GROUP BY primary_diagnosis
     ORDER BY count DESC
     LIMIT 5
   `;
@@ -1391,8 +1391,8 @@ export async function runPatientDetection(patientId: string, batchId?: string): 
     
     const cityClaims = await db.execute(sql`
       SELECT city, COUNT(*) as count
-      FROM fwa_analyzed_claims
-      WHERE patient_id = ${patientId}
+      FROM claims_v2
+      WHERE member_id = ${patientId}
       AND city IS NOT NULL
       GROUP BY city
     `);
@@ -1450,7 +1450,7 @@ async function updateProviderTimeline(providerId: string, batchId: string): Prom
   const avgRiskScore = await db.execute(sql`
     SELECT AVG(composite_score::numeric) as avg_score
     FROM fwa_detection_results dr
-    JOIN fwa_analyzed_claims ac ON dr.claim_id = ac.id
+    JOIN claims_v2 ac ON dr.claim_id = ac.id
     WHERE ac.provider_id = ${providerId}
     AND ac.batch_number = ${batchId}
   `);
@@ -1489,16 +1489,16 @@ async function updateProviderTimeline(providerId: string, batchId: string): Prom
   }
   
   const uniquePatients = await db.execute(sql`
-    SELECT COUNT(DISTINCT patient_id) as count
-    FROM fwa_analyzed_claims
+    SELECT COUNT(DISTINCT member_id) as count
+    FROM claims_v2
     WHERE provider_id = ${providerId} AND batch_number = ${batchId}
   `);
   
   const uniqueDoctors = await db.execute(sql`
-    SELECT COUNT(DISTINCT practitioner_license) as count
-    FROM fwa_analyzed_claims
+    SELECT COUNT(DISTINCT practitioner_id) as count
+    FROM claims_v2
     WHERE provider_id = ${providerId} AND batch_number = ${batchId}
-    AND practitioner_license IS NOT NULL
+    AND practitioner_id IS NOT NULL
   `);
   
   await db.insert(fwaProviderTimeline).values({
@@ -1528,8 +1528,8 @@ async function updateDoctorTimeline(doctorId: string, batchId: string): Promise<
   const avgRiskScore = await db.execute(sql`
     SELECT AVG(composite_score::numeric) as avg_score
     FROM fwa_detection_results dr
-    JOIN fwa_analyzed_claims ac ON dr.claim_id = ac.id
-    WHERE ac.practitioner_license = ${doctorId}
+    JOIN claims_v2 ac ON dr.claim_id = ac.id
+    WHERE ac.practitioner_id = ${doctorId}
     AND ac.batch_number = ${batchId}
   `);
   
@@ -1561,15 +1561,15 @@ async function updateDoctorTimeline(doctorId: string, batchId: string): Promise<
   }
   
   const uniquePatients = await db.execute(sql`
-    SELECT COUNT(DISTINCT patient_id) as count
-    FROM fwa_analyzed_claims
-    WHERE practitioner_license = ${doctorId} AND batch_number = ${batchId}
+    SELECT COUNT(DISTINCT member_id) as count
+    FROM claims_v2
+    WHERE practitioner_id = ${doctorId} AND batch_number = ${batchId}
   `);
   
   const uniqueProviders = await db.execute(sql`
     SELECT COUNT(DISTINCT provider_id) as count
-    FROM fwa_analyzed_claims
-    WHERE practitioner_license = ${doctorId} AND batch_number = ${batchId}
+    FROM claims_v2
+    WHERE practitioner_id = ${doctorId} AND batch_number = ${batchId}
   `);
   
   await db.insert(fwaDoctorTimeline).values({
@@ -1599,8 +1599,8 @@ async function updatePatientTimeline(patientId: string, batchId: string): Promis
   const avgRiskScore = await db.execute(sql`
     SELECT AVG(composite_score::numeric) as avg_score
     FROM fwa_detection_results dr
-    JOIN fwa_analyzed_claims ac ON dr.claim_id = ac.id
-    WHERE ac.patient_id = ${patientId}
+    JOIN claims_v2 ac ON dr.claim_id = ac.id
+    WHERE ac.member_id = ${patientId}
     AND ac.batch_number = ${batchId}
   `);
   
@@ -1633,21 +1633,21 @@ async function updatePatientTimeline(patientId: string, batchId: string): Promis
   
   const uniqueProviders = await db.execute(sql`
     SELECT COUNT(DISTINCT provider_id) as count
-    FROM fwa_analyzed_claims
-    WHERE patient_id = ${patientId} AND batch_number = ${batchId}
+    FROM claims_v2
+    WHERE member_id = ${patientId} AND batch_number = ${batchId}
   `);
-  
+
   const uniqueDoctors = await db.execute(sql`
-    SELECT COUNT(DISTINCT practitioner_license) as count
-    FROM fwa_analyzed_claims
-    WHERE patient_id = ${patientId} AND batch_number = ${batchId}
-    AND practitioner_license IS NOT NULL
+    SELECT COUNT(DISTINCT practitioner_id) as count
+    FROM claims_v2
+    WHERE member_id = ${patientId} AND batch_number = ${batchId}
+    AND practitioner_id IS NOT NULL
   `);
-  
+
   const providerList = await db.execute(sql`
     SELECT provider_id, COUNT(*) as claim_count
-    FROM fwa_analyzed_claims
-    WHERE patient_id = ${patientId} AND batch_number = ${batchId}
+    FROM claims_v2
+    WHERE member_id = ${patientId} AND batch_number = ${batchId}
     GROUP BY provider_id
     ORDER BY claim_count DESC
     LIMIT 10
@@ -1696,7 +1696,7 @@ export async function runEntityDetectionForBatch(batchId: string): Promise<{
   try {
     const uniqueProviders = await db.execute(sql`
       SELECT DISTINCT provider_id
-      FROM fwa_analyzed_claims
+      FROM claims_v2
       WHERE batch_number = ${batchId}
       AND provider_id IS NOT NULL
     `);
@@ -1719,49 +1719,49 @@ export async function runEntityDetectionForBatch(batchId: string): Promise<{
     }
     
     const uniqueDoctors = await db.execute(sql`
-      SELECT DISTINCT practitioner_license
-      FROM fwa_analyzed_claims
+      SELECT DISTINCT practitioner_id
+      FROM claims_v2
       WHERE batch_number = ${batchId}
-      AND practitioner_license IS NOT NULL
+      AND practitioner_id IS NOT NULL
     `);
     
     console.log(`[Entity Detection] Found ${uniqueDoctors.rows.length} unique doctors in batch`);
     
     for (const row of uniqueDoctors.rows as any[]) {
       try {
-        const result = await runDoctorDetection(row.practitioner_license, batchId);
+        const result = await runDoctorDetection(row.practitioner_id, batchId);
         if (result.success) {
-          await updateDoctorTimeline(row.practitioner_license, batchId);
+          await updateDoctorTimeline(row.practitioner_id, batchId);
           doctorsProcessed++;
         } else {
           errors++;
         }
       } catch (err) {
-        console.error(`[Entity Detection] Error processing doctor ${row.practitioner_license}:`, err);
+        console.error(`[Entity Detection] Error processing doctor ${row.practitioner_id}:`, err);
         errors++;
       }
     }
     
     const uniquePatients = await db.execute(sql`
-      SELECT DISTINCT patient_id
-      FROM fwa_analyzed_claims
+      SELECT DISTINCT member_id
+      FROM claims_v2
       WHERE batch_number = ${batchId}
-      AND patient_id IS NOT NULL
+      AND member_id IS NOT NULL
     `);
-    
+
     console.log(`[Entity Detection] Found ${uniquePatients.rows.length} unique patients in batch`);
-    
+
     for (const row of uniquePatients.rows as any[]) {
       try {
-        const result = await runPatientDetection(row.patient_id, batchId);
+        const result = await runPatientDetection(row.member_id, batchId);
         if (result.success) {
-          await updatePatientTimeline(row.patient_id, batchId);
+          await updatePatientTimeline(row.member_id, batchId);
           patientsProcessed++;
         } else {
           errors++;
         }
       } catch (err) {
-        console.error(`[Entity Detection] Error processing patient ${row.patient_id}:`, err);
+        console.error(`[Entity Detection] Error processing patient ${row.member_id}:`, err);
         errors++;
       }
     }
@@ -1808,9 +1808,9 @@ export async function refresh360ForBatch(batchId: string): Promise<{
     const batchClaims = await db.execute(sql`
       SELECT 
         ARRAY_AGG(DISTINCT provider_id) as provider_ids,
-        ARRAY_AGG(DISTINCT patient_id) as patient_ids,
-        ARRAY_AGG(DISTINCT practitioner_license) FILTER (WHERE practitioner_license IS NOT NULL) as doctor_ids
-      FROM fwa_analyzed_claims
+        ARRAY_AGG(DISTINCT member_id) as patient_ids,
+        ARRAY_AGG(DISTINCT practitioner_id) FILTER (WHERE practitioner_id IS NOT NULL) as doctor_ids
+      FROM claims_v2
       WHERE batch_id = ${batchId}
     `);
     
@@ -1882,13 +1882,13 @@ async function refreshProvider360(providerId: string, batchId: string): Promise<
   const aggregateData = await db.execute(sql`
     SELECT 
       COUNT(*) as total_claims,
-      SUM(CAST(total_amount AS DECIMAL)) as total_amount,
-      AVG(CAST(total_amount AS DECIMAL)) as avg_claim_amount,
-      COUNT(DISTINCT patient_id) as unique_patients,
-      COUNT(DISTINCT practitioner_license) as unique_doctors,
+      SUM(CAST(amount AS DECIMAL)) as total_amount,
+      AVG(CAST(amount AS DECIMAL)) as avg_claim_amount,
+      COUNT(DISTINCT member_id) as unique_patients,
+      COUNT(DISTINCT practitioner_id) as unique_doctors,
       MAX(provider_type) as provider_type,
       MAX(city) as city
-    FROM fwa_analyzed_claims
+    FROM claims_v2
     WHERE provider_id = ${providerId}
   `);
   
@@ -1905,7 +1905,7 @@ async function refreshProvider360(providerId: string, batchId: string): Promise<
   const flaggedClaims = await db.execute(sql`
     SELECT COUNT(*) as flagged_count
     FROM fwa_detection_results dr
-    JOIN fwa_analyzed_claims ac ON dr.claim_id = ac.id
+    JOIN claims_v2 ac ON dr.claim_id = ac.id
     WHERE ac.provider_id = ${providerId}
     AND dr.composite_risk_level IN ('critical', 'high')
   `);
@@ -1974,13 +1974,13 @@ async function refreshDoctor360(doctorId: string, batchId: string): Promise<void
   const aggregateData = await db.execute(sql`
     SELECT 
       COUNT(*) as total_claims,
-      SUM(CAST(total_amount AS DECIMAL)) as total_amount,
-      AVG(CAST(total_amount AS DECIMAL)) as avg_claim_amount,
-      COUNT(DISTINCT patient_id) as unique_patients,
+      SUM(CAST(amount AS DECIMAL)) as total_amount,
+      AVG(CAST(amount AS DECIMAL)) as avg_claim_amount,
+      COUNT(DISTINCT member_id) as unique_patients,
       COUNT(DISTINCT provider_id) as unique_providers,
-      MAX(specialty_code) as specialty_code
-    FROM fwa_analyzed_claims
-    WHERE practitioner_license = ${doctorId}
+      MAX(specialty) as specialty_code
+    FROM claims_v2
+    WHERE practitioner_id = ${doctorId}
   `);
   
   // Get latest entity detection result
@@ -1996,8 +1996,8 @@ async function refreshDoctor360(doctorId: string, batchId: string): Promise<void
   const flaggedClaims = await db.execute(sql`
     SELECT COUNT(*) as flagged_count
     FROM fwa_detection_results dr
-    JOIN fwa_analyzed_claims ac ON dr.claim_id = ac.id
-    WHERE ac.practitioner_license = ${doctorId}
+    JOIN claims_v2 ac ON dr.claim_id = ac.id
+    WHERE ac.practitioner_id = ${doctorId}
     AND dr.composite_risk_level IN ('critical', 'high')
   `);
   
@@ -2062,15 +2062,15 @@ async function refreshPatient360(patientId: string, batchId: string): Promise<vo
   const aggregateData = await db.execute(sql`
     SELECT 
       COUNT(*) as total_claims,
-      SUM(CAST(total_amount AS DECIMAL)) as total_amount,
-      AVG(CAST(total_amount AS DECIMAL)) as avg_claim_amount,
+      SUM(CAST(amount AS DECIMAL)) as total_amount,
+      AVG(CAST(amount AS DECIMAL)) as avg_claim_amount,
       COUNT(DISTINCT provider_id) as unique_providers,
-      COUNT(DISTINCT practitioner_license) as unique_doctors,
+      COUNT(DISTINCT practitioner_id) as unique_doctors,
       MAX(city) as primary_city
-    FROM fwa_analyzed_claims
-    WHERE patient_id = ${patientId}
+    FROM claims_v2
+    WHERE member_id = ${patientId}
   `);
-  
+
   // Get latest entity detection result
   const latestDetection = await db.execute(sql`
     SELECT composite_score, risk_level
@@ -2079,13 +2079,13 @@ async function refreshPatient360(patientId: string, batchId: string): Promise<vo
     ORDER BY analyzed_at DESC
     LIMIT 1
   `);
-  
+
   // Get flagged claims count
   const flaggedClaims = await db.execute(sql`
     SELECT COUNT(*) as flagged_count
     FROM fwa_detection_results dr
-    JOIN fwa_analyzed_claims ac ON dr.claim_id = ac.id
-    WHERE ac.patient_id = ${patientId}
+    JOIN claims_v2 ac ON dr.claim_id = ac.id
+    WHERE ac.member_id = ${patientId}
     AND dr.composite_risk_level IN ('critical', 'high')
   `);
   

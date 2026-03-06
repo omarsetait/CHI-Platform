@@ -1,9 +1,9 @@
 import OpenAI from "openai";
 import { db } from "../db";
-import { 
-  fwaRulesLibrary, fwaRuleHits, fwaAnalyzedClaims, fwaFeatureStore,
+import {
+  fwaRulesLibrary, fwaRuleHits, claims, fwaFeatureStore,
   fwaDetectionResults, fwaDetectionRuns, fwaAnomalyClusters,
-  policyViolationCatalogue, fwaBehaviors, claims,
+  policyViolationCatalogue, fwaBehaviors,
   provider360, patient360, doctor360
 } from "@shared/schema";
 import { eq, sql, desc, and, gte, lte, inArray, ne, isNotNull } from "drizzle-orm";
@@ -38,28 +38,28 @@ const DEFAULT_WEIGHTS = {
 
 export interface AnalyzedClaimData {
   id: string;
-  claimReference: string;
+  claimNumber: string;
   providerId: string;
-  patientId: string;
-  practitionerLicense?: string | null;
-  specialtyCode?: string | null;
+  memberId: string;
+  practitionerId?: string | null;
+  specialty?: string | null;
   city?: string | null;
   providerType?: string | null;
   unitPrice?: number | null;
-  totalAmount?: number | null;
+  amount?: number | null;
   quantity?: number | null;
-  principalDiagnosisCode?: string | null;
-  serviceCode?: string | null;
-  serviceDescription?: string | null;
+  primaryDiagnosis?: string | null;
+  cptCodes?: string[] | null;
+  description?: string | null;
   claimType?: string | null;
   lengthOfStay?: number | null;
-  originalStatus?: string | null;
+  status?: string | null;
   isPreAuthorized?: boolean;
 }
 
 interface DetectionResult {
   claimId: string;
-  claimReference: string;
+  claimNumber: string;
   compositeScore: number;
   compositeRiskLevel: string;
   ruleEngineScore: number;
@@ -157,11 +157,11 @@ function generateExplanationForMatchedRule(
 
   // Upcoding detection
   if (category.toLowerCase().includes("upcoding") || rule.ruleCode?.includes("UPCODING")) {
-    const claimAmount = claim.totalAmount || claim.unitPrice || 0;
+    const claimAmount = claim.amount || claim.unitPrice || 0;
     const peerAverage = matchedFields.peerAverage || 2500;
     const variance = ((claimAmount - peerAverage) / peerAverage * 100).toFixed(1);
     
-    explanation = `This claim was flagged for upcoding because the billed amount of ${claimAmount.toLocaleString()} SAR significantly exceeds the average of ${peerAverage.toLocaleString()} SAR for similar procedures (variance: +${variance}%). Service code: ${claim.serviceCode}`;
+    explanation = `This claim was flagged for upcoding because the billed amount of ${claimAmount.toLocaleString()} SAR significantly exceeds the average of ${peerAverage.toLocaleString()} SAR for similar procedures (variance: +${variance}%). Service code: ${claim.cptCodes?.[0]}`;
     
     evidencePoints.push({
       field: "totalAmount",
@@ -169,29 +169,29 @@ function generateExplanationForMatchedRule(
       reason: `Billed amount (${claimAmount.toLocaleString()} SAR) exceeds peer average by ${variance}%`
     });
     
-    if (claim.serviceCode) {
+    if (claim.cptCodes?.[0]) {
       evidencePoints.push({
         field: "serviceCode",
-        value: claim.serviceCode,
-        reason: `Service code ${claim.serviceCode} typically costs ${peerAverage.toLocaleString()} SAR`
+        value: claim.cptCodes?.[0],
+        reason: `Service code ${claim.cptCodes?.[0]} typically costs ${peerAverage.toLocaleString()} SAR`
       });
     }
   }
 
   // Duplicate billing detection
   else if (category.toLowerCase().includes("duplicate") || rule.ruleCode?.includes("DUPLICATE")) {
-    explanation = `Duplicate billing detected: Same procedure code ${claim.serviceCode} was billed for the same patient within a short timeframe. This may indicate improper claim submission or billing error.`;
+    explanation = `Duplicate billing detected: Same procedure code ${claim.cptCodes?.[0]} was billed for the same patient within a short timeframe. This may indicate improper claim submission or billing error.`;
     
     evidencePoints.push({
       field: "serviceCode",
-      value: claim.serviceCode,
+      value: claim.cptCodes?.[0],
       reason: `Same service code submitted multiple times`
     });
     
-    if (claim.patientId) {
+    if (claim.memberId) {
       evidencePoints.push({
         field: "patientId",
-        value: claim.patientId,
+        value: claim.memberId,
         reason: `Multiple claims for same patient ID within short period`
       });
     }
@@ -221,7 +221,7 @@ function generateExplanationForMatchedRule(
 
   // Pre-authorization violations
   else if (category.toLowerCase().includes("pre-auth") || rule.ruleCode?.includes("PREAUTH")) {
-    explanation = `Pre-authorization requirement violation: Claim for ${claim.claimType || "service"} requires pre-authorization but was submitted without approval code. Amount: ${claim.totalAmount?.toLocaleString()} SAR.`;
+    explanation = `Pre-authorization requirement violation: Claim for ${claim.claimType || "service"} requires pre-authorization but was submitted without approval code. Amount: ${claim.amount?.toLocaleString()} SAR.`;
     
     evidencePoints.push({
       field: "isPreAuthorized",
@@ -240,7 +240,7 @@ function generateExplanationForMatchedRule(
 
   // High value claims
   else if (category.toLowerCase().includes("high") || category.toLowerCase().includes("amount")) {
-    const claimAmount = claim.totalAmount || claim.unitPrice || 0;
+    const claimAmount = claim.amount || claim.unitPrice || 0;
     explanation = `High-value claim detected: Amount of ${claimAmount.toLocaleString()} SAR exceeds standard thresholds for ${claim.claimType || "service"}. Requires enhanced review to verify medical necessity and appropriate billing.`;
     
     evidencePoints.push({
@@ -253,7 +253,7 @@ function generateExplanationForMatchedRule(
   // Extended length of stay
   else if (category.toLowerCase().includes("length") || category.toLowerCase().includes("stay")) {
     const los = claim.lengthOfStay || 0;
-    explanation = `Extended length of stay detected: Patient hospitalized for ${los} days, which exceeds typical range for ${claim.principalDiagnosisCode || "this diagnosis"}. Requires clinical justification review.`;
+    explanation = `Extended length of stay detected: Patient hospitalized for ${los} days, which exceeds typical range for ${claim.primaryDiagnosis || "this diagnosis"}. Requires clinical justification review.`;
     
     evidencePoints.push({
       field: "lengthOfStay",
@@ -261,28 +261,28 @@ function generateExplanationForMatchedRule(
       reason: `Length of stay (${los} days) exceeds expected range`
     });
     
-    if (claim.principalDiagnosisCode) {
+    if (claim.primaryDiagnosis) {
       evidencePoints.push({
         field: "diagnosisCode",
-        value: claim.principalDiagnosisCode,
-        reason: `Diagnosis ${claim.principalDiagnosisCode} typically requires shorter stay`
+        value: claim.primaryDiagnosis,
+        reason: `Diagnosis ${claim.primaryDiagnosis} typically requires shorter stay`
       });
     }
   }
 
   // Unusual service/diagnosis combination
   else if (category.toLowerCase().includes("combination") || category.toLowerCase().includes("coding")) {
-    explanation = `Unusual service-diagnosis combination detected: Service code ${claim.serviceCode} is inconsistent with diagnosis code ${claim.principalDiagnosisCode}. Review medical necessity and proper coding.`;
+    explanation = `Unusual service-diagnosis combination detected: Service code ${claim.cptCodes?.[0]} is inconsistent with diagnosis code ${claim.primaryDiagnosis}. Review medical necessity and proper coding.`;
     
     evidencePoints.push({
       field: "serviceCode",
-      value: claim.serviceCode,
+      value: claim.cptCodes?.[0],
       reason: `Service code inconsistent with diagnosis`
     });
     
     evidencePoints.push({
       field: "diagnosisCode",
-      value: claim.principalDiagnosisCode,
+      value: claim.primaryDiagnosis,
       reason: `Diagnosis code does not typically pair with this service`
     });
   }
@@ -575,34 +575,34 @@ function getClaimFieldValue(claim: AnalyzedClaimData, field: string): any {
   
   const fieldMap: Record<string, any> = {
     // Basic claim fields - canonical names from registry
-    totalAmount: claim.totalAmount,
-    amount: claim.totalAmount,
+    totalAmount: claim.amount,
+    amount: claim.amount,
     unitPrice: claim.unitPrice,
     quantity: claim.quantity,
     lengthOfStay: claim.lengthOfStay,
     los: claim.lengthOfStay,
     
     // Diagnosis codes - canonical: icd
-    icd: claim.principalDiagnosisCode,
-    diagnosisCode: claim.principalDiagnosisCode,
-    principalDiagnosisCode: claim.principalDiagnosisCode,
-    icdCode: claim.principalDiagnosisCode,
+    icd: claim.primaryDiagnosis,
+    diagnosisCode: claim.primaryDiagnosis,
+    principalDiagnosisCode: claim.primaryDiagnosis,
+    icdCode: claim.primaryDiagnosis,
     
     // Procedure codes - canonical: cpt
-    cpt: claim.serviceCode,
-    procedureCode: claim.serviceCode,
-    cptCode: claim.serviceCode,
-    serviceCode: claim.serviceCode,
+    cpt: claim.cptCodes?.[0],
+    procedureCode: claim.cptCodes?.[0],
+    cptCode: claim.cptCodes?.[0],
+    serviceCode: claim.cptCodes?.[0],
     
     claimType: claim.claimType,
     providerType: claim.providerType,
-    specialtyCode: claim.specialtyCode,
+    specialtyCode: claim.specialty,
     city: claim.city,
     region: claim.city,
     isPreAuthorized: claim.isPreAuthorized,
     providerId: claim.providerId,
-    patientId: claim.patientId,
-    memberId: claim.patientId,
+    patientId: claim.memberId,
+    memberId: claim.memberId,
     
     // Enhanced FWA detection fields
     isPreAuthorizationRequired: extendedClaim.isPreAuthorizationRequired,
@@ -623,7 +623,8 @@ function getClaimFieldValue(claim: AnalyzedClaimData, field: string): any {
     patientAge: extendedClaim.patientAge,
     dischargeStatus: extendedClaim.dischargeStatus,
     preAuthNumber: extendedClaim.preAuthorizationNumber,
-    claimReference: extendedClaim.claimReference,
+    claimReference: extendedClaim.claimNumber,
+    claimNumber: extendedClaim.claimNumber,
     
     // Temporal fields (from feature vector or computed)
     is_night_claim: extendedClaim.is_night_claim,
@@ -801,20 +802,20 @@ function checkBehaviorMatch(claim: AnalyzedClaimData, behavior: any): { matched:
     }
   }
   
-  if (behavior.category === "duplicate_claims" && claim.claimReference) {
+  if (behavior.category === "duplicate_claims" && claim.claimNumber) {
     score += 0.1;
   }
   
-  if (behavior.category === "upcoding" && claim.totalAmount && claim.totalAmount > 50000) {
+  if (behavior.category === "upcoding" && claim.amount && claim.amount > 50000) {
     score += 0.2;
-    matchedFields.highAmount = claim.totalAmount;
+    matchedFields.highAmount = claim.amount;
   }
   
   return { matched: score > 0.1, confidence: Math.min(1, score), matchedFields };
 }
 
 function buildClaimText(claim: AnalyzedClaimData): string {
-  return `${claim.serviceDescription || ""} ${claim.principalDiagnosisCode || ""} ${claim.serviceCode || ""} ${claim.claimType || ""}`.toLowerCase();
+  return `${claim.description || ""} ${claim.primaryDiagnosis || ""} ${claim.cptCodes?.[0] || ""} ${claim.claimType || ""}`.toLowerCase();
 }
 
 function getSeverityMultiplier(severity: string | null): number {
@@ -844,25 +845,25 @@ export async function runProductionStatisticalLearning(claim: AnalyzedClaimData)
   const patientFeatures = await db.select().from(fwaFeatureStore)
     .where(and(
       eq(fwaFeatureStore.entityType, "patient"),
-      eq(fwaFeatureStore.entityId, claim.patientId)
+      eq(fwaFeatureStore.entityId, claim.memberId)
     ))
     .limit(1);
   
-  const doctorFeatures = claim.practitionerLicense ? await db.select().from(fwaFeatureStore)
+  const doctorFeatures = claim.practitionerId ? await db.select().from(fwaFeatureStore)
     .where(and(
       eq(fwaFeatureStore.entityType, "doctor"),
-      eq(fwaFeatureStore.entityId, claim.practitionerLicense)
+      eq(fwaFeatureStore.entityId, claim.practitionerId)
     ))
     .limit(1) : [];
   
   const globalStats = await db.execute(sql`
     SELECT 
-      AVG(COALESCE(total_amount::numeric, 0)) as global_avg,
-      STDDEV(COALESCE(total_amount::numeric, 0)) as global_stddev,
-      PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY COALESCE(total_amount::numeric, 0)) as median,
-      PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY COALESCE(total_amount::numeric, 0)) as p95
-    FROM fwa_analyzed_claims
-    WHERE total_amount IS NOT NULL
+      AVG(COALESCE(amount::numeric, 0)) as global_avg,
+      STDDEV(COALESCE(amount::numeric, 0)) as global_stddev,
+      PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY COALESCE(amount::numeric, 0)) as median,
+      PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY COALESCE(amount::numeric, 0)) as p95
+    FROM claims_v2
+    WHERE amount IS NOT NULL
   `);
   
   const globalRow = globalStats.rows[0] as any;
@@ -873,7 +874,7 @@ export async function runProductionStatisticalLearning(claim: AnalyzedClaimData)
   const features: StatisticalFindings["featureImportance"] = [];
   let totalScore = 0;
   
-  const claimAmount = claim.totalAmount || claim.unitPrice || 0;
+  const claimAmount = claim.amount || claim.unitPrice || 0;
   const amountZScore = globalStdDev > 0 ? (claimAmount - globalAvg) / globalStdDev : 0;
   const amountScore = Math.min(1, Math.max(0, (amountZScore + 2) / 4));
   features.push({
@@ -961,7 +962,7 @@ export async function runProductionStatisticalLearning(claim: AnalyzedClaimData)
   
   const normalizedScore = Math.min(100, totalScore * 100);
   
-  const peerGroupId = providerStats?.peerGroupId || `${claim.specialtyCode}-${claim.city}-${claim.providerType}`;
+  const peerGroupId = providerStats?.peerGroupId || `${claim.specialty}-${claim.city}-${claim.providerType}`;
   
   return {
     score: normalizedScore,
@@ -1040,16 +1041,16 @@ async function calculateIsolationForestScore(claim: AnalyzedClaimData): Promise<
   const reasons: string[] = [];
   let anomalyIndicators = 0;
   
-  const claimAmount = claim.totalAmount || claim.unitPrice || 0;
+  const claimAmount = claim.amount || claim.unitPrice || 0;
   
   const amountStats = await db.execute(sql`
     SELECT 
-      PERCENTILE_CONT(0.90) WITHIN GROUP (ORDER BY COALESCE(total_amount::numeric, 0)) as p90,
-      PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY COALESCE(total_amount::numeric, 0)) as p95,
-      PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY COALESCE(total_amount::numeric, 0)) as p99,
-      MAX(COALESCE(total_amount::numeric, 0)) as max_amount
-    FROM fwa_analyzed_claims
-    WHERE total_amount IS NOT NULL
+      PERCENTILE_CONT(0.90) WITHIN GROUP (ORDER BY COALESCE(amount::numeric, 0)) as p90,
+      PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY COALESCE(amount::numeric, 0)) as p95,
+      PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY COALESCE(amount::numeric, 0)) as p99,
+      MAX(COALESCE(amount::numeric, 0)) as max_amount
+    FROM claims_v2
+    WHERE amount IS NOT NULL
   `);
   
   const stats = amountStats.rows[0] as any;
@@ -1068,11 +1069,11 @@ async function calculateIsolationForestScore(claim: AnalyzedClaimData): Promise<
     reasons.push(`High amount (>${p90.toLocaleString()} SAR, top 10%)`);
   }
   
-  if (claim.providerId && claim.patientId) {
+  if (claim.providerId && claim.memberId) {
     const providerPatientPairs = await db.execute(sql`
       SELECT COUNT(*) as pair_count
-      FROM fwa_analyzed_claims
-      WHERE provider_id = ${claim.providerId} AND patient_id = ${claim.patientId}
+      FROM claims_v2
+      WHERE provider_id = ${claim.providerId} AND member_id = ${claim.memberId}
     `);
     
     const pairCount = parseInt((providerPatientPairs.rows[0] as any)?.pair_count) || 0;
@@ -1082,14 +1083,14 @@ async function calculateIsolationForestScore(claim: AnalyzedClaimData): Promise<
     }
   }
   
-  if (claim.serviceCode) {
+  if (claim.cptCodes?.[0]) {
     const serviceStats = await db.execute(sql`
       SELECT 
-        AVG(COALESCE(total_amount::numeric, 0)) as avg_amount,
-        STDDEV(COALESCE(total_amount::numeric, 0)) as stddev_amount,
+        AVG(COALESCE(amount::numeric, 0)) as avg_amount,
+        STDDEV(COALESCE(amount::numeric, 0)) as stddev_amount,
         COUNT(*) as service_count
-      FROM fwa_analyzed_claims
-      WHERE service_code = ${claim.serviceCode}
+      FROM claims_v2
+      WHERE cpt_codes @> ARRAY[${claim.cptCodes?.[0]}]
     `);
     
     const svcStats = serviceStats.rows[0] as any;
@@ -1143,7 +1144,7 @@ async function analyzeMultiDimensionalClusters(claim: AnalyzedClaimData): Promis
   `);
   
   const peerStats = providerPeerStats.rows[0] as any;
-  const claimAmount = claim.totalAmount || claim.unitPrice || 0;
+  const claimAmount = claim.amount || claim.unitPrice || 0;
   
   if (peerStats && parseFloat(peerStats.peer_stddev) > 0) {
     const zScore = (claimAmount - parseFloat(peerStats.peer_avg)) / parseFloat(peerStats.peer_stddev);
@@ -1163,9 +1164,9 @@ async function analyzeMultiDimensionalClusters(claim: AnalyzedClaimData): Promis
     SELECT 
       COUNT(*) as claim_count,
       COUNT(DISTINCT provider_id) as provider_count,
-      SUM(COALESCE(total_amount::numeric, 0)) as total_spent
-    FROM fwa_analyzed_claims
-    WHERE patient_id = ${claim.patientId}
+      SUM(COALESCE(amount::numeric, 0)) as total_spent
+    FROM claims_v2
+    WHERE member_id = ${claim.memberId}
   `);
   
   const patStats = patientClaims.rows[0] as any;
@@ -1183,14 +1184,14 @@ async function analyzeMultiDimensionalClusters(claim: AnalyzedClaimData): Promis
     patientReason = `Above average claims (${patClaimCount})`;
   }
   
-  if (claim.practitionerLicense) {
+  if (claim.practitionerId) {
     const doctorStats = await db.execute(sql`
       SELECT 
         COUNT(*) as claim_count,
-        AVG(COALESCE(total_amount::numeric, 0)) as avg_amount,
-        COUNT(DISTINCT patient_id) as patient_count
-      FROM fwa_analyzed_claims
-      WHERE practitioner_license = ${claim.practitionerLicense}
+        AVG(COALESCE(amount::numeric, 0)) as avg_amount,
+        COUNT(DISTINCT member_id) as patient_count
+      FROM claims_v2
+      WHERE practitioner_id = ${claim.practitionerId}
     `);
     
     const docStats = doctorStats.rows[0] as any;
@@ -1230,7 +1231,7 @@ export async function runProductionRagLlm(claim: AnalyzedClaimData): Promise<{
   score: number;
   findings: RagLlmFindings;
 }> {
-  const queryText = `Healthcare claim analysis: ${claim.claimType || "general"} - Amount: ${claim.totalAmount || claim.unitPrice} SAR - Diagnosis: ${claim.principalDiagnosisCode || "unspecified"} - Service: ${claim.serviceCode || "unspecified"} - ${claim.serviceDescription || ""} - Provider type: ${claim.providerType || "unknown"}`;
+  const queryText = `Healthcare claim analysis: ${claim.claimType || "general"} - Amount: ${claim.amount || claim.unitPrice} SAR - Diagnosis: ${claim.primaryDiagnosis || "unspecified"} - Service: ${claim.cptCodes?.[0] || "unspecified"} - ${claim.description || ""} - Provider type: ${claim.providerType || "unknown"}`;
   
   let knowledgeBaseMatches: RagLlmFindings["knowledgeBaseMatches"] = [];
   let contextualAnalysis = "";
@@ -1264,13 +1265,13 @@ export async function runProductionRagLlm(claim: AnalyzedClaimData): Promise<{
       const analysisPrompt = `Analyze this Saudi healthcare claim for potential fraud, waste, or abuse:
 
 CLAIM DETAILS:
-- Amount: ${claim.totalAmount || claim.unitPrice || 0} SAR
+- Amount: ${claim.amount || claim.unitPrice || 0} SAR
 - Type: ${claim.claimType || "Not specified"}
 - Provider Type: ${claim.providerType || "Not specified"}
-- Specialty: ${claim.specialtyCode || "Not specified"}
-- Diagnosis Code: ${claim.principalDiagnosisCode || "Not specified"}
-- Service Code: ${claim.serviceCode || "Not specified"}
-- Description: ${claim.serviceDescription || "No description"}
+- Specialty: ${claim.specialty || "Not specified"}
+- Diagnosis Code: ${claim.primaryDiagnosis || "Not specified"}
+- Service Code: ${claim.cptCodes?.[0] || "Not specified"}
+- Description: ${claim.description || "No description"}
 - Pre-authorized: ${claim.isPreAuthorized ? "Yes" : "No"}
 - Length of Stay: ${claim.lengthOfStay || "N/A"} days
 
@@ -1488,9 +1489,9 @@ export async function runProductionDetection(
   // Enrich claim with network features for NC-* rules
   const networkFeatures = await networkFeatureService.calculateNetworkFeatures(
     claim.providerId,
-    claim.patientId,
-    claim.practitionerLicense || null,
-    claim.totalAmount || 0
+    claim.memberId,
+    claim.practitionerId || null,
+    claim.amount || 0
   );
   
   // Create enriched claim with network features attached
@@ -1504,8 +1505,8 @@ export async function runProductionDetection(
   // Fetch 360 perspective context for all three entities
   const context360 = await getContext360Enrichment(
     claim.providerId,
-    claim.patientId,
-    claim.practitionerLicense
+    claim.memberId,
+    claim.practitionerId
   );
   
   const [ruleResult, statResult, unsupResult] = await Promise.all([
@@ -1596,7 +1597,7 @@ export async function runProductionDetection(
   
   return {
     claimId: claim.id,
-    claimReference: claim.claimReference,
+    claimNumber: claim.claimNumber,
     compositeScore: Math.round(compositeScore * 100) / 100,
     compositeRiskLevel,
     ruleEngineScore: safeRuleScore,
@@ -1654,64 +1655,64 @@ function generateAction(riskLevel: string, primaryMethod: string, ruleFindings: 
 }
 
 export async function getClaimForAnalysis(claimId: string): Promise<AnalyzedClaimData | null> {
-  const result = await db.select().from(fwaAnalyzedClaims)
-    .where(eq(fwaAnalyzedClaims.id, claimId))
+  const result = await db.select().from(claims)
+    .where(eq(claims.id, claimId))
     .limit(1);
-  
+
   if (result.length === 0) return null;
-  
+
   const claim = result[0];
   return {
     id: claim.id,
-    claimReference: claim.claimReference,
-    providerId: claim.providerId,
-    patientId: claim.patientId,
-    practitionerLicense: claim.practitionerLicense,
-    specialtyCode: claim.specialtyCode,
+    claimNumber: claim.claimNumber || "",
+    providerId: claim.providerId || "",
+    memberId: claim.memberId || "",
+    practitionerId: claim.practitionerId,
+    specialty: claim.specialty,
     city: claim.city,
     providerType: claim.providerType,
-    unitPrice: claim.unitPrice ? parseFloat(claim.unitPrice) : null,
-    totalAmount: claim.totalAmount ? parseFloat(claim.totalAmount) : null,
-    quantity: claim.quantity,
-    principalDiagnosisCode: claim.principalDiagnosisCode,
-    serviceCode: claim.serviceCode,
-    serviceDescription: claim.serviceDescription,
+    unitPrice: null,
+    amount: claim.amount ? parseFloat(claim.amount) : null,
+    quantity: null,
+    primaryDiagnosis: claim.primaryDiagnosis,
+    cptCodes: claim.cptCodes,
+    description: claim.description,
     claimType: claim.claimType,
     lengthOfStay: claim.lengthOfStay,
-    originalStatus: claim.originalStatus,
+    status: claim.status,
     isPreAuthorized: claim.isPreAuthorized || false
   };
 }
 
 export async function searchClaimsForAnalysis(query: string, limit = 20): Promise<AnalyzedClaimData[]> {
   const results = await db.execute(sql`
-    SELECT * FROM fwa_analyzed_claims
-    WHERE claim_reference ILIKE ${'%' + query + '%'}
+    SELECT * FROM claims_v2
+    WHERE claim_number ILIKE ${'%' + query + '%'}
       OR provider_id ILIKE ${'%' + query + '%'}
-      OR patient_id ILIKE ${'%' + query + '%'}
-      OR service_description ILIKE ${'%' + query + '%'}
+      OR member_id ILIKE ${'%' + query + '%'}
+      OR description ILIKE ${'%' + query + '%'}
     ORDER BY created_at DESC
     LIMIT ${limit}
   `);
-  
+
   return (results.rows as any[]).map(claim => ({
     id: claim.id,
-    claimReference: claim.claim_reference,
-    providerId: claim.provider_id,
-    patientId: claim.patient_id,
-    practitionerLicense: claim.practitioner_license,
-    specialtyCode: claim.specialty_code,
+    claimNumber: claim.claim_number || "",
+    providerId: claim.provider_id || "",
+    memberId: claim.member_id || "",
+    practitionerId: claim.practitioner_id,
+    specialty: claim.specialty,
     city: claim.city,
     providerType: claim.provider_type,
-    unitPrice: claim.unit_price ? parseFloat(claim.unit_price) : null,
-    totalAmount: claim.total_amount ? parseFloat(claim.total_amount) : null,
-    quantity: claim.quantity,
-    principalDiagnosisCode: claim.principal_diagnosis_code,
-    serviceCode: claim.service_code,
-    serviceDescription: claim.service_description,
+    unitPrice: null,
+    amount: claim.amount ? parseFloat(claim.amount) : null,
+    quantity: null,
+    primaryDiagnosis: claim.primary_diagnosis,
+    cptCodes: claim.cpt_codes,
+    description: claim.description,
     claimType: claim.claim_type,
     lengthOfStay: claim.length_of_stay,
-    originalStatus: claim.original_status,
+    status: claim.status,
     isPreAuthorized: claim.is_pre_authorized || false
   }));
 }

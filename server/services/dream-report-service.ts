@@ -289,8 +289,8 @@ export class DreamReportService {
         highRiskClaims.push(claim);
       }
       
-      if (claim.diagnosisCodes) {
-        for (const code of claim.diagnosisCodes) {
+      if (claim.icdCodes) {
+        for (const code of claim.icdCodes) {
           diagnosisCodeFrequency[code] = (diagnosisCodeFrequency[code] || 0) + 1;
         }
       }

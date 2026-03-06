@@ -211,7 +211,7 @@ export default function DetectionEnginePage() {
   
   const [claimData, setClaimData] = useState({
     id: "",
-    claimReference: "",
+    claimNumber: "",
     payer: "",
     batchNumber: "",
     batchDate: "",
@@ -231,11 +231,11 @@ export default function DetectionEnginePage() {
     providerType: "",
     networkStatus: "in-network",
     claimType: "outpatient",
-    claimOccurrenceDate: "",
+    serviceDate: "",
     benefitCode: "",
     amount: "",
     isPreAuthorized: false,
-    principalDiagnosisCode: "",
+    primaryDiagnosis: "",
     secondaryDiagnosisCodes: "",
     procedureCode: "",
     serviceLines: "",
@@ -442,7 +442,7 @@ export default function DetectionEnginePage() {
       
       setClaimData({
         id: claim.id || "sample-" + Date.now(),
-        claimReference: claim.claimNumber || claim.claimReference || "CLM-" + Date.now(),
+        claimNumber: claim.claimNumber || "CLM-" + Date.now(),
         payer: "tawuniya",
         batchNumber: claim.batchNumber || "BATCH-" + Math.floor(Math.random() * 1000),
         batchDate: claim.registrationDate ? new Date(claim.registrationDate).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
@@ -462,11 +462,11 @@ export default function DetectionEnginePage() {
         providerType: "hospital",
         networkStatus: "in-network",
         claimType: claim.claimType?.toLowerCase() || "inpatient",
-        claimOccurrenceDate: claim.serviceDate ? new Date(claim.serviceDate).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+        serviceDate: claim.serviceDate ? new Date(claim.serviceDate).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
         benefitCode: claim.category === "Surgery" ? "SURG" : "ICU",
         amount: claim.amount || "50000",
         isPreAuthorized: true,
-        principalDiagnosisCode: claim.principalDiagnosisCode || claim.icd || "I21.0",
+        primaryDiagnosis: claim.primaryDiagnosis || claim.icd || "I21.0",
         secondaryDiagnosisCodes: claim.diagnosisCodes?.join("|") || "I10|E11.9",
         procedureCode: claim.procedureCode || claim.cpt || "92928",
         serviceLines: serviceLines,
@@ -482,7 +482,7 @@ export default function DetectionEnginePage() {
       console.error("Failed to load sample claim:", error);
       setClaimData({
         id: "sample-" + Date.now(),
-        claimReference: "CLM-KSA-2026-" + Math.floor(Math.random() * 10000),
+        claimNumber: "CLM-KSA-2026-" + Math.floor(Math.random() * 10000),
         payer: "tawuniya",
         batchNumber: "BATCH-" + Math.floor(Math.random() * 1000),
         batchDate: new Date().toISOString().split('T')[0],
@@ -502,11 +502,11 @@ export default function DetectionEnginePage() {
         providerType: "hospital",
         networkStatus: "in-network",
         claimType: "inpatient",
-        claimOccurrenceDate: new Date().toISOString().split('T')[0],
+        serviceDate: new Date().toISOString().split('T')[0],
         benefitCode: "ICU",
         amount: "125000",
         isPreAuthorized: true,
-        principalDiagnosisCode: "I21.0",
+        primaryDiagnosis: "I21.0",
         secondaryDiagnosisCodes: "I10|E11.9|Z82.49",
         procedureCode: "92928",
         serviceLines: "92928|1|45000|PCI with Drug-Eluting Stent\n93458|1|8500|Left Heart Catheterization\n99223|1|2500|Initial Hospital Care\n36556|1|1200|Central Venous Catheter\n94640|2|800|Nebulizer Treatment",
@@ -796,7 +796,7 @@ export default function DetectionEnginePage() {
           hospital: getValue("hospital") || getValue("providerName") || undefined,
           status: "pending" as const,
         };
-      }).filter((claim) => claim.amount > 0 || claim.claimNumber);
+      }).filter((claim) => Number(claim.amount) > 0 || claim.claimNumber);
 
       if (claims.length === 0) {
         toast({
@@ -981,12 +981,12 @@ export default function DetectionEnginePage() {
                       </div>
                       <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-2">
-                          <Label htmlFor="claimReference">Claim Reference *</Label>
+                          <Label htmlFor="claimNumber">Claim Number *</Label>
                           <Input
-                            id="claimReference"
+                            id="claimNumber"
                             placeholder="CLM-KSA-2026-0001"
-                            value={claimData.claimReference}
-                            onChange={(e) => setClaimData({ ...claimData, claimReference: e.target.value })}
+                            value={claimData.claimNumber}
+                            onChange={(e) => setClaimData({ ...claimData, claimNumber: e.target.value })}
                             data-testid="input-claim-reference"
                           />
                         </div>
@@ -1251,12 +1251,12 @@ export default function DetectionEnginePage() {
                           </Select>
                         </div>
                         <div className="space-y-2">
-                          <Label htmlFor="claimOccurrenceDate">Occurrence Date</Label>
+                          <Label htmlFor="serviceDate">Service Date</Label>
                           <Input
-                            id="claimOccurrenceDate"
+                            id="serviceDate"
                             type="date"
-                            value={claimData.claimOccurrenceDate}
-                            onChange={(e) => setClaimData({ ...claimData, claimOccurrenceDate: e.target.value })}
+                            value={claimData.serviceDate}
+                            onChange={(e) => setClaimData({ ...claimData, serviceDate: e.target.value })}
                             data-testid="input-occurrence-date"
                           />
                         </div>
@@ -1306,12 +1306,12 @@ export default function DetectionEnginePage() {
                       </div>
                       <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-2">
-                          <Label htmlFor="principalDiagnosisCode">Principal Diagnosis (ICD-10-AM) *</Label>
+                          <Label htmlFor="primaryDiagnosis">Primary Diagnosis (ICD-10-AM) *</Label>
                           <Input
-                            id="principalDiagnosisCode"
+                            id="primaryDiagnosis"
                             placeholder="I21.0"
-                            value={claimData.principalDiagnosisCode}
-                            onChange={(e) => setClaimData({ ...claimData, principalDiagnosisCode: e.target.value })}
+                            value={claimData.primaryDiagnosis}
+                            onChange={(e) => setClaimData({ ...claimData, primaryDiagnosis: e.target.value })}
                             data-testid="input-principal-diagnosis"
                           />
                         </div>
@@ -2186,12 +2186,12 @@ export default function DetectionEnginePage() {
                                 onClick={() => setSelectedProdClaim(claim)}
                                 data-testid={`row-prod-claim-${claim.id}`}
                               >
-                                <TableCell className="font-medium">{claim.claimReference}</TableCell>
+                                <TableCell className="font-medium">{claim.claimNumber}</TableCell>
                                 <TableCell>{claim.providerId}</TableCell>
-                                <TableCell>{claim.totalAmount ? `${parseFloat(claim.totalAmount).toLocaleString()} SAR` : "—"}</TableCell>
+                                <TableCell>{claim.amount ? `${parseFloat(claim.amount).toLocaleString()} SAR` : "—"}</TableCell>
                                 <TableCell>
-                                  <Badge variant={claim.originalStatus === "approved" ? "secondary" : "outline"}>
-                                    {claim.originalStatus || "Unknown"}
+                                  <Badge variant={claim.status === "approved" ? "secondary" : "outline"}>
+                                    {claim.status || "Unknown"}
                                   </Badge>
                                 </TableCell>
                                 <TableCell>
@@ -2223,7 +2223,7 @@ export default function DetectionEnginePage() {
                         <CardTitle className="text-sm flex items-center justify-between gap-2 flex-wrap">
                           <span className="flex items-center gap-2">
                             <FileText className="h-4 w-4" />
-                            Selected Claim: {selectedProdClaim.claimReference}
+                            Selected Claim: {selectedProdClaim.claimNumber}
                           </span>
                           <Button
                             size="sm"
@@ -2252,12 +2252,12 @@ export default function DetectionEnginePage() {
                             <p className="font-medium">{selectedProdClaim.providerId}</p>
                           </div>
                           <div>
-                            <p className="text-muted-foreground">Patient</p>
-                            <p className="font-medium">{selectedProdClaim.patientId}</p>
+                            <p className="text-muted-foreground">Member</p>
+                            <p className="font-medium">{selectedProdClaim.memberId}</p>
                           </div>
                           <div>
                             <p className="text-muted-foreground">Amount</p>
-                            <p className="font-medium">{selectedProdClaim.totalAmount ? `${parseFloat(selectedProdClaim.totalAmount).toLocaleString()} SAR` : "—"}</p>
+                            <p className="font-medium">{selectedProdClaim.amount ? `${parseFloat(selectedProdClaim.amount).toLocaleString()} SAR` : "—"}</p>
                           </div>
                           <div>
                             <p className="text-muted-foreground">Specialty</p>
@@ -2265,7 +2265,7 @@ export default function DetectionEnginePage() {
                           </div>
                           <div>
                             <p className="text-muted-foreground">Diagnosis</p>
-                            <p className="font-medium">{selectedProdClaim.principalDiagnosisCode || "—"}</p>
+                            <p className="font-medium">{selectedProdClaim.primaryDiagnosis || "—"}</p>
                           </div>
                           <div>
                             <p className="text-muted-foreground">Service</p>

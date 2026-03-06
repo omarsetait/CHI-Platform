@@ -1160,6 +1160,21 @@ export function registerProviderRoutes(
   });
 
   // Provider Directory Endpoints
+  // GET /api/provider-relations/directory - Simplified provider list for dropdowns
+  app.get("/api/provider-relations/directory", async (req, res) => {
+    try {
+      const providers = await storage.getAllProviderDirectoryEntries();
+      const directory = providers.map(p => ({
+        id: p.id,
+        name: p.name,
+        email: p.email || undefined,
+      }));
+      res.json(directory);
+    } catch (error) {
+      handleRouteError(res, error, "/api/provider-relations/directory", "fetch provider directory");
+    }
+  });
+
   app.get("/api/provider-relations/providers", async (req, res) => {
     try {
       const { status, specialty, networkTier } = req.query;

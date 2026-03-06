@@ -1,5 +1,5 @@
 import { db } from "../db";
-import { fwaAnalyzedClaims, fwaFeatureStore } from "@shared/schema";
+import { claims, fwaFeatureStore } from "@shared/schema";
 import { sql, eq, and, gte, lte } from "drizzle-orm";
 import XLSX from "xlsx";
 import * as fs from "fs";
@@ -114,9 +114,9 @@ export async function importClaimsFromExcel(filePath: string, sourceFileName: st
           continue;
         }
         
-        const existing = await db.select({ id: fwaAnalyzedClaims.id })
-          .from(fwaAnalyzedClaims)
-          .where(eq(fwaAnalyzedClaims.claimReference, String(row.CLAIMREFERENCE)))
+        const existing = await db.select({ id: claims.id })
+          .from(claims)
+          .where(eq(claims.claimNumber, String(row.CLAIMREFERENCE)))
           .limit(1);
         
         if (existing.length > 0) {
@@ -128,43 +128,30 @@ export async function importClaimsFromExcel(filePath: string, sourceFileName: st
         const quantity = parseNumber(row.RQUANTITY) || 1;
         const totalAmount = unitPrice ? unitPrice * quantity : null;
         
-        await db.insert(fwaAnalyzedClaims).values({
-          claimReference: String(row.CLAIMREFERENCE),
-          batchNumber: row.BATCHNUMBER ? String(row.BATCHNUMBER) : null,
-          batchDate: parseDate(row.BATCHDATE),
-          patientId: String(row.PATIENTID),
-          dateOfBirth: parseDate(row.DATEOFBIRTH),
-          gender: row.GENDER ? String(row.GENDER) : null,
+        await db.insert(claims).values({
+          claimNumber: String(row.CLAIMREFERENCE),
+          memberId: String(row.PATIENTID),
           isNewborn: parseBoolean(row.ISNEWBORN),
           isChronic: parseBoolean(row.CHRONIC),
           isPreExisting: parseBoolean(row.PREEXISTING),
-          policyNo: row.POLICYNO ? String(row.POLICYNO) : null,
-          policyEffectiveDate: parseDate(row.POLICYEFFECTIVEDATE),
-          policyExpiryDate: parseDate(row.POLICYEXPIRYDATE),
+          policyEffectiveDate: row.POLICYEFFECTIVEDATE ? String(row.POLICYEFFECTIVEDATE) : null,
+          policyExpiryDate: row.POLICYEXPIRYDATE ? String(row.POLICYEXPIRYDATE) : null,
           groupNo: row.GROUPNO ? String(row.GROUPNO) : null,
           providerId: String(row.PROVIDERID),
-          practitionerLicense: row.PRACTITIONERLICENSE ? String(row.PRACTITIONERLICENSE) : null,
-          specialtyCode: row.SPECIALITYCODE ? String(row.SPECIALITYCODE) : null,
+          practitionerId: row.PRACTITIONERLICENSE ? String(row.PRACTITIONERLICENSE) : null,
+          specialty: row.SPECIALITYCODE ? String(row.SPECIALITYCODE) : null,
           city: row.CITY ? String(row.CITY) : null,
           providerType: row.PROVIDERTYPE ? String(row.PROVIDERTYPE) : null,
-          claimType: row.CLAIMTYPE ? String(row.CLAIMTYPE) : null,
-          claimOccurrenceDate: parseDate(row.CLAIMOCCURRENCEDATE),
-          claimBenefitCode: row.CLAIMBENEFITCODE ? String(row.CLAIMBENEFITCODE) : null,
+          claimType: row.CLAIMTYPE ? String(row.CLAIMTYPE) : "unknown",
+          serviceDate: parseDate(row.CLAIMOCCURRENCEDATE) ?? new Date(),
+          registrationDate: parseDate(row.BATCHDATE) ?? new Date(),
           lengthOfStay: parseNumber(row.LENGTHOFSTAY) as number | null,
           isPreAuthorized: parseBoolean(row.ISPREAUTHORIZED),
-          authorizationId: row.AUTHORIZATIONID ? String(row.AUTHORIZATIONID) : null,
-          principalDiagnosisCode: row.PRINCIPALDIAGNOSISCODE ? String(row.PRINCIPALDIAGNOSISCODE) : null,
-          claimSupportingInfo: row.CLAIMSUPPORTINGINFO ? String(row.CLAIMSUPPORTINGINFO) : null,
-          serviceType: row.SERVICETYPE ? String(row.SERVICETYPE) : null,
-          serviceCode: row.SERVICECODE ? String(row.SERVICECODE) : null,
-          serviceDescription: row.SERVICEDESCRIPTION ? String(row.SERVICEDESCRIPTION) : null,
-          unitPrice: unitPrice ? String(unitPrice) : null,
-          quantity: quantity as number,
-          totalAmount: totalAmount ? String(totalAmount) : null,
-          originalStatus: row.STATUS ? String(row.STATUS) : null,
-          aiStatus: row.AISTATUS ? String(row.AISTATUS) : null,
-          validationResults: row.VALIDATIONRESULTS ? { raw: String(row.VALIDATIONRESULTS) } : null,
-          sourceFile: sourceFileName
+          primaryDiagnosis: row.PRINCIPALDIAGNOSISCODE ? String(row.PRINCIPALDIAGNOSISCODE) : "unknown",
+          cptCodes: row.SERVICECODE ? [String(row.SERVICECODE)] : null,
+          description: row.SERVICEDESCRIPTION ? String(row.SERVICEDESCRIPTION) : null,
+          amount: totalAmount ? String(totalAmount) : "0",
+          status: row.STATUS ? String(row.STATUS) : "pending",
         });
         
         imported++;
@@ -193,17 +180,17 @@ export async function computeFeatureStore(): Promise<{ providers: number; patien
     SELECT 
       provider_id as entity_id,
       COUNT(*) as claim_count,
-      SUM(COALESCE(total_amount::numeric, 0)) as total_amount,
-      AVG(COALESCE(total_amount::numeric, 0)) as avg_claim_amount,
-      MAX(COALESCE(total_amount::numeric, 0)) as max_claim_amount,
-      COUNT(DISTINCT patient_id) as unique_patients,
-      COUNT(DISTINCT principal_diagnosis_code) as unique_diagnoses,
-      COUNT(DISTINCT service_code) as unique_services,
+      SUM(COALESCE(amount::numeric, 0)) as total_amount,
+      AVG(COALESCE(amount::numeric, 0)) as avg_claim_amount,
+      MAX(COALESCE(amount::numeric, 0)) as max_claim_amount,
+      COUNT(DISTINCT member_id) as unique_patients,
+      COUNT(DISTINCT primary_diagnosis) as unique_diagnoses,
+      COUNT(DISTINCT unnest_code) as unique_services,
       AVG(COALESCE(length_of_stay, 0)) as avg_length_of_stay,
-      specialty_code || '-' || COALESCE(city, 'Unknown') || '-' || COALESCE(provider_type, 'Unknown') as peer_group_id,
-      SUM(CASE WHEN original_status = 'Rejected' THEN 1 ELSE 0 END)::numeric / NULLIF(COUNT(*), 0) as rejection_rate
-    FROM fwa_analyzed_claims
-    GROUP BY provider_id, specialty_code, city, provider_type
+      specialty || '-' || COALESCE(city, 'Unknown') || '-' || COALESCE(provider_type, 'Unknown') as peer_group_id,
+      SUM(CASE WHEN status = 'Rejected' THEN 1 ELSE 0 END)::numeric / NULLIF(COUNT(*), 0) as rejection_rate
+    FROM claims_v2 LEFT JOIN LATERAL unnest(cpt_codes) as unnest_code ON true
+    GROUP BY provider_id, specialty, city, provider_type
     HAVING COUNT(*) >= 1
   `);
   
@@ -234,18 +221,18 @@ export async function computeFeatureStore(): Promise<{ providers: number; patien
   
   const patientStats = await db.execute(sql`
     SELECT 
-      patient_id as entity_id,
+      member_id as entity_id,
       COUNT(*) as claim_count,
-      SUM(COALESCE(total_amount::numeric, 0)) as total_amount,
-      AVG(COALESCE(total_amount::numeric, 0)) as avg_claim_amount,
-      MAX(COALESCE(total_amount::numeric, 0)) as max_claim_amount,
+      SUM(COALESCE(amount::numeric, 0)) as total_amount,
+      AVG(COALESCE(amount::numeric, 0)) as avg_claim_amount,
+      MAX(COALESCE(amount::numeric, 0)) as max_claim_amount,
       COUNT(DISTINCT provider_id) as unique_providers,
-      COUNT(DISTINCT principal_diagnosis_code) as unique_diagnoses,
-      COUNT(DISTINCT service_code) as unique_services,
+      COUNT(DISTINCT primary_diagnosis) as unique_diagnoses,
+      COUNT(DISTINCT unnest_code) as unique_services,
       AVG(COALESCE(length_of_stay, 0)) as avg_length_of_stay,
-      SUM(CASE WHEN original_status = 'Rejected' THEN 1 ELSE 0 END)::numeric / NULLIF(COUNT(*), 0) as rejection_rate
-    FROM fwa_analyzed_claims
-    GROUP BY patient_id
+      SUM(CASE WHEN status = 'Rejected' THEN 1 ELSE 0 END)::numeric / NULLIF(COUNT(*), 0) as rejection_rate
+    FROM claims_v2 LEFT JOIN LATERAL unnest(cpt_codes) as unnest_code ON true
+    GROUP BY member_id
     HAVING COUNT(*) >= 1
   `);
   
@@ -275,19 +262,19 @@ export async function computeFeatureStore(): Promise<{ providers: number; patien
   
   const doctorStats = await db.execute(sql`
     SELECT 
-      practitioner_license as entity_id,
+      practitioner_id as entity_id,
       COUNT(*) as claim_count,
-      SUM(COALESCE(total_amount::numeric, 0)) as total_amount,
-      AVG(COALESCE(total_amount::numeric, 0)) as avg_claim_amount,
-      MAX(COALESCE(total_amount::numeric, 0)) as max_claim_amount,
-      COUNT(DISTINCT patient_id) as unique_patients,
+      SUM(COALESCE(amount::numeric, 0)) as total_amount,
+      AVG(COALESCE(amount::numeric, 0)) as avg_claim_amount,
+      MAX(COALESCE(amount::numeric, 0)) as max_claim_amount,
+      COUNT(DISTINCT member_id) as unique_patients,
       COUNT(DISTINCT provider_id) as unique_providers,
-      COUNT(DISTINCT principal_diagnosis_code) as unique_diagnoses,
-      specialty_code as peer_group_id,
-      SUM(CASE WHEN original_status = 'Rejected' THEN 1 ELSE 0 END)::numeric / NULLIF(COUNT(*), 0) as rejection_rate
-    FROM fwa_analyzed_claims
-    WHERE practitioner_license IS NOT NULL
-    GROUP BY practitioner_license, specialty_code
+      COUNT(DISTINCT primary_diagnosis) as unique_diagnoses,
+      specialty as peer_group_id,
+      SUM(CASE WHEN status = 'Rejected' THEN 1 ELSE 0 END)::numeric / NULLIF(COUNT(*), 0) as rejection_rate
+    FROM claims_v2
+    WHERE practitioner_id IS NOT NULL
+    GROUP BY practitioner_id, specialty
     HAVING COUNT(*) >= 1
   `);
   
@@ -371,13 +358,13 @@ export async function getClaimStats(): Promise<{
     SELECT 
       COUNT(*) as total_claims,
       COUNT(DISTINCT provider_id) as unique_providers,
-      COUNT(DISTINCT patient_id) as unique_patients,
-      COUNT(DISTINCT practitioner_license) as unique_doctors,
-      SUM(COALESCE(total_amount::numeric, 0)) as total_amount,
-      AVG(COALESCE(total_amount::numeric, 0)) as avg_amount,
-      MIN(claim_occurrence_date) as min_date,
-      MAX(claim_occurrence_date) as max_date
-    FROM fwa_analyzed_claims
+      COUNT(DISTINCT member_id) as unique_patients,
+      COUNT(DISTINCT practitioner_id) as unique_doctors,
+      SUM(COALESCE(amount::numeric, 0)) as total_amount,
+      AVG(COALESCE(amount::numeric, 0)) as avg_amount,
+      MIN(service_date) as min_date,
+      MAX(service_date) as max_date
+    FROM claims_v2
   `);
   
   const row = stats.rows[0] as any;

@@ -1,7 +1,7 @@
 import { db } from "../db";
 import { 
-  claims, 
-  populationStatistics, 
+  claims,
+  populationStatistics,
   statisticalLearningWeights,
   providerFeatureStore,
   memberFeatureStore,

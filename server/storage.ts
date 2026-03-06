@@ -101,7 +101,7 @@ import {
   type EnforcementDossier,
   type InsertEnforcementDossier,
   type FwaDetectionResult,
-  type FwaAnalyzedClaim,
+  // FwaAnalyzedClaim replaced by Claim
   type RegulatoryCircular,
   type InsertRegulatoryCircular,
   type AuditSession,
@@ -172,7 +172,6 @@ import {
   enforcementCases,
   enforcementDossiers,
   fwaDetectionResults,
-  fwaAnalyzedClaims,
   regulatoryCirculars,
   auditSessions,
   rlhfFeedback,
@@ -468,7 +467,7 @@ export interface IStorage {
   // Detection results for enforcement workflow
   getDetectionResultsByClaimId(claimId: string): Promise<FwaDetectionResult | undefined>;
   getDetectionResultsByProvider(providerId: string): Promise<FwaDetectionResult[]>;
-  getAnalyzedClaimsByProvider(providerId: string, limit?: number): Promise<FwaAnalyzedClaim[]>;
+  getAnalyzedClaimsByProvider(providerId: string, limit?: number): Promise<Claim[]>;
 
   // Regulatory Circulars
   getRegulatoryCirculars(): Promise<RegulatoryCircular[]>;
@@ -1077,6 +1076,7 @@ export class MemStorage implements IStorage {
       claimId: data.claimId,
       providerId: data.providerId,
       patientId: data.patientId,
+      category: data.category ?? "coding",
       status: data.status ?? "draft",
       phase: data.phase ?? "a1_analysis",
       createdAt: now,
@@ -1390,6 +1390,7 @@ export class MemStorage implements IStorage {
       startedAt: data.startedAt ?? null,
       completedAt: data.completedAt ?? null,
       errorMessage: data.errorMessage ?? null,
+      metadata: data.metadata ?? null,
       createdAt: now,
       updatedAt: now,
     };
@@ -2475,6 +2476,13 @@ export class MemStorage implements IStorage {
       warningThreshold: data.warningThreshold ?? null,
       criticalThreshold: data.criticalThreshold ?? null,
       thresholdDirection: data.thresholdDirection ?? "above",
+      weight: data.weight ?? "1.0",
+      categoryWeight: data.categoryWeight ?? null,
+      rationale: data.rationale ?? null,
+      industryStandard: data.industryStandard ?? null,
+      calculationMethodology: data.calculationMethodology ?? null,
+      targetValue: data.targetValue ?? null,
+      targetDirection: data.targetDirection ?? "lower",
       sortOrder: data.sortOrder ?? 0,
       createdBy: data.createdBy ?? null,
       createdAt: now,
@@ -2553,28 +2561,28 @@ export class MemStorage implements IStorage {
 
   async getClaims(options?: { search?: string; limit?: number; offset?: number; status?: string }): Promise<{ claims: Claim[]; total: number }> {
     let results = Array.from(this.claimsMap.values());
-    
+
     if (options?.search) {
       const search = options.search.toLowerCase();
-      results = results.filter(c => 
-        c.claimReference?.toLowerCase().includes(search) ||
-        c.patientName?.toLowerCase().includes(search) ||
+      results = results.filter(c =>
+        c.claimNumber?.toLowerCase().includes(search) ||
+        c.memberId?.toLowerCase().includes(search) ||
         c.providerId?.toLowerCase().includes(search) ||
         c.hospital?.toLowerCase().includes(search) ||
-        c.principalDiagnosisCode?.toLowerCase().includes(search)
+        c.primaryDiagnosis?.toLowerCase().includes(search)
       );
     }
-    
+
     if (options?.status) {
       results = results.filter(c => c.status === options.status);
     }
-    
+
     const total = results.length;
     const offset = options?.offset || 0;
     const limit = options?.limit || 50;
-    
+
     results = results.slice(offset, offset + limit);
-    
+
     return { claims: results, total };
   }
 
@@ -2605,35 +2613,47 @@ export class MemStorage implements IStorage {
   }
 
   async createClaim(data: InsertClaim): Promise<Claim> {
-    const claim: Claim = {
-      id: data.id,
+    const claim = {
+      id: (data as any).id || randomUUID(),
       claimNumber: data.claimNumber,
-      policyNumber: data.policyNumber,
-      registrationDate: data.registrationDate,
-      claimType: data.claimType,
-      hospital: data.hospital,
-      amount: data.amount,
-      outlierScore: data.outlierScore,
+      registrationDate: data.registrationDate ?? null,
+      claimType: data.claimType ?? null,
+      hospital: data.hospital ?? null,
+      amount: data.amount ?? null,
+      outlierScore: data.outlierScore ?? null,
       description: data.description ?? null,
-      icd: data.icd ?? null,
+      primaryDiagnosis: data.primaryDiagnosis ?? null,
       hasSurgery: data.hasSurgery ?? null,
       surgeryFee: data.surgeryFee ?? null,
       hasIcu: data.hasIcu ?? null,
       lengthOfStay: data.lengthOfStay ?? null,
-      similarClaims: data.similarClaims ?? null,
-      similarClaimsInHospital: data.similarClaimsInHospital ?? null,
       providerId: data.providerId ?? null,
-      providerName: data.providerName ?? null,
-      patientId: data.patientId ?? null,
-      patientName: data.patientName ?? null,
+      memberId: data.memberId ?? null,
+      practitionerId: data.practitionerId ?? null,
+      specialty: data.specialty ?? null,
+      city: data.city ?? null,
+      providerType: data.providerType ?? null,
       serviceDate: data.serviceDate ?? null,
       status: data.status ?? "pending",
       category: data.category ?? null,
       flagged: data.flagged ?? false,
       flagReason: data.flagReason ?? null,
       cptCodes: data.cptCodes ?? null,
-      diagnosisCodes: data.diagnosisCodes ?? null,
-    };
+      icdCodes: data.icdCodes ?? null,
+      approvedAmount: data.approvedAmount ?? null,
+      isNewborn: data.isNewborn ?? null,
+      isChronic: data.isChronic ?? null,
+      isPreExisting: data.isPreExisting ?? null,
+      isPreAuthorized: data.isPreAuthorized ?? null,
+      isMaternity: data.isMaternity ?? null,
+      groupNo: data.groupNo ?? null,
+      coverageRelationship: data.coverageRelationship ?? null,
+      policyEffectiveDate: data.policyEffectiveDate ?? null,
+      policyExpiryDate: data.policyExpiryDate ?? null,
+      source: data.source ?? null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as unknown as Claim;
     this.claimsMap.set(claim.id, claim);
     return claim;
   }
@@ -2641,7 +2661,7 @@ export class MemStorage implements IStorage {
   async updateClaim(id: string, data: Partial<InsertClaim>): Promise<Claim | undefined> {
     const existing = this.claimsMap.get(id);
     if (!existing) return undefined;
-    const updated: Claim = { ...existing, ...data };
+    const updated: Claim = { ...existing, ...data } as Claim;
     this.claimsMap.set(id, updated);
     return updated;
   }
@@ -2785,7 +2805,7 @@ export class MemStorage implements IStorage {
   async getDetectionResultsByProvider(providerId: string): Promise<FwaDetectionResult[]> {
     return [];
   }
-  async getAnalyzedClaimsByProvider(providerId: string, limit?: number): Promise<FwaAnalyzedClaim[]> {
+  async getAnalyzedClaimsByProvider(providerId: string, limit?: number): Promise<Claim[]> {
     return [];
   }
 
@@ -3880,32 +3900,31 @@ export class DatabaseStorage implements IStorage {
   async getClaims(options?: { search?: string; limit?: number; offset?: number; status?: string }): Promise<{ claims: Claim[]; total: number }> {
     const limitVal = options?.limit || 50;
     const offsetVal = options?.offset || 0;
-    
+
     // Simple query without search - fetch all and filter in memory for now
     // This is acceptable for moderate data sizes
     let allResults = await db.select().from(claims).orderBy(desc(claims.registrationDate));
-    
+
     // Apply search filter in memory
     if (options?.search) {
       const searchLower = options.search.toLowerCase();
-      allResults = allResults.filter(c => 
-        c.claimReference?.toLowerCase().includes(searchLower) ||
-        c.patientName?.toLowerCase().includes(searchLower) ||
+      allResults = allResults.filter(c =>
+        c.claimNumber?.toLowerCase().includes(searchLower) ||
+        c.memberId?.toLowerCase().includes(searchLower) ||
         c.providerId?.toLowerCase().includes(searchLower) ||
         c.hospital?.toLowerCase().includes(searchLower) ||
-        c.principalDiagnosisCode?.toLowerCase().includes(searchLower) ||
-        c.claimNumber?.toLowerCase().includes(searchLower)
+        c.primaryDiagnosis?.toLowerCase().includes(searchLower)
       );
     }
-    
+
     // Apply status filter
     if (options?.status) {
       allResults = allResults.filter(c => c.status === options.status);
     }
-    
+
     const total = allResults.length;
     const results = allResults.slice(offsetVal, offsetVal + limitVal);
-    
+
     return { claims: results, total };
   }
 
@@ -4104,12 +4123,12 @@ export class DatabaseStorage implements IStorage {
       .limit(50);
   }
 
-  async getAnalyzedClaimsByProvider(providerId: string, limit?: number): Promise<FwaAnalyzedClaim[]> {
+  async getAnalyzedClaimsByProvider(providerId: string, limit?: number): Promise<Claim[]> {
     return db
       .select()
-      .from(fwaAnalyzedClaims)
-      .where(eq(fwaAnalyzedClaims.providerId, providerId))
-      .orderBy(desc(fwaAnalyzedClaims.createdAt))
+      .from(claims)
+      .where(eq(claims.providerId, providerId))
+      .orderBy(desc(claims.createdAt))
       .limit(limit || 10);
   }
 

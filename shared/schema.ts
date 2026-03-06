@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, decimal, integer, timestamp, boolean, jsonb, pgEnum, serial, vector, index } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, decimal, integer, timestamp, boolean, jsonb, pgEnum, serial, vector, index, date } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -58,8 +58,8 @@ export const insertAuditLogSchema = createInsertSchema(auditLogs).omit({
 export type InsertAuditLog = z.infer<typeof insertAuditLogSchema>;
 export type AuditLog = typeof auditLogs.$inferSelect;
 
-// Claim schema - Enhanced to match real Saudi healthcare claims data
-export const claims = pgTable("claims", {
+// Legacy claim schema - kept for backward compatibility with demo-data-seeder
+export const legacyClaims = pgTable("claims", {
   id: varchar("id").primaryKey(),
   claimNumber: text("claim_number").notNull(),
   policyNumber: text("policy_number").notNull(),
@@ -189,10 +189,10 @@ export const claims = pgTable("claims", {
   validationComment: text("validation_comment"),
 });
 
-export type Claim = typeof claims.$inferSelect;
-export type InsertClaim = z.infer<typeof insertClaimSchema>;
+export type LegacyClaim = typeof legacyClaims.$inferSelect;
+export type InsertLegacyClaim = z.infer<typeof insertLegacyClaimSchema>;
 
-export const insertClaimSchema = createInsertSchema(claims);
+export const insertLegacyClaimSchema = createInsertSchema(legacyClaims);
 
 // ============================================
 // Pre-Authorization Module Schema
@@ -3555,6 +3555,196 @@ export const insertFwaRuleHitSchema = createInsertSchema(fwaRuleHits).omit({
 export type InsertFwaRuleHit = z.infer<typeof insertFwaRuleHitSchema>;
 export type FwaRuleHit = typeof fwaRuleHits.$inferSelect;
 
+// =============================================================================
+// BRD-Aligned Master Data Tables (iHop Master Data Schema V2)
+// =============================================================================
+
+export const policies = pgTable("policies", {
+  id: text("id").primaryKey(),
+  planName: text("plan_name").notNull(),
+  payerId: text("payer_id").notNull(),
+  effectiveDate: date("effective_date").notNull(),
+  expiryDate: date("expiry_date").notNull(),
+  coverageLimits: jsonb("coverage_limits"),
+  exclusions: text("exclusions").array(),
+  copaySchedule: jsonb("copay_schedule"),
+  waitingPeriods: jsonb("waiting_periods"),
+  preAuthRequiredServices: text("pre_auth_required_services").array(),
+  networkRequirements: text("network_requirements"),
+  annualMaximum: decimal("annual_maximum", { precision: 12, scale: 2 }),
+  lifetimeMaximum: decimal("lifetime_maximum", { precision: 12, scale: 2 }),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertPolicySchema = createInsertSchema(policies).omit({ createdAt: true });
+export type InsertPolicy = z.infer<typeof insertPolicySchema>;
+export type Policy = typeof policies.$inferSelect;
+
+export const members = pgTable("members", {
+  id: text("id").primaryKey(),
+  policyId: text("policy_id").references(() => policies.id),
+  payerId: text("payer_id").notNull(),
+  name: text("name"),
+  dateOfBirth: date("date_of_birth").notNull(),
+  gender: text("gender").notNull(),
+  nationality: text("nationality"),
+  region: text("region"),
+  groupNumber: text("group_number"),
+  coverageRelationship: text("coverage_relationship"),
+  chronicConditions: text("chronic_conditions").array(),
+  preExistingFlag: boolean("pre_existing_flag").default(false),
+  maritalStatus: text("marital_status"),
+  networkTier: text("network_tier"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertMemberSchema = createInsertSchema(members).omit({ createdAt: true });
+export type InsertMember = z.infer<typeof insertMemberSchema>;
+export type Member = typeof members.$inferSelect;
+
+export const providers = pgTable("providers", {
+  id: text("id").primaryKey(),
+  npi: text("npi"),
+  name: text("name").notNull(),
+  providerType: text("provider_type").notNull(),
+  specialty: text("specialty"),
+  region: text("region"),
+  city: text("city"),
+  networkTier: text("network_tier"),
+  address: text("address"),
+  organization: text("organization"),
+  email: text("email"),
+  phone: text("phone"),
+  licenseNumber: text("license_number"),
+  licenseExpiry: date("license_expiry"),
+  contractStatus: text("contract_status"),
+  hcpCode: text("hcp_code"),
+  memberCount: integer("member_count"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertProviderSchema = createInsertSchema(providers).omit({ createdAt: true });
+export type InsertProvider = z.infer<typeof insertProviderSchema>;
+export type Provider = typeof providers.$inferSelect;
+
+export const practitioners = pgTable("practitioners", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  specialty: text("specialty").notNull(),
+  specialtyCode: text("specialty_code"),
+  credentials: text("credentials"),
+  licenseNumber: text("license_number"),
+  primaryFacilityId: text("primary_facility_id").references(() => providers.id),
+  primaryFacilityName: text("primary_facility_name"),
+  affiliatedFacilities: text("affiliated_facilities").array(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertPractitionerSchema = createInsertSchema(practitioners).omit({ createdAt: true });
+export type InsertPractitioner = z.infer<typeof insertPractitionerSchema>;
+export type Practitioner = typeof practitioners.$inferSelect;
+
+export const claims = pgTable("claims_v2", {
+  id: text("id").primaryKey().default(sql`gen_random_uuid()`),
+  claimNumber: text("claim_number").notNull().unique(),
+  policyId: text("policy_id").references(() => policies.id),
+  memberId: text("member_id").references(() => members.id).notNull(),
+  providerId: text("provider_id").references(() => providers.id).notNull(),
+  practitionerId: text("practitioner_id").references(() => practitioners.id),
+  claimType: text("claim_type").notNull(),
+  registrationDate: timestamp("registration_date").notNull(),
+  serviceDate: timestamp("service_date").notNull(),
+  amount: decimal("amount", { precision: 12, scale: 2 }).notNull(),
+  approvedAmount: decimal("approved_amount", { precision: 12, scale: 2 }),
+  denialReason: text("denial_reason"),
+  status: text("status").notNull().default("pending"),
+  primaryDiagnosis: text("primary_diagnosis").notNull(),
+  icdCodes: text("icd_codes").array(),
+  cptCodes: text("cpt_codes").array(),
+  description: text("description"),
+  specialty: text("specialty"),
+  hospital: text("hospital"),
+  hasSurgery: boolean("has_surgery"),
+  surgeryFee: decimal("surgery_fee", { precision: 12, scale: 2 }),
+  hasIcu: boolean("has_icu"),
+  lengthOfStay: integer("length_of_stay"),
+  preAuthRef: text("pre_auth_ref"),
+  category: text("category"),
+  insurerId: text("insurer_id"),
+  facilityId: text("facility_id"),
+  isNewborn: boolean("is_newborn").default(false),
+  isChronic: boolean("is_chronic").default(false),
+  isPreExisting: boolean("is_pre_existing").default(false),
+  isPreAuthorized: boolean("is_pre_authorized").default(false),
+  isMaternity: boolean("is_maternity").default(false),
+  groupNo: text("group_no"),
+  city: text("city"),
+  providerType: text("provider_type"),
+  coverageRelationship: text("coverage_relationship"),
+  providerShare: decimal("provider_share", { precision: 12, scale: 2 }),
+  onAdmissionDiagnosis: text("on_admission_diagnosis").array(),
+  dischargeDiagnosis: text("discharge_diagnosis").array(),
+  policyEffectiveDate: date("policy_effective_date"),
+  policyExpiryDate: date("policy_expiry_date"),
+  mdgfClaimNumber: text("mdgf_claim_number"),
+  hcpCode: text("hcp_code"),
+  occurrenceDate: timestamp("occurrence_date"),
+  source: text("source"),
+  resubmission: boolean("resubmission").default(false),
+  dischargeDisposition: text("discharge_disposition"),
+  admissionDate: timestamp("admission_date"),
+  dischargeDate: timestamp("discharge_date"),
+  preAuthStatus: text("pre_auth_status"),
+  preAuthIcd10s: text("pre_auth_icd10s").array(),
+  netPayableAmount: decimal("net_payable_amount", { precision: 12, scale: 2 }),
+  patientShare: decimal("patient_share", { precision: 12, scale: 2 }),
+  aiStatus: text("ai_status"),
+  validationResults: jsonb("validation_results"),
+  flagged: boolean("flagged").default(false),
+  flagReason: text("flag_reason"),
+  outlierScore: decimal("outlier_score", { precision: 5, scale: 4 }),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertClaimSchema = createInsertSchema(claims).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertClaim = z.infer<typeof insertClaimSchema>;
+export type Claim = typeof claims.$inferSelect;
+
+export const serviceLines = pgTable("service_lines", {
+  id: text("id").primaryKey().default(sql`gen_random_uuid()`),
+  claimId: text("claim_id").references(() => claims.id).notNull(),
+  lineNumber: integer("line_number").notNull(),
+  serviceCode: text("service_code").notNull(),
+  serviceDescription: text("service_description").notNull(),
+  serviceCodeSystem: text("service_code_system"),
+  serviceType: text("service_type"),
+  quantity: decimal("quantity", { precision: 8, scale: 2 }).notNull(),
+  unitPrice: decimal("unit_price", { precision: 12, scale: 2 }).notNull(),
+  totalPrice: decimal("total_price", { precision: 12, scale: 2 }).notNull(),
+  approvedAmount: decimal("approved_amount", { precision: 12, scale: 2 }),
+  serviceDate: timestamp("service_date"),
+  modifiers: text("modifiers").array(),
+  diagnosisPointers: text("diagnosis_pointers").array(),
+  ndc: text("ndc"),
+  gtin: text("gtin"),
+  sbsCode: text("sbs_code"),
+  sfdaCode: text("sfda_code"),
+  daysSupply: integer("days_supply"),
+  prescriptionNumber: text("prescription_number"),
+  prescriberId: text("prescriber_id"),
+  patientShare: decimal("patient_share", { precision: 12, scale: 2 }),
+  internalServiceCode: text("internal_service_code"),
+  providerServiceDescription: text("provider_service_description"),
+  toothNumber: text("tooth_number"),
+  dosageInstruction: jsonb("dosage_instruction"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertServiceLineSchema = createInsertSchema(serviceLines).omit({ id: true, createdAt: true });
+export type InsertServiceLine = z.infer<typeof insertServiceLineSchema>;
+export type ServiceLine = typeof serviceLines.$inferSelect;
+
 // Analyzed Claims - Imported claims for analysis
 export const fwaAnalyzedClaims = pgTable("fwa_analyzed_claims", {
   id: text("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -5470,3 +5660,24 @@ export const coverageLookups = pgTable("coverage_lookups", {
 
 export type CoverageLookup = typeof coverageLookups.$inferSelect;
 export type InsertCoverageLookup = typeof coverageLookups.$inferInsert;
+
+// ---------- FWA Investigation Notes ----------
+
+export const fwaEntityInvestigationNotes = pgTable("fwa_entity_investigation_notes", {
+  id: text("id").primaryKey().default(sql`gen_random_uuid()`),
+  entityType: text("entity_type").notNull(), // "provider" | "doctor" | "patient"
+  entityId: text("entity_id").notNull(),
+  investigationStatus: text("investigation_status").notNull().default("open"), // "open" | "under_review" | "escalated" | "cleared" | "closed"
+  assignedInvestigator: text("assigned_investigator"),
+  noteType: text("note_type").notNull().default("general"), // "general" | "status_change" | "assignment" | "escalation"
+  content: text("content").notNull(),
+  author: text("author").notNull(),
+  linkedEnforcementCaseId: text("linked_enforcement_case_id"),
+  metadata: jsonb("metadata"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export type FwaEntityInvestigationNote = typeof fwaEntityInvestigationNotes.$inferSelect;
+export type InsertFwaEntityInvestigationNote = typeof fwaEntityInvestigationNotes.$inferInsert;
+export const insertFwaEntityInvestigationNoteSchema = createInsertSchema(fwaEntityInvestigationNotes);

@@ -1,7 +1,7 @@
 import { db } from "../db";
 import { 
-  claims, 
-  providerFeatureStore, 
+  claims,
+  providerFeatureStore,
   memberFeatureStore,
   peerGroupBaselines,
   mlClaimInference,
@@ -188,7 +188,7 @@ export class FeatureEngineeringService {
     
     const result = await db.select({ count: sql<number>`count(*)` })
       .from(claims)
-      .where(eq(claims.icd, icd));
+      .where(eq(claims.primaryDiagnosis, icd));
     
     const totalClaims = await db.select({ count: sql<number>`count(*)` })
       .from(claims);
@@ -303,8 +303,8 @@ export class FeatureEngineeringService {
     const stdAmount30d = this.calculateStdDev(amounts30d);
     
     // Unique counts
-    const uniquePatients30d = new Set(claims30d.map(c => c.patientId)).size;
-    const uniqueDiagnoses30d = new Set(claims30d.map(c => c.icd).filter(Boolean)).size;
+    const uniquePatients30d = new Set(claims30d.map(c => c.memberId)).size;
+    const uniqueDiagnoses30d = new Set(claims30d.map(c => c.primaryDiagnosis).filter(Boolean)).size;
     
     // Rates
     const deniedClaims90d = claims90d.filter(c => c.status === 'denied' || c.status === 'rejected').length;
@@ -330,7 +330,7 @@ export class FeatureEngineeringService {
     const nightRatio = claims30d.length > 0 ? nightClaims30d / claims30d.length : 0;
     
     // Surgery rate
-    const surgeryClaims30d = claims30d.filter(c => c.hasSurgery === 'Yes' || c.hasSurgery === 'true').length;
+    const surgeryClaims30d = claims30d.filter(c => c.hasSurgery === true).length;
     const surgeryRate = claims30d.length > 0 ? surgeryClaims30d / claims30d.length : 0;
     
     // Average LOS
@@ -431,21 +431,21 @@ export class FeatureEngineeringService {
     const claims30d = await db.select()
       .from(claims)
       .where(and(
-        eq(claims.patientId, memberId),
+        eq(claims.memberId, memberId),
         gte(claims.serviceDate, day30Ago)
       ));
     
     const claims90d = await db.select()
       .from(claims)
       .where(and(
-        eq(claims.patientId, memberId),
+        eq(claims.memberId, memberId),
         gte(claims.serviceDate, day90Ago)
       ));
     
     // Most recent claim
     const lastClaim = await db.select()
       .from(claims)
-      .where(eq(claims.patientId, memberId))
+      .where(eq(claims.memberId, memberId))
       .orderBy(desc(claims.serviceDate))
       .limit(1);
     
@@ -455,10 +455,10 @@ export class FeatureEngineeringService {
     
     const uniqueProviders30d = new Set(claims30d.map(c => c.providerId)).size;
     const uniqueProviders90d = new Set(claims90d.map(c => c.providerId)).size;
-    const uniqueDiagnoses30d = new Set(claims30d.map(c => c.icd).filter(Boolean)).size;
+    const uniqueDiagnoses30d = new Set(claims30d.map(c => c.primaryDiagnosis).filter(Boolean)).size;
     
-    const surgeryCount90d = claims90d.filter(c => c.hasSurgery === 'Yes' || c.hasSurgery === 'true').length;
-    const icuCount90d = claims90d.filter(c => c.hasIcu === 'Yes' || c.hasIcu === 'true').length;
+    const surgeryCount90d = claims90d.filter(c => c.hasSurgery === true).length;
+    const icuCount90d = claims90d.filter(c => c.hasIcu === true).length;
     
     // High utilizer = more than 10 claims in 30 days
     const highUtilizer = claims30d.length > 10;
@@ -517,7 +517,7 @@ export class FeatureEngineeringService {
     const sameDayClaims = await db.select({ count: sql<number>`count(*)` })
       .from(claims)
       .where(and(
-        eq(claims.patientId, claim.patientId),
+        eq(claims.memberId, claim.memberId),
         gte(claims.serviceDate, dayStart),
         lte(claims.serviceDate, dayEnd),
         ne(claims.id, claim.id)
@@ -527,7 +527,7 @@ export class FeatureEngineeringService {
     const sameProviderWeek = await db.select({ count: sql<number>`count(*)` })
       .from(claims)
       .where(and(
-        eq(claims.patientId, claim.patientId),
+        eq(claims.memberId, claim.memberId),
         eq(claims.providerId, claim.providerId),
         gte(claims.serviceDate, weekAgo),
         ne(claims.id, claim.id)
@@ -537,9 +537,9 @@ export class FeatureEngineeringService {
     const duplicates = await db.select({ count: sql<number>`count(*)` })
       .from(claims)
       .where(and(
-        eq(claims.patientId, claim.patientId),
+        eq(claims.memberId, claim.memberId),
         eq(claims.providerId, claim.providerId),
-        eq(claims.icd, claim.icd),
+        eq(claims.primaryDiagnosis, claim.primaryDiagnosis),
         gte(claims.serviceDate, weekAgo),
         ne(claims.id, claim.id)
       ));
@@ -549,7 +549,7 @@ export class FeatureEngineeringService {
     const burst = await db.select({ count: sql<number>`count(*)` })
       .from(claims)
       .where(and(
-        eq(claims.patientId, claim.patientId),
+        eq(claims.memberId, claim.memberId),
         gte(claims.serviceDate, day3Ago)
       ));
     
@@ -617,7 +617,7 @@ export class FeatureEngineeringService {
     
     // Get entity features
     const providerFeatures = await this.getProviderFeatures(claim.providerId || '');
-    const memberFeatures = await this.getMemberFeatures(claim.patientId || '');
+    const memberFeatures = await this.getMemberFeatures(claim.memberId || '');
     const temporalFeatures = await this.calculateTemporalFeatures(claim);
     const peerBaseline = await this.getPeerBaseline(null); // Would use provider specialty
     
@@ -630,7 +630,7 @@ export class FeatureEngineeringService {
     const daysToSubmit = Math.floor((regDate.getTime() - serviceDate.getTime()) / (24 * 60 * 60 * 1000));
     
     // Diagnosis rarity
-    const diagnosisRarity = await this.calculateDiagnosisRarity(claim.icd);
+    const diagnosisRarity = await this.calculateDiagnosisRarity(claim.primaryDiagnosis);
     
     // Z-scores
     const amountVsProviderAvg = providerFeatures.stdAmount30d > 0
@@ -646,7 +646,7 @@ export class FeatureEngineeringService {
     // Derived features
     const amountPerLosDay = los > 0 ? amount / los : amount;
     const procedureCount = claim.cptCodes?.length || 0;
-    const diagnosisCount = claim.diagnosisCodes?.length || (claim.icd ? 1 : 0);
+    const diagnosisCount = claim.diagnosisCodes?.length || (claim.primaryDiagnosis ? 1 : 0);
     const procedureDensity = los > 0 ? procedureCount / los : procedureCount;
     
     // LOS vs expected (simplified - normally would use DRG/ICD mapping)
@@ -654,7 +654,7 @@ export class FeatureEngineeringService {
     const losVsExpected = expectedLos > 0 ? los / expectedLos : 1;
     
     // Procedure-diagnosis mismatch score (simplified)
-    const mismatchScore = this.calculateMismatchScore(claim.icd, claim.cptCodes);
+    const mismatchScore = this.calculateMismatchScore(claim.primaryDiagnosis, claim.cptCodes);
     
     return {
       // Raw features
@@ -670,7 +670,7 @@ export class FeatureEngineeringService {
       has_icu: claim.hasIcu === 'Yes' ? 1 : 0,
       diagnosis_count: diagnosisCount,
       procedure_count: procedureCount,
-      icd_chapter: this.encodeIcdChapter(claim.icd),
+      icd_chapter: this.encodeIcdChapter(claim.primaryDiagnosis),
       similar_claims: claim.similarClaims || 0,
       similar_claims_hospital: claim.similarClaimsInHospital || 0,
       is_flagged: claim.flagged ? 1 : 0,
@@ -1510,7 +1510,7 @@ export class UnsupervisedMLEngine {
     
     // Get entity risk scores
     const providerFeatures = await this.featureService.getProviderFeatures(claim.providerId || '');
-    const memberFeatures = await this.featureService.getMemberFeatures(claim.patientId || '');
+    const memberFeatures = await this.featureService.getMemberFeatures(claim.memberId || '');
     
     const providerRiskScore = this.calculateEntityRiskScore(providerFeatures);
     const memberRiskScore = this.calculateMemberRiskScore(memberFeatures);

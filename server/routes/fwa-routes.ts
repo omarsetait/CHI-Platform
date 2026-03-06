@@ -19,6 +19,11 @@ import {
   insertFwaBatchSchema,
   insertAgentReportSchema,
   claims,
+  serviceLines,
+  members,
+  providers,
+  practitioners,
+  policies,
   fwaClaimServices,
   providerFeatureStore,
   memberFeatureStore,
@@ -62,6 +67,7 @@ import {
 } from "../services/enhanced-fwa-rules";
 import { EnforcementWorkflowOrchestrator } from "../services/enforcement/workflow-orchestrator";
 import { getDefaultProvider } from "../services/llm";
+import type { AnalyzedClaimData } from "../services/production-detection-engine";
 
 const letterGenerationSchema = z.object({
   providers: z.array(z.object({
@@ -124,10 +130,10 @@ export function registerFwaRoutes(
       await seedDatabaseWithDemoData();
 
       // Get counts after seeding
-      const { fwaAnalyzedClaims, fwaCases } = await import("@shared/schema");
+      const { claims: claimsTable, fwaCases } = await import("@shared/schema");
       const { count } = await import("drizzle-orm");
 
-      const claimsResult = await db.select({ count: count() }).from(fwaAnalyzedClaims);
+      const claimsResult = await db.select({ count: count() }).from(claimsTable);
       const casesResult = await db.select({ count: count() }).from(fwaCases);
 
       const claimCount = claimsResult[0]?.count || 0;
@@ -159,7 +165,7 @@ export function registerFwaRoutes(
       }
 
       const {
-        fwaAnalyzedClaims, fwaCases, enforcementCases,
+        claims: claimsTable, fwaCases, enforcementCases,
         fwaProviderDetectionResults, fwaDoctorDetectionResults,
         fwaPatientDetectionResults, fwaDetectionResults
       } = await import("@shared/schema");
@@ -167,7 +173,7 @@ export function registerFwaRoutes(
 
       // Get counts from all relevant tables
       const [claims, cases, enforcement, providers, doctors, patients, detections] = await Promise.all([
-        db.select({ count: count() }).from(fwaAnalyzedClaims),
+        db.select({ count: count() }).from(claimsTable),
         db.select({ count: count() }).from(fwaCases),
         db.select({ count: count() }).from(enforcementCases),
         db.select({ count: count() }).from(fwaProviderDetectionResults),
@@ -184,7 +190,7 @@ export function registerFwaRoutes(
       res.json({
         database: { host: dbHost, name: dbName },
         counts: {
-          fwaAnalyzedClaims: claims[0]?.count || 0,
+          claims: claims[0]?.count || 0,
           fwaCases: cases[0]?.count || 0,
           enforcementCases: enforcement[0]?.count || 0,
           fwaProviderDetectionResults: providers[0]?.count || 0,
@@ -1252,8 +1258,8 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       // Strategy 4: If still no services found, generate realistic mock services based on case data
       if (services.length === 0 && fwaCase) {
         const totalAmount = parseFloat(fwaCase.totalAmount as string) || 5000;
-        const claimType = fwaCase.claimType || "Outpatient";
-        const flagReason = fwaCase.flagReason || "";
+        const claimType = (fwaCase as any).claimType || "Outpatient";
+        const flagReason = (fwaCase as any).flagReason || "";
 
         // Generate 2-5 services based on claim type and amount
         const serviceCount = Math.min(5, Math.max(2, Math.floor(totalAmount / 2000)));
@@ -1296,15 +1302,15 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
 
     if (claimType === "Inpatient") {
       return [
-        { code: "99223", name: "Hospital admission - high severity", diagnosisCode: "I21.9", notes: isUpcoding ? "High-level E/M code - verify medical necessity" : null },
+        { code: "99223", name: "Hospital admission - high severity", diagnosisCode: "I21.9", notes: isUpcoding ? "High-level E/M code - verify medical necessity" : undefined },
         { code: "99233", name: "Subsequent hospital care - high complexity", diagnosisCode: "I21.9" },
-        { code: "36556", name: "Central venous catheter insertion", diagnosisCode: "I21.9", modifiers: isUnbundling ? "59" : null },
-        { code: "93010", name: "ECG interpretation", quantity: isDuplicate ? 3 : 1, diagnosisCode: "I21.9", notes: isDuplicate ? "Multiple ECGs on same day - verify necessity" : null },
+        { code: "36556", name: "Central venous catheter insertion", diagnosisCode: "I21.9", modifiers: isUnbundling ? "59" : undefined },
+        { code: "93010", name: "ECG interpretation", quantity: isDuplicate ? 3 : 1, diagnosisCode: "I21.9", notes: isDuplicate ? "Multiple ECGs on same day - verify necessity" : undefined },
         { code: "71046", name: "Chest X-ray", diagnosisCode: "J18.9" },
       ];
     } else if (claimType === "Emergency") {
       return [
-        { code: "99285", name: "Emergency department visit - high severity", diagnosisCode: "R07.9", notes: isUpcoding ? "Level 5 ED visit - verify severity documentation" : null },
+        { code: "99285", name: "Emergency department visit - high severity", diagnosisCode: "R07.9", notes: isUpcoding ? "Level 5 ED visit - verify severity documentation" : undefined },
         { code: "12001", name: "Simple laceration repair", diagnosisCode: "S01.80", quantity: 1 },
         { code: "99291", name: "Critical care first hour", diagnosisCode: "R57.9" },
         { code: "36415", name: "Venipuncture", diagnosisCode: "R07.9" },
@@ -1313,7 +1319,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
     } else {
       // Outpatient / Other
       return [
-        { code: "99215", name: "Office visit - high complexity", diagnosisCode: "I10", notes: isUpcoding ? "High-level office visit - verify documentation" : null },
+        { code: "99215", name: "Office visit - high complexity", diagnosisCode: "I10", notes: isUpcoding ? "High-level office visit - verify documentation" : undefined },
         { code: "99214", name: "Office visit - moderate complexity", diagnosisCode: "I10" },
         { code: "36415", name: "Venipuncture", diagnosisCode: "I10" },
         { code: "80061", name: "Lipid panel", diagnosisCode: "E78.5" },
@@ -1372,15 +1378,79 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
     }
   });
 
-  // GET /api/fwa/high-risk-providers - List high-risk providers from pre-computed detection data
+  // GET /api/fwa/high-risk-providers - List high-risk providers with pagination, sorting, and filters
   app.get("/api/fwa/high-risk-providers", async (req, res) => {
     try {
       const { db } = await import("../db");
       const { sql } = await import("drizzle-orm");
 
-      // Use pre-computed provider detection results for fast query,
-      // enriched with actual claims data from fwa_analyzed_claims
-      const providers = await db.execute(sql`
+      // Parse pagination and filter params
+      const page = Math.max(1, parseInt(req.query.page as string) || 1);
+      const pageSize = Math.min(100, Math.max(1, parseInt(req.query.pageSize as string) || 20));
+      const offset = (page - 1) * pageSize;
+      const sortBy = (req.query.sortBy as string) || "riskScore";
+      const sortOrder = (req.query.sortOrder as string) === "asc" ? "ASC" : "DESC";
+      const search = (req.query.search as string) || "";
+      const riskTier = (req.query.riskTier as string) || "";
+      const minScore = parseFloat(req.query.minScore as string) || 0;
+      const maxScore = parseFloat(req.query.maxScore as string) || 100;
+      const dateFrom = (req.query.dateFrom as string) || "";
+      const dateTo = (req.query.dateTo as string) || "";
+      const detectionMethod = (req.query.detectionMethod as string) || "";
+
+      // Build WHERE conditions for filtering
+      const conditions: string[] = [];
+      if (search) {
+        conditions.push(`(pdr.provider_id ILIKE '%${search.replace(/'/g, "''")}%' OR pd.name ILIKE '%${search.replace(/'/g, "''")}%')`);
+      }
+      if (minScore > 0) {
+        conditions.push(`COALESCE(pdr.composite_score, 0) >= ${minScore}`);
+      }
+      if (maxScore < 100) {
+        conditions.push(`COALESCE(pdr.composite_score, 0) <= ${maxScore}`);
+      }
+      if (dateFrom) {
+        conditions.push(`pdr.analyzed_at >= '${dateFrom.replace(/'/g, "''")}'::timestamp`);
+      }
+      if (dateTo) {
+        conditions.push(`pdr.analyzed_at <= '${dateTo.replace(/'/g, "''")}'::timestamp + interval '1 day'`);
+      }
+      if (detectionMethod) {
+        conditions.push(`pdr.primary_detection_method = '${detectionMethod.replace(/'/g, "''")}'`);
+      }
+      // Risk tier filter applied after score calculation
+      const riskTierConditions: Record<string, string> = {
+        critical: "COALESCE(pdr.composite_score, 0) >= 40",
+        high: "COALESCE(pdr.composite_score, 0) >= 30 AND COALESCE(pdr.composite_score, 0) < 40",
+        medium: "COALESCE(pdr.composite_score, 0) >= 20 AND COALESCE(pdr.composite_score, 0) < 30",
+        low: "COALESCE(pdr.composite_score, 0) >= 10 AND COALESCE(pdr.composite_score, 0) < 20",
+        minimal: "COALESCE(pdr.composite_score, 0) < 10",
+      };
+      if (riskTier && riskTierConditions[riskTier]) {
+        conditions.push(riskTierConditions[riskTier]);
+      }
+      const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+
+      // Map sortBy field to SQL column
+      const sortColumns: Record<string, string> = {
+        riskScore: "pdr.composite_score",
+        totalExposure: "total_exposure",
+        totalClaims: "total_claims",
+        providerId: "pdr.provider_id",
+      };
+      const orderColumn = sortColumns[sortBy] || "pdr.composite_score";
+
+      // Count query for total
+      const countResult = await db.execute(sql.raw(`
+        SELECT COUNT(*) as total
+        FROM fwa_provider_detection_results pdr
+        LEFT JOIN provider_directory pd ON pd.id = pdr.provider_id
+        ${whereClause}
+      `));
+      const total = parseInt((countResult.rows[0] as any)?.total) || 0;
+
+      // Main data query with pagination
+      const providers = await db.execute(sql.raw(`
         WITH claim_aggs AS (
           SELECT
             provider_id,
@@ -1405,16 +1475,17 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           pdr.analyzed_at as last_detection_date,
           COALESCE((pdr.aggregated_metrics->>'totalClaims')::integer, ca.claim_count, fs.claim_count, 0) as total_claims,
           COALESCE(ca.patient_count, fs.unique_patients, 0) as unique_patients,
-          COALESCE((pdr.aggregated_metrics->>'totalExposure')::numeric, ca.total_exposure, fs.total_amount, 0) as total_exposure,
+          COALESCE((pdr.aggregated_metrics->>'totalAmount')::numeric, ca.total_exposure, fs.total_amount, 0) as total_exposure,
           pd.name as provider_name,
           pd.specialty
         FROM fwa_provider_detection_results pdr
         LEFT JOIN claim_aggs ca ON ca.provider_id = pdr.provider_id
         LEFT JOIN fwa_feature_store fs ON fs.entity_id = pdr.provider_id AND fs.entity_type = 'provider'
         LEFT JOIN provider_directory pd ON pd.id = pdr.provider_id
-        ORDER BY pdr.composite_score DESC NULLS LAST
-        LIMIT 20
-      `);
+        ${whereClause}
+        ORDER BY ${orderColumn} ${sortOrder} NULLS LAST
+        LIMIT ${pageSize} OFFSET ${offset}
+      `));
 
       // Helper to safely parse numeric values
       const safeNum = (val: any, fallback: number = 0): number => {
@@ -1438,7 +1509,6 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       };
 
       // Dynamic risk level calculation from score
-      // Adjusted thresholds to match actual detection score distribution (max ~45%)
       const calculateRiskLevel = (score: number): "critical" | "high" | "medium" | "low" | "minimal" => {
         if (score >= 40) return "critical";
         if (score >= 30) return "high";
@@ -1450,18 +1520,14 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       const formattedProviders = providers.rows.map((p: any, idx: number) => {
         const providerId = p.provider_id?.trim() || `PRV-${idx + 1}`;
         const avgRiskScore = safeNum(p.avg_risk_score, 0);
-        const maxRiskScore = safeNum(p.max_risk_score, 0);
         const totalExposure = safeNum(p.total_exposure, 0);
         const totalClaims = parseInt(p.total_claims) || 0;
         const uniquePatients = parseInt(p.unique_patients) || 0;
-        // Calculate risk level dynamically from score instead of using stored value
         const riskLevel = calculateRiskLevel(avgRiskScore);
 
-        // Determine flagged status from pre-computed risk level
         const isHighRisk = riskLevel === 'high' || riskLevel === 'critical';
         const isCritical = riskLevel === 'critical';
 
-        // Generate meaningful reasons based on actual data
         const reasons: string[] = [];
         if (isCritical) reasons.push("Critical risk level detected");
         if (isHighRisk) reasons.push("Elevated risk patterns identified");
@@ -1471,13 +1537,12 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         if (totalClaims > 30) reasons.push(`High volume: ${totalClaims} claims`);
         if (reasons.length === 0) reasons.push("Routine monitoring - no significant concerns");
 
-        // Get provider name from mapping or generate from ID
         const providerName = p.provider_name || providerNames[providerId] ||
           (providerId.startsWith('PRV-GEN') ? `Saudi Healthcare Provider ${providerId.replace('PRV-GEN-', '')}` :
             `Provider ${providerId.substring(0, 8)}`);
 
         return {
-          id: `p${idx + 1}`,
+          id: `p${offset + idx + 1}`,
           providerId: providerId,
           providerName: providerName,
           providerType: "Healthcare Facility",
@@ -1502,7 +1567,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         };
       });
 
-      res.json(formattedProviders);
+      res.json({ data: formattedProviders, total, page, pageSize });
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/high-risk-providers", "fetch high-risk providers");
     }
@@ -1550,26 +1615,26 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       // Get claim amounts from provider detection results (aggregated_metrics) or fallback to analyzed claims
       const providerExposure = await db.execute(sql`
         SELECT 
-          COALESCE((aggregated_metrics->>'totalExposure')::numeric, 0) as total_exposure,
+          COALESCE((aggregated_metrics->>'totalAmount')::numeric, 0) as total_exposure,
           COALESCE((aggregated_metrics->>'totalClaims')::integer, 0) as total_claims,
           COALESCE((aggregated_metrics->>'avgClaimAmount')::numeric, 0) as avg_claim_amount
         FROM fwa_provider_detection_results
         WHERE provider_id = ${providerId}
       `);
 
-      // Fallback to analyzed claims if aggregated_metrics not available
+      // Fallback to claims_v2 if aggregated_metrics not available
       const claimAmounts = await db.execute(sql`
-        SELECT 
-          COALESCE(SUM(CASE WHEN ac.total_amount IS NOT NULL THEN ac.total_amount::decimal ELSE 0 END), 0) as total_amount,
-          COALESCE(AVG(CASE WHEN ac.total_amount IS NOT NULL THEN ac.total_amount::decimal ELSE 0 END), 0) as avg_claim_amount
+        SELECT
+          COALESCE(SUM(CASE WHEN c.amount IS NOT NULL THEN c.amount::decimal ELSE 0 END), 0) as total_amount,
+          COALESCE(AVG(CASE WHEN c.amount IS NOT NULL THEN c.amount::decimal ELSE 0 END), 0) as avg_claim_amount
         FROM fwa_detection_results dr
-        LEFT JOIN fwa_analyzed_claims ac ON dr.claim_id = ac.id
+        LEFT JOIN claims_v2 c ON dr.claim_id = c.claim_number
         WHERE dr.provider_id = ${providerId}
       `);
 
       // Get all claims for this provider with detection results
       const providerClaims = await db.execute(sql`
-        SELECT 
+        SELECT
           dr.id as detection_id,
           dr.claim_id,
           dr.patient_id as member_id,
@@ -1584,13 +1649,13 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           dr.unsupervised_findings,
           dr.rag_llm_findings,
           dr.analyzed_at,
-          COALESCE(ac.total_amount::decimal, 0) as claim_amount,
-          COALESCE(ac.claim_occurrence_date, dr.analyzed_at) as service_date,
-          ac.principal_diagnosis_code as diagnosis_code,
-          ac.service_code as procedure_code,
-          COALESCE(ac.original_status, 'submitted') as claim_status
+          COALESCE(c.amount::decimal, 0) as claim_amount,
+          COALESCE(c.service_date, dr.analyzed_at) as service_date,
+          c.primary_diagnosis as diagnosis_code,
+          c.cpt_codes as procedure_code,
+          COALESCE(c.status, 'submitted') as claim_status
         FROM fwa_detection_results dr
-        LEFT JOIN fwa_analyzed_claims ac ON dr.claim_id::text = ac.id::text OR dr.claim_id = ac.claim_reference
+        LEFT JOIN claims_v2 c ON dr.claim_id = c.claim_number
         WHERE dr.provider_id = ${providerId}
         ORDER BY dr.analyzed_at DESC
         LIMIT 50
@@ -1768,9 +1833,9 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         LIMIT 1
       `);
 
-      // Get all detection results for this patient
+      // Get all detection results for this patient (full 5-method scores)
       const patientClaims = await db.execute(sql`
-        SELECT 
+        SELECT
           dr.id as detection_id,
           dr.claim_id,
           dr.provider_id,
@@ -1778,15 +1843,24 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           dr.composite_risk_level,
           dr.rule_engine_score,
           dr.statistical_score,
+          dr.unsupervised_score,
+          dr.rag_llm_score,
           dr.rule_engine_findings,
+          dr.statistical_findings,
+          dr.unsupervised_findings,
+          dr.rag_llm_findings,
+          dr.primary_detection_method,
+          dr.detection_summary,
+          dr.recommended_action,
           dr.analyzed_at,
-          ac.total_amount as claim_amount,
-          ac.claim_occurrence_date as service_date,
-          ac.principal_diagnosis_code as diagnosis_code,
-          ac.service_code as procedure_code,
-          ac.original_status as claim_status
+          COALESCE(c.amount::decimal, 0) as claim_amount,
+          COALESCE(c.service_date, dr.analyzed_at) as service_date,
+          c.primary_diagnosis as diagnosis_code,
+          c.description as diagnosis_description,
+          c.cpt_codes as procedure_code,
+          COALESCE(c.status, 'submitted') as claim_status
         FROM fwa_detection_results dr
-        LEFT JOIN fwa_analyzed_claims ac ON dr.claim_id = ac.claim_reference
+        LEFT JOIN claims_v2 c ON dr.claim_id = c.claim_number
         WHERE dr.patient_id = ${memberId}
         ORDER BY dr.analyzed_at DESC
         LIMIT 50
@@ -1830,16 +1904,31 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           detectionId: c.detection_id,
           claimId: c.claim_id,
           providerId: c.provider_id,
+          memberId: memberId,
           compositeScore: parseFloat(c.composite_score) || 0,
           riskLevel: c.composite_risk_level,
-          ruleEngineScore: parseFloat(c.rule_engine_score) || 0,
-          statisticalScore: parseFloat(c.statistical_score) || 0,
-          ruleEngineFindings: c.rule_engine_findings,
+          methodScores: {
+            ruleEngine: parseFloat(c.rule_engine_score) || 0,
+            statistical: parseFloat(c.statistical_score) || 0,
+            unsupervised: parseFloat(c.unsupervised_score) || 0,
+            ragLlm: parseFloat(c.rag_llm_score) || 0,
+            semantic: parseFloat(c.semantic_score) || 0
+          },
+          findings: {
+            ruleEngine: c.rule_engine_findings,
+            statistical: c.statistical_findings,
+            unsupervised: c.unsupervised_findings,
+            ragLlm: c.rag_llm_findings
+          },
           claimAmount: parseFloat(c.claim_amount) || 0,
           serviceDate: c.service_date,
           diagnosisCode: c.diagnosis_code,
+          diagnosisDescription: c.diagnosis_description,
           procedureCode: c.procedure_code,
           status: c.claim_status,
+          primaryDetectionMethod: c.primary_detection_method,
+          detectionSummary: c.detection_summary,
+          recommendedAction: c.recommended_action,
           analyzedAt: c.analyzed_at
         }))
       });
@@ -1883,9 +1972,9 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         LIMIT 1
       `);
 
-      // Get detection results for this doctor (join via practitioner_license)
+      // Get detection results for this doctor (join via practitioner_license, full 5-method scores)
       const doctorClaims = await db.execute(sql`
-        SELECT 
+        SELECT
           dr.id as detection_id,
           dr.claim_id,
           dr.provider_id,
@@ -1893,16 +1982,26 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           dr.composite_score,
           dr.composite_risk_level,
           dr.rule_engine_score,
+          dr.statistical_score,
+          dr.unsupervised_score,
+          dr.rag_llm_score,
           dr.rule_engine_findings,
+          dr.statistical_findings,
+          dr.unsupervised_findings,
+          dr.rag_llm_findings,
+          dr.primary_detection_method,
+          dr.detection_summary,
+          dr.recommended_action,
           dr.analyzed_at,
-          ac.total_amount as claim_amount,
-          ac.claim_occurrence_date as service_date,
-          ac.principal_diagnosis_code as diagnosis_code,
-          ac.service_code as procedure_code,
-          ac.original_status as claim_status
-        FROM fwa_analyzed_claims ac
-        JOIN fwa_detection_results dr ON dr.claim_id = ac.id
-        WHERE ac.practitioner_license = ${doctorId}
+          COALESCE(c.amount::decimal, 0) as claim_amount,
+          COALESCE(c.service_date, dr.analyzed_at) as service_date,
+          c.primary_diagnosis as diagnosis_code,
+          c.description as diagnosis_description,
+          c.cpt_codes as procedure_code,
+          COALESCE(c.status, 'submitted') as claim_status
+        FROM claims_v2 c
+        JOIN fwa_detection_results dr ON dr.claim_id = c.claim_number
+        WHERE c.practitioner_id = ${doctorId}
         ORDER BY dr.analyzed_at DESC
         LIMIT 50
       `);
@@ -1968,13 +2067,28 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           memberId: c.member_id,
           compositeScore: parseFloat(c.composite_score) || 0,
           riskLevel: c.composite_risk_level,
-          ruleEngineScore: parseFloat(c.rule_engine_score) || 0,
-          ruleEngineFindings: c.rule_engine_findings,
+          methodScores: {
+            ruleEngine: parseFloat(c.rule_engine_score) || 0,
+            statistical: parseFloat(c.statistical_score) || 0,
+            unsupervised: parseFloat(c.unsupervised_score) || 0,
+            ragLlm: parseFloat(c.rag_llm_score) || 0,
+            semantic: parseFloat(c.semantic_score) || 0
+          },
+          findings: {
+            ruleEngine: c.rule_engine_findings,
+            statistical: c.statistical_findings,
+            unsupervised: c.unsupervised_findings,
+            ragLlm: c.rag_llm_findings
+          },
           claimAmount: parseFloat(c.claim_amount) || 0,
           serviceDate: c.service_date,
           diagnosisCode: c.diagnosis_code,
+          diagnosisDescription: c.diagnosis_description,
           procedureCode: c.procedure_code,
           status: c.claim_status,
+          primaryDetectionMethod: c.primary_detection_method,
+          detectionSummary: c.detection_summary,
+          recommendedAction: c.recommended_action,
           analyzedAt: c.analyzed_at
         }))
       });
@@ -2009,7 +2123,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       // Get total exposure and 5-method scores from provider detection results
       const providerExposure = await db.execute(sql`
         SELECT 
-          COALESCE((aggregated_metrics->>'totalExposure')::numeric, 0) as total_exposure,
+          COALESCE((aggregated_metrics->>'totalAmount')::numeric, 0) as total_exposure,
           COALESCE((aggregated_metrics->>'totalClaims')::integer, 0) as total_claims,
           COALESCE((aggregated_metrics->>'avgClaimAmount')::numeric, 0) as avg_claim_amount,
           composite_score,
@@ -2018,31 +2132,30 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           statistical_score,
           unsupervised_score,
           rag_llm_score,
-          rag_llm_score,
           semantic_score,
-          risk_factors,
-          matched_rules,
-          anomaly_indicators,
-          flagged_indicators,
           rule_engine_findings,
-          statistical_findings
+          statistical_findings,
+          unsupervised_findings,
+          rag_llm_findings,
+          semantic_findings,
+          aggregated_metrics
         FROM fwa_provider_detection_results
         WHERE provider_id = ${providerId}
       `);
 
-      // Fallback to analyzed claims if aggregated_metrics not available
+      // Fallback to claims_v2 if aggregated_metrics not available
       const claimAmounts = await db.execute(sql`
-        SELECT 
-          COALESCE(SUM(CASE WHEN ac.total_amount IS NOT NULL THEN ac.total_amount::decimal ELSE 0 END), 0) as total_amount,
-          COALESCE(AVG(CASE WHEN ac.total_amount IS NOT NULL THEN ac.total_amount::decimal ELSE 0 END), 0) as avg_claim_amount
+        SELECT
+          COALESCE(SUM(CASE WHEN c.amount IS NOT NULL THEN c.amount::decimal ELSE 0 END), 0) as total_amount,
+          COALESCE(AVG(CASE WHEN c.amount IS NOT NULL THEN c.amount::decimal ELSE 0 END), 0) as avg_claim_amount
         FROM fwa_detection_results dr
-        LEFT JOIN fwa_analyzed_claims ac ON dr.claim_id = ac.id
+        LEFT JOIN claims_v2 c ON dr.claim_id = c.claim_number
         WHERE dr.provider_id = ${providerId}
       `);
 
-      // 2. Get ALL claims with detection results for this provider (fix JOIN to use ac.id)
+      // 2. Get ALL claims with detection results for this provider
       const allClaims = await db.execute(sql`
-        SELECT 
+        SELECT
           dr.id as detection_id,
           dr.claim_id,
           dr.patient_id as member_id,
@@ -2052,7 +2165,6 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           dr.statistical_score,
           dr.unsupervised_score,
           dr.rag_llm_score,
-          dr.semantic_score,
           dr.rule_engine_findings,
           dr.statistical_findings,
           dr.unsupervised_findings,
@@ -2061,15 +2173,15 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           dr.detection_summary,
           dr.recommended_action,
           dr.analyzed_at,
-          ac.total_amount as claim_amount,
-          ac.claim_occurrence_date as service_date,
-          ac.principal_diagnosis_code as diagnosis_code,
-          ac.service_description as diagnosis_description,
-          ac.service_code as procedure_code,
-          ac.service_description as procedure_description,
-          ac.original_status as claim_status
+          c.amount as claim_amount,
+          c.service_date as service_date,
+          c.primary_diagnosis as diagnosis_code,
+          c.description as diagnosis_description,
+          c.cpt_codes as procedure_code,
+          c.description as procedure_description,
+          c.status as claim_status
         FROM fwa_detection_results dr
-        LEFT JOIN fwa_analyzed_claims ac ON dr.claim_id = ac.id
+        LEFT JOIN claims_v2 c ON dr.claim_id = c.claim_number
         WHERE dr.provider_id = ${providerId}
         ORDER BY dr.composite_score DESC NULLS LAST
         LIMIT 100
@@ -2184,16 +2296,21 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         semantic: parseFloat(exposure?.semantic_score) || 0
       };
 
-      // Parse provider risk factors from detection results
-      const providerRiskFactors = Array.isArray(exposure?.risk_factors)
-        ? exposure.risk_factors
-        : [];
-      const providerAnomalyIndicators = Array.isArray(exposure?.anomaly_indicators)
-        ? exposure.anomaly_indicators
-        : [];
-      const providerFlaggedIndicators = Array.isArray(exposure?.flagged_indicators)
-        ? exposure.flagged_indicators
-        : [];
+      // Extract risk factors from findings JSONB columns
+      const ruleFindings = typeof exposure?.rule_engine_findings === 'object' ? exposure.rule_engine_findings : {};
+      const statFindings = typeof exposure?.statistical_findings === 'object' ? exposure.statistical_findings : {};
+      const unsupFindings = typeof exposure?.unsupervised_findings === 'object' ? exposure.unsupervised_findings : {};
+      const providerRiskFactors: string[] = [
+        ...(Array.isArray(ruleFindings?.matchedRules) ? ruleFindings.matchedRules.map((r: any) => r.explanation || r.ruleName || String(r)) : []),
+        ...(statFindings?.anomalyPatterns ? [statFindings.anomalyPatterns].flat().map(String) : []),
+      ];
+      const providerAnomalyIndicators: string[] = [
+        ...(Array.isArray(statFindings?.outlierMetrics) ? statFindings.outlierMetrics.map(String) : []),
+        ...(unsupFindings?.clusterLabel ? [`Cluster: ${unsupFindings.clusterLabel}`] : []),
+      ];
+      const providerFlaggedIndicators: string[] = [
+        ...(Array.isArray((exposure?.aggregated_metrics as any)?.topProcedureCodes) ? [] : []),
+      ];
 
       // Get claims with elevated risk (include medium since most are minimal)
       // Sort by composite_score descending and take top claims
@@ -2450,6 +2567,582 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
     }
   });
 
+  // POST /api/fwa/doctors/:doctorId/audit-report - Generate doctor audit report
+  app.post("/api/fwa/doctors/:doctorId/audit-report", async (req, res) => {
+    try {
+      const { doctorId } = req.params;
+      const { db } = await import("../db");
+      const { sql } = await import("drizzle-orm");
+
+      // Get doctor info from doctor_360
+      const doctorInfo = await db.execute(sql`
+        SELECT doctor_id, doctor_name, specialty, license_number,
+               primary_facility_name, risk_score, risk_level,
+               claims_summary, practice_patterns, flags
+        FROM doctor_360
+        WHERE doctor_id = ${doctorId}
+        LIMIT 1
+      `);
+
+      // Get entity detection results
+      const detection = await db.execute(sql`
+        SELECT composite_score, risk_level,
+               rule_engine_score, statistical_score, unsupervised_score,
+               rag_llm_score, semantic_score,
+               rule_engine_findings, statistical_findings,
+               unsupervised_findings, rag_llm_findings, semantic_findings,
+               aggregated_metrics
+        FROM fwa_doctor_detection_results
+        WHERE doctor_id = ${doctorId}
+        LIMIT 1
+      `);
+
+      // Get doctor's claims via practitioner_id
+      const allClaims = await db.execute(sql`
+        SELECT
+          dr.id as detection_id, dr.claim_id, dr.provider_id, dr.patient_id as member_id,
+          dr.composite_score, dr.composite_risk_level,
+          dr.rule_engine_score, dr.statistical_score, dr.unsupervised_score,
+          dr.rag_llm_score,
+          dr.rule_engine_findings, dr.primary_detection_method,
+          dr.detection_summary, dr.recommended_action, dr.analyzed_at,
+          c.amount as claim_amount, c.service_date as service_date,
+          c.primary_diagnosis as diagnosis_code,
+          c.description as diagnosis_description,
+          c.cpt_codes as procedure_code, c.status as claim_status
+        FROM claims_v2 c
+        JOIN fwa_detection_results dr ON dr.claim_id = c.claim_number
+        WHERE c.practitioner_id = ${doctorId}
+        ORDER BY dr.composite_score DESC NULLS LAST
+        LIMIT 100
+      `);
+
+      // Rule violations
+      const ruleViolations = await db.execute(sql`
+        WITH expanded_rules AS (
+          SELECT jsonb_array_elements(dr.rule_engine_findings->'matchedRules') as rule
+          FROM claims_v2 c
+          JOIN fwa_detection_results dr ON dr.claim_id = c.claim_number
+          WHERE c.practitioner_id = ${doctorId}
+            AND dr.rule_engine_findings->'matchedRules' IS NOT NULL
+            AND jsonb_array_length(dr.rule_engine_findings->'matchedRules') > 0
+        )
+        SELECT rule->>'ruleCode' as rule_code, rule->>'ruleName' as rule_name,
+               rule->>'severity' as severity,
+               COALESCE(rule->>'description', rule->>'humanReadableExplanation',
+                        'Rule violation detected') as explanation,
+               COUNT(*) as hit_count
+        FROM expanded_rules
+        GROUP BY rule->>'ruleCode', rule->>'ruleName', rule->>'severity',
+                 COALESCE(rule->>'description', rule->>'humanReadableExplanation', 'Rule violation detected')
+        ORDER BY hit_count DESC
+      `);
+
+      const doc = doctorInfo.rows[0] as any;
+      const det = detection.rows[0] as any;
+      const claimsSummary = doc?.claims_summary || {};
+      const practicePatterns = doc?.practice_patterns || {};
+      const safeNum = (val: any, fallback: number = 0): number => {
+        if (val === null || val === undefined) return fallback;
+        const num = parseFloat(String(val));
+        return Number.isFinite(num) ? num : fallback;
+      };
+
+      const riskScore = safeNum(det?.composite_score || doc?.risk_score);
+      const methodScores = {
+        ruleEngine: safeNum(det?.rule_engine_score),
+        statistical: safeNum(det?.statistical_score),
+        unsupervised: safeNum(det?.unsupervised_score),
+        ragLlm: safeNum(det?.rag_llm_score),
+        semantic: safeNum(det?.semantic_score),
+      };
+
+      const elevatedClaims = allClaims.rows.filter((c: any) => {
+        const score = parseFloat(c.composite_score) || 0;
+        return score >= 10;
+      });
+      const highRiskClaims = elevatedClaims.length > 0 ? elevatedClaims : allClaims.rows.slice(0, 20);
+
+      const riskLevel = riskScore >= 40 ? 'CRITICAL' : riskScore >= 30 ? 'HIGH' : riskScore >= 20 ? 'MEDIUM' : 'LOW';
+
+      const auditReport = {
+        reportMetadata: {
+          generatedAt: new Date().toISOString(),
+          reportType: 'Doctor Audit Report',
+          doctorId,
+          doctorName: doc?.doctor_name || `Dr. ${doctorId}`,
+          specialty: doc?.specialty || null,
+          reportVersion: '1.0',
+          generatedBy: 'FWA Detection Platform'
+        },
+        executiveSummary: {
+          riskLevel,
+          compositeRiskScore: riskScore,
+          totalClaimsAnalyzed: claimsSummary.total_claims || allClaims.rows.length,
+          totalExposure: claimsSummary.total_amount || 0,
+          highRiskClaimsCount: highRiskClaims.length,
+          ruleViolationsCount: ruleViolations.rows.length,
+          methodScores,
+        },
+        practicePatterns: {
+          avgPatientsPerDay: practicePatterns.avg_patients_per_day || 0,
+          avgClaimPerPatient: practicePatterns.avg_claim_per_patient || 0,
+          specialtyCode: practicePatterns.specialty_code || null,
+        },
+        flags: doc?.flags || [],
+        ruleViolationsDetail: ruleViolations.rows.map((r: any) => ({
+          ruleCode: r.rule_code,
+          ruleName: r.rule_name,
+          severity: r.severity,
+          hitCount: parseInt(r.hit_count),
+          explanation: r.explanation,
+        })),
+        highRiskClaims: highRiskClaims.slice(0, 20).map((c: any) => ({
+          claimId: c.claim_id,
+          compositeScore: parseFloat(c.composite_score) || 0,
+          riskLevel: c.composite_risk_level,
+          claimAmount: parseFloat(c.claim_amount) || 0,
+          serviceDate: c.service_date,
+          diagnosisCode: c.diagnosis_code,
+          procedureCode: c.procedure_code,
+          primaryDetectionMethod: c.primary_detection_method,
+          detectionSummary: c.detection_summary,
+          methodScores: {
+            ruleEngine: parseFloat(c.rule_engine_score) || 0,
+            statistical: parseFloat(c.statistical_score) || 0,
+            unsupervised: parseFloat(c.unsupervised_score) || 0,
+            ragLlm: parseFloat(c.rag_llm_score) || 0,
+            semantic: parseFloat(c.semantic_score) || 0,
+          },
+        })),
+        allClaimsSummary: {
+          totalClaims: allClaims.rows.length,
+          criticalCount: allClaims.rows.filter((c: any) => c.composite_risk_level === 'critical').length,
+          highCount: allClaims.rows.filter((c: any) => c.composite_risk_level === 'high').length,
+          mediumCount: allClaims.rows.filter((c: any) => c.composite_risk_level === 'medium').length,
+          lowCount: allClaims.rows.filter((c: any) => c.composite_risk_level === 'low').length,
+        },
+      };
+
+      res.json(auditReport);
+    } catch (error) {
+      handleRouteError(res, error, "/api/fwa/doctors/:doctorId/audit-report", "generate doctor audit report");
+    }
+  });
+
+  // POST /api/fwa/patients/:patientId/audit-report - Generate patient audit report
+  app.post("/api/fwa/patients/:patientId/audit-report", async (req, res) => {
+    try {
+      const { patientId } = req.params;
+      const { db } = await import("../db");
+      const { sql } = await import("drizzle-orm");
+
+      // Get patient feature store data
+      const patientStats = await db.execute(sql`
+        SELECT entity_id as member_id, claim_count, total_amount, avg_claim_amount,
+               z_score, percentile_rank, rejection_rate, flag_rate, computed_at
+        FROM fwa_feature_store
+        WHERE entity_type = 'patient' AND entity_id = ${patientId}
+        LIMIT 1
+      `);
+
+      // Get entity detection results
+      const detection = await db.execute(sql`
+        SELECT composite_score, risk_level,
+               rule_engine_score, statistical_score, unsupervised_score,
+               rag_llm_score, semantic_score,
+               rule_engine_findings, statistical_findings,
+               unsupervised_findings, rag_llm_findings, semantic_findings,
+               aggregated_metrics
+        FROM fwa_patient_detection_results
+        WHERE patient_id = ${patientId}
+        LIMIT 1
+      `);
+
+      // Get patient's detection results
+      const allClaims = await db.execute(sql`
+        SELECT
+          dr.id as detection_id, dr.claim_id, dr.provider_id,
+          dr.composite_score, dr.composite_risk_level,
+          dr.rule_engine_score, dr.statistical_score, dr.unsupervised_score,
+          dr.rag_llm_score,
+          dr.rule_engine_findings, dr.primary_detection_method,
+          dr.detection_summary, dr.recommended_action, dr.analyzed_at,
+          COALESCE(c.amount::decimal, 0) as claim_amount,
+          COALESCE(c.service_date, dr.analyzed_at) as service_date,
+          c.primary_diagnosis as diagnosis_code,
+          c.description as diagnosis_description,
+          c.cpt_codes as procedure_code, c.status as claim_status
+        FROM fwa_detection_results dr
+        LEFT JOIN claims_v2 c ON dr.claim_id = c.claim_number
+        WHERE dr.patient_id = ${patientId}
+        ORDER BY dr.composite_score DESC NULLS LAST
+        LIMIT 100
+      `);
+
+      const stats = patientStats.rows[0] as any;
+      const det = detection.rows[0] as any;
+      const safeNum = (val: any, fallback: number = 0): number => {
+        if (val === null || val === undefined) return fallback;
+        const num = parseFloat(String(val));
+        return Number.isFinite(num) ? num : fallback;
+      };
+
+      const riskScore = safeNum(det?.composite_score || 0);
+      const methodScores = {
+        ruleEngine: safeNum(det?.rule_engine_score),
+        statistical: safeNum(det?.statistical_score),
+        unsupervised: safeNum(det?.unsupervised_score),
+        ragLlm: safeNum(det?.rag_llm_score),
+        semantic: safeNum(det?.semantic_score),
+      };
+
+      const uniqueProviders = new Set(allClaims.rows.map((c: any) => c.provider_id)).size;
+      const elevatedClaims = allClaims.rows.filter((c: any) => parseFloat(c.composite_score) >= 10);
+      const highRiskClaims = elevatedClaims.length > 0 ? elevatedClaims : allClaims.rows.slice(0, 20);
+
+      const riskLevel = riskScore >= 40 ? 'CRITICAL' : riskScore >= 30 ? 'HIGH' : riskScore >= 20 ? 'MEDIUM' : 'LOW';
+
+      const auditReport = {
+        reportMetadata: {
+          generatedAt: new Date().toISOString(),
+          reportType: 'Patient Audit Report',
+          patientId,
+          reportVersion: '1.0',
+          generatedBy: 'FWA Detection Platform'
+        },
+        executiveSummary: {
+          riskLevel,
+          compositeRiskScore: riskScore,
+          totalClaimsAnalyzed: parseInt(stats?.claim_count) || allClaims.rows.length,
+          totalExposure: parseFloat(stats?.total_amount) || 0,
+          highRiskClaimsCount: highRiskClaims.length,
+          uniqueProviders,
+          doctorShoppingRisk: uniqueProviders >= 3,
+          methodScores,
+        },
+        patientProfile: stats ? {
+          claimCount: parseInt(stats.claim_count) || 0,
+          totalAmount: parseFloat(stats.total_amount) || 0,
+          avgClaimAmount: parseFloat(stats.avg_claim_amount) || 0,
+          zScore: parseFloat(stats.z_score) || 0,
+          percentileRank: parseFloat(stats.percentile_rank) || 50,
+          uniqueProviders,
+          lastComputed: stats.computed_at,
+        } : null,
+        highRiskClaims: highRiskClaims.slice(0, 20).map((c: any) => ({
+          claimId: c.claim_id,
+          compositeScore: parseFloat(c.composite_score) || 0,
+          riskLevel: c.composite_risk_level,
+          claimAmount: parseFloat(c.claim_amount) || 0,
+          serviceDate: c.service_date,
+          diagnosisCode: c.diagnosis_code,
+          procedureCode: c.procedure_code,
+          primaryDetectionMethod: c.primary_detection_method,
+          detectionSummary: c.detection_summary,
+          methodScores: {
+            ruleEngine: parseFloat(c.rule_engine_score) || 0,
+            statistical: parseFloat(c.statistical_score) || 0,
+            unsupervised: parseFloat(c.unsupervised_score) || 0,
+            ragLlm: parseFloat(c.rag_llm_score) || 0,
+            semantic: parseFloat(c.semantic_score) || 0,
+          },
+        })),
+        allClaimsSummary: {
+          totalClaims: allClaims.rows.length,
+          criticalCount: allClaims.rows.filter((c: any) => c.composite_risk_level === 'critical').length,
+          highCount: allClaims.rows.filter((c: any) => c.composite_risk_level === 'high').length,
+          mediumCount: allClaims.rows.filter((c: any) => c.composite_risk_level === 'medium').length,
+          lowCount: allClaims.rows.filter((c: any) => c.composite_risk_level === 'low').length,
+        },
+      };
+
+      res.json(auditReport);
+    } catch (error) {
+      handleRouteError(res, error, "/api/fwa/patients/:patientId/audit-report", "generate patient audit report");
+    }
+  });
+
+  // =========================================================================
+  // Bulk Export
+  // =========================================================================
+
+  // GET /api/fwa/high-risk-entities/export - Export filtered entities as CSV or Excel
+  app.get("/api/fwa/high-risk-entities/export", async (req, res) => {
+    try {
+      const { db } = await import("../db");
+      const { sql } = await import("drizzle-orm");
+      const XLSX = await import("xlsx");
+
+      const entityType = (req.query.entityType as string) || "provider";
+      const format = (req.query.format as string) || "csv";
+      const search = req.query.search as string | undefined;
+      const riskTier = req.query.riskTier as string | undefined;
+      const minScore = req.query.minScore ? parseFloat(req.query.minScore as string) : undefined;
+      const maxScore = req.query.maxScore ? parseFloat(req.query.maxScore as string) : undefined;
+
+      let rows: any[] = [];
+
+      if (entityType === "provider") {
+        const result = await db.execute(sql`
+          SELECT pdr.provider_id, pdr.composite_score, pdr.risk_level,
+                 pdr.rule_engine_score, pdr.statistical_score, pdr.unsupervised_score,
+                 pdr.rag_llm_score, pdr.semantic_score,
+                 COALESCE((pdr.aggregated_metrics->>'totalClaims')::int, 0) as total_claims,
+                 COALESCE((pdr.aggregated_metrics->>'totalAmount')::numeric, 0) as total_exposure,
+                 COALESCE((pdr.aggregated_metrics->>'denialRate')::numeric, 0) as denial_rate,
+                 pdr.primary_detection_method, pdr.analyzed_at
+          FROM fwa_provider_detection_results pdr
+          ORDER BY pdr.composite_score DESC NULLS LAST
+          LIMIT 500
+        `);
+        rows = result.rows.map((r: any) => ({
+          "Entity ID": r.provider_id,
+          "Type": "Provider",
+          "Risk Score": parseFloat(r.composite_score) || 0,
+          "Risk Level": r.risk_level,
+          "Rule Engine": parseFloat(r.rule_engine_score) || 0,
+          "Statistical": parseFloat(r.statistical_score) || 0,
+          "Unsupervised": parseFloat(r.unsupervised_score) || 0,
+          "RAG/LLM": parseFloat(r.rag_llm_score) || 0,
+          "Semantic": parseFloat(r.semantic_score) || 0,
+          "Total Claims": r.total_claims,
+          "Total Exposure": parseFloat(r.total_exposure) || 0,
+          "Denial Rate %": parseFloat(r.denial_rate) || 0,
+          "Detection Method": r.primary_detection_method,
+          "Analyzed At": r.analyzed_at,
+        }));
+      } else if (entityType === "patient") {
+        const result = await db.execute(sql`
+          SELECT pdr.patient_id, pdr.composite_score, pdr.risk_level,
+                 pdr.rule_engine_score, pdr.statistical_score, pdr.unsupervised_score,
+                 pdr.rag_llm_score, pdr.semantic_score,
+                 COALESCE((pdr.aggregated_metrics->>'totalClaims')::int, 0) as total_claims,
+                 COALESCE((pdr.aggregated_metrics->>'totalAmount')::numeric, 0) as total_exposure,
+                 pdr.primary_detection_method, pdr.analyzed_at
+          FROM fwa_patient_detection_results pdr
+          ORDER BY pdr.composite_score DESC NULLS LAST
+          LIMIT 500
+        `);
+        rows = result.rows.map((r: any) => ({
+          "Entity ID": r.patient_id,
+          "Type": "Patient",
+          "Risk Score": parseFloat(r.composite_score) || 0,
+          "Risk Level": r.risk_level,
+          "Rule Engine": parseFloat(r.rule_engine_score) || 0,
+          "Statistical": parseFloat(r.statistical_score) || 0,
+          "Unsupervised": parseFloat(r.unsupervised_score) || 0,
+          "RAG/LLM": parseFloat(r.rag_llm_score) || 0,
+          "Semantic": parseFloat(r.semantic_score) || 0,
+          "Total Claims": r.total_claims,
+          "Total Exposure": parseFloat(r.total_exposure) || 0,
+          "Detection Method": r.primary_detection_method,
+          "Analyzed At": r.analyzed_at,
+        }));
+      } else {
+        const result = await db.execute(sql`
+          SELECT ddr.doctor_id, ddr.composite_score, ddr.risk_level,
+                 ddr.rule_engine_score, ddr.statistical_score, ddr.unsupervised_score,
+                 ddr.rag_llm_score, ddr.semantic_score,
+                 d.doctor_name, d.specialty,
+                 COALESCE((ddr.aggregated_metrics->>'totalClaims')::int, 0) as total_claims,
+                 COALESCE((ddr.aggregated_metrics->>'totalAmount')::numeric, 0) as total_exposure,
+                 ddr.primary_detection_method, ddr.analyzed_at
+          FROM fwa_doctor_detection_results ddr
+          LEFT JOIN doctor_360 d ON d.doctor_id = ddr.doctor_id
+          ORDER BY ddr.composite_score DESC NULLS LAST
+          LIMIT 500
+        `);
+        rows = result.rows.map((r: any) => ({
+          "Entity ID": r.doctor_id,
+          "Doctor Name": r.doctor_name || "",
+          "Specialty": r.specialty || "",
+          "Type": "Doctor",
+          "Risk Score": parseFloat(r.composite_score) || 0,
+          "Risk Level": r.risk_level,
+          "Rule Engine": parseFloat(r.rule_engine_score) || 0,
+          "Statistical": parseFloat(r.statistical_score) || 0,
+          "Unsupervised": parseFloat(r.unsupervised_score) || 0,
+          "RAG/LLM": parseFloat(r.rag_llm_score) || 0,
+          "Semantic": parseFloat(r.semantic_score) || 0,
+          "Total Claims": r.total_claims,
+          "Total Exposure": parseFloat(r.total_exposure) || 0,
+          "Detection Method": r.primary_detection_method,
+          "Analyzed At": r.analyzed_at,
+        }));
+      }
+
+      // Apply filters
+      if (search) {
+        const s = search.toLowerCase();
+        rows = rows.filter((r) => String(r["Entity ID"]).toLowerCase().includes(s) || String(r["Doctor Name"] || "").toLowerCase().includes(s));
+      }
+      if (riskTier && riskTier !== "all") {
+        rows = rows.filter((r) => String(r["Risk Level"]).toLowerCase() === riskTier.toLowerCase());
+      }
+      if (minScore !== undefined) rows = rows.filter((r) => r["Risk Score"] >= minScore);
+      if (maxScore !== undefined) rows = rows.filter((r) => r["Risk Score"] <= maxScore);
+
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.json_to_sheet(rows);
+      XLSX.utils.book_append_sheet(wb, ws, `High Risk ${entityType}s`);
+
+      if (format === "xlsx") {
+        const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+        res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+        res.setHeader("Content-Disposition", `attachment; filename="high-risk-${entityType}s.xlsx"`);
+        res.send(Buffer.from(buf));
+      } else {
+        const csv = XLSX.utils.sheet_to_csv(ws);
+        res.setHeader("Content-Type", "text/csv");
+        res.setHeader("Content-Disposition", `attachment; filename="high-risk-${entityType}s.csv"`);
+        res.send(csv);
+      }
+    } catch (error) {
+      handleRouteError(res, error, "/api/fwa/high-risk-entities/export", "export high-risk entities");
+    }
+  });
+
+  // =========================================================================
+  // Investigation Notes CRUD
+  // =========================================================================
+
+  // GET /api/fwa/investigation-notes/:entityType/:entityId - Get notes + current status
+  app.get("/api/fwa/investigation-notes/:entityType/:entityId", async (req, res) => {
+    try {
+      const { entityType, entityId } = req.params;
+      const { db } = await import("../db");
+      const { sql } = await import("drizzle-orm");
+
+      const notes = await db.execute(sql`
+        SELECT id, entity_type, entity_id, investigation_status, assigned_investigator,
+               note_type, content, author, linked_enforcement_case_id, metadata,
+               created_at, updated_at
+        FROM fwa_entity_investigation_notes
+        WHERE entity_type = ${entityType} AND entity_id = ${entityId}
+        ORDER BY created_at DESC
+      `);
+
+      // Derive current status from most recent status_change note, or default to "open"
+      const statusNotes = notes.rows.filter((n: any) => n.note_type === 'status_change');
+      const currentStatus = statusNotes.length > 0
+        ? (statusNotes[0] as any).investigation_status
+        : (notes.rows.length > 0 ? (notes.rows[0] as any).investigation_status : 'open');
+
+      // Find assigned investigator from the most recent assignment note
+      const assignmentNotes = notes.rows.filter((n: any) => n.note_type === 'assignment');
+      const assignedInvestigator = assignmentNotes.length > 0
+        ? (assignmentNotes[0] as any).assigned_investigator
+        : (notes.rows.length > 0 ? (notes.rows[0] as any).assigned_investigator : null);
+
+      res.json({
+        entityType,
+        entityId,
+        currentStatus,
+        assignedInvestigator,
+        notes: notes.rows.map((n: any) => ({
+          id: n.id,
+          noteType: n.note_type,
+          content: n.content,
+          author: n.author,
+          investigationStatus: n.investigation_status,
+          assignedInvestigator: n.assigned_investigator,
+          linkedEnforcementCaseId: n.linked_enforcement_case_id,
+          metadata: n.metadata,
+          createdAt: n.created_at,
+          updatedAt: n.updated_at,
+        })),
+      });
+    } catch (error) {
+      handleRouteError(res, error, "/api/fwa/investigation-notes/:entityType/:entityId", "fetch investigation notes");
+    }
+  });
+
+  // POST /api/fwa/investigation-notes - Create a new investigation note
+  app.post("/api/fwa/investigation-notes", async (req, res) => {
+    try {
+      const { entityType, entityId, content, author, noteType, statusChange, assignedInvestigator } = req.body;
+      const { db } = await import("../db");
+      const { sql } = await import("drizzle-orm");
+
+      if (!entityType || !entityId || !content || !author) {
+        return res.status(400).json({ error: "entityType, entityId, content, and author are required" });
+      }
+
+      const effectiveNoteType = noteType || (statusChange ? 'status_change' : 'general');
+      const effectiveStatus = statusChange || 'open';
+
+      const result = await db.execute(sql`
+        INSERT INTO fwa_entity_investigation_notes
+          (entity_type, entity_id, investigation_status, assigned_investigator, note_type, content, author, metadata)
+        VALUES
+          (${entityType}, ${entityId}, ${effectiveStatus}, ${assignedInvestigator || null}, ${effectiveNoteType}, ${content}, ${author}, ${JSON.stringify(req.body.metadata || {})}::jsonb)
+        RETURNING id, entity_type, entity_id, investigation_status, assigned_investigator,
+                  note_type, content, author, metadata, created_at, updated_at
+      `);
+
+      const note = result.rows[0] as any;
+      res.status(201).json({
+        id: note.id,
+        entityType: note.entity_type,
+        entityId: note.entity_id,
+        investigationStatus: note.investigation_status,
+        assignedInvestigator: note.assigned_investigator,
+        noteType: note.note_type,
+        content: note.content,
+        author: note.author,
+        metadata: note.metadata,
+        createdAt: note.created_at,
+        updatedAt: note.updated_at,
+      });
+    } catch (error) {
+      handleRouteError(res, error, "/api/fwa/investigation-notes", "create investigation note");
+    }
+  });
+
+  // PATCH /api/fwa/investigation-notes/:noteId - Update an investigation note
+  app.patch("/api/fwa/investigation-notes/:noteId", async (req, res) => {
+    try {
+      const { noteId } = req.params;
+      const { content } = req.body;
+      const { db } = await import("../db");
+      const { sql } = await import("drizzle-orm");
+
+      if (!content) {
+        return res.status(400).json({ error: "content is required" });
+      }
+
+      const result = await db.execute(sql`
+        UPDATE fwa_entity_investigation_notes
+        SET content = ${content}, updated_at = NOW()
+        WHERE id = ${noteId}
+        RETURNING id, entity_type, entity_id, investigation_status, assigned_investigator,
+                  note_type, content, author, metadata, created_at, updated_at
+      `);
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({ error: "Investigation note not found" });
+      }
+
+      const note = result.rows[0] as any;
+      res.json({
+        id: note.id,
+        entityType: note.entity_type,
+        entityId: note.entity_id,
+        investigationStatus: note.investigation_status,
+        assignedInvestigator: note.assigned_investigator,
+        noteType: note.note_type,
+        content: note.content,
+        author: note.author,
+        metadata: note.metadata,
+        createdAt: note.created_at,
+        updatedAt: note.updated_at,
+      });
+    } catch (error) {
+      handleRouteError(res, error, "/api/fwa/investigation-notes/:noteId", "update investigation note");
+    }
+  });
+
   // GET /api/fwa/agent-configs - List agent configs (with auto-seeding)
   app.get("/api/fwa/agent-configs", async (req, res) => {
     try {
@@ -2505,13 +3198,13 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
   app.get("/api/fwa/workqueue", async (req, res) => {
     try {
       const { db } = await import("../db");
-      const { fwaDetectionResults, fwaAnalyzedClaims } = await import("@shared/schema");
+      const { fwaDetectionResults, claims: claimsTable } = await import("@shared/schema");
       const { eq, sql, desc, inArray } = await import("drizzle-orm");
 
       // Get high-scoring detection results as work queue items
       // Optimized: Use index on composite_score with simple WHERE/ORDER
       const results = await db.execute(sql`
-        SELECT 
+        SELECT
           dr.id,
           dr.claim_id,
           dr.provider_id,
@@ -2522,12 +3215,12 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           dr.recommended_action,
           dr.primary_detection_method,
           dr.analyzed_at,
-          ac.claim_reference,
-          ac.claim_type,
-          ac.service_description,
-          COALESCE(ac.total_amount, 0) as claim_amount
+          c.claim_number as claim_reference,
+          c.claim_type,
+          c.description as service_description,
+          COALESCE(c.amount, 0) as claim_amount
         FROM fwa_detection_results dr
-        LEFT JOIN fwa_analyzed_claims ac ON dr.claim_id = ac.id
+        LEFT JOIN claims_v2 c ON dr.claim_id = c.claim_number
         WHERE dr.composite_score IS NOT NULL AND dr.composite_score >= 0
         ORDER BY dr.composite_score DESC NULLS LAST
         LIMIT 50
@@ -2560,16 +3253,90 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
     }
   });
 
-  // GET /api/fwa/high-risk-patients - List high-risk patients from detection results
+  // GET /api/fwa/high-risk-patients - List high-risk patients with pagination, sorting, and filters
   app.get("/api/fwa/high-risk-patients", async (req, res) => {
     try {
       const { db } = await import("../db");
       const { sql } = await import("drizzle-orm");
 
-      // Get patients directly from detection results
-      const patients = await db.execute(sql`
+      // Parse pagination and filter params
+      const page = Math.max(1, parseInt(req.query.page as string) || 1);
+      const pageSize = Math.min(100, Math.max(1, parseInt(req.query.pageSize as string) || 20));
+      const offset = (page - 1) * pageSize;
+      const sortBy = (req.query.sortBy as string) || "riskScore";
+      const sortOrder = (req.query.sortOrder as string) === "asc" ? "ASC" : "DESC";
+      const search = (req.query.search as string) || "";
+      const riskTier = (req.query.riskTier as string) || "";
+      const minScore = parseFloat(req.query.minScore as string) || 0;
+      const maxScore = parseFloat(req.query.maxScore as string) || 100;
+      const dateFrom = (req.query.dateFrom as string) || "";
+      const dateTo = (req.query.dateTo as string) || "";
+      const detectionMethod = (req.query.detectionMethod as string) || "";
+
+      // Build HAVING/WHERE conditions for the CTE
+      const havingConditions: string[] = ["COUNT(*) >= 1"];
+      if (search) {
+        havingConditions.push(`ds.patient_id ILIKE '%${search.replace(/'/g, "''")}%'`);
+      }
+      if (dateFrom) {
+        havingConditions.push(`MAX(ds.analyzed_at) >= '${dateFrom.replace(/'/g, "''")}'::timestamp`);
+      }
+      if (dateTo) {
+        havingConditions.push(`MAX(ds.analyzed_at) <= '${dateTo.replace(/'/g, "''")}'::timestamp + interval '1 day'`);
+      }
+
+      // Risk tier and score filters applied in outer query
+      const outerConditions: string[] = [];
+      if (minScore > 0) {
+        outerConditions.push(`avg_risk_score >= ${minScore}`);
+      }
+      if (maxScore < 100) {
+        outerConditions.push(`avg_risk_score <= ${maxScore}`);
+      }
+      const riskTierConditions: Record<string, string> = {
+        critical: "(avg_risk_score >= 40 OR critical_count >= 3)",
+        high: "(avg_risk_score >= 30 AND avg_risk_score < 40)",
+        medium: "(avg_risk_score >= 20 AND avg_risk_score < 30)",
+        low: "(avg_risk_score < 20)",
+      };
+      if (riskTier && riskTierConditions[riskTier]) {
+        outerConditions.push(riskTierConditions[riskTier]);
+      }
+      const outerWhereClause = outerConditions.length > 0 ? `WHERE ${outerConditions.join(" AND ")}` : "";
+
+      // Map sortBy field to SQL column
+      const sortColumns: Record<string, string> = {
+        riskScore: "avg_risk_score",
+        totalAmount: "total_amount",
+        totalClaims: "total_claims",
+        patientId: "patient_id",
+        uniqueProviders: "unique_providers",
+      };
+      const orderColumn = sortColumns[sortBy] || "avg_risk_score";
+
+      // Count query
+      const countResult = await db.execute(sql.raw(`
         WITH detection_stats AS (
-          SELECT 
+          SELECT
+            patient_id,
+            COUNT(*) as total_detections,
+            COUNT(DISTINCT claim_id) as total_claims,
+            COUNT(DISTINCT provider_id) as unique_providers,
+            COALESCE(AVG(CASE WHEN composite_score IS NOT NULL THEN composite_score::decimal ELSE NULL END), 0) as avg_risk_score,
+            SUM(CASE WHEN composite_risk_level = 'critical' THEN 1 ELSE 0 END) as critical_count
+          FROM fwa_detection_results
+          WHERE patient_id IS NOT NULL AND patient_id != '' ${search ? `AND patient_id ILIKE '%${search.replace(/'/g, "''")}%'` : ""}
+          GROUP BY patient_id
+          HAVING COUNT(*) >= 1
+        )
+        SELECT COUNT(*) as total FROM detection_stats ${outerWhereClause}
+      `));
+      const total = parseInt((countResult.rows[0] as any)?.total) || 0;
+
+      // Main data query with pagination
+      const patients = await db.execute(sql.raw(`
+        WITH detection_stats AS (
+          SELECT
             patient_id,
             COUNT(*) as total_detections,
             COUNT(DISTINCT claim_id) as total_claims,
@@ -2580,7 +3347,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
             SUM(CASE WHEN composite_risk_level = 'critical' THEN 1 ELSE 0 END) as critical_count,
             MAX(analyzed_at) as last_detection_date
           FROM fwa_detection_results
-          WHERE patient_id IS NOT NULL AND patient_id != ''
+          WHERE patient_id IS NOT NULL AND patient_id != '' ${search ? `AND patient_id ILIKE '%${search.replace(/'/g, "''")}%'` : ""}
           GROUP BY patient_id
           HAVING COUNT(*) >= 1
         ),
@@ -2593,7 +3360,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           WHERE patient_id IS NOT NULL AND amount IS NOT NULL
           GROUP BY patient_id
         )
-        SELECT 
+        SELECT
           ds.patient_id,
           ds.total_detections,
           ds.total_claims,
@@ -2604,13 +3371,13 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           ds.critical_count,
           ds.last_detection_date,
           ROUND(COALESCE(ca.total_amount, p360.claims_amount, 0), 2) as total_amount,
-          CASE 
+          CASE
             WHEN ds.avg_risk_score >= 40 OR ds.critical_count >= 3 THEN 'critical'
             WHEN ds.avg_risk_score >= 30 OR ds.high_risk_count >= 5 THEN 'high'
             WHEN ds.avg_risk_score >= 20 OR ds.high_risk_count >= 2 THEN 'medium'
             ELSE 'low'
           END as risk_level,
-          CASE 
+          CASE
             WHEN ds.avg_risk_score >= 40 OR ds.critical_count >= 3 THEN 1
             WHEN ds.avg_risk_score >= 30 OR ds.high_risk_count >= 5 THEN 2
             WHEN ds.avg_risk_score >= 20 OR ds.high_risk_count >= 2 THEN 3
@@ -2622,13 +3389,13 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           SELECT patient_id, (claims_summary->>'totalAmount')::numeric as claims_amount
           FROM patient_360
         ) p360 ON ds.patient_id = p360.patient_id
-        ORDER BY 
-          risk_order ASC, 
-          -- Within each risk bucket, prioritize by combined score (risk 60% + normalized exposure 40%)
-          (ds.avg_risk_score * 0.6) + (LEAST(COALESCE(ca.total_amount, p360.claims_amount, 0) / 50000, 40) * 0.4) DESC,
+        ${outerWhereClause}
+        ORDER BY
+          risk_order ASC,
+          ${orderColumn} ${sortOrder},
           ds.avg_risk_score DESC
-        LIMIT 20
-      `);
+        LIMIT ${pageSize} OFFSET ${offset}
+      `));
 
       // Helper to safely parse numeric values
       const safeNum = (val: any, fallback: number = 0): number => {
@@ -2654,14 +3421,12 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       const formattedPatients = patients.rows.map((p: any, idx: number) => {
         const patientId = p.patient_id?.trim() || `PAT-${idx + 1}`;
         const avgRiskScore = safeNum(p.avg_risk_score, 0);
-        const maxRiskScore = safeNum(p.max_risk_score, 0);
         const totalAmount = safeNum(p.total_amount, 0);
         const highRiskCount = parseInt(p.high_risk_count) || 0;
         const criticalCount = parseInt(p.critical_count) || 0;
         const totalClaims = parseInt(p.total_claims) || 0;
         const uniqueProviders = parseInt(p.unique_providers) || 0;
 
-        // Generate meaningful reasons based on actual data
         const reasons: string[] = [];
         if (uniqueProviders > 5) reasons.push("Doctor shopping pattern: Multiple providers visited");
         else if (uniqueProviders > 3) reasons.push(`High provider diversity: ${uniqueProviders} different providers`);
@@ -2672,10 +3437,10 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         if (reasons.length === 0) reasons.push("Routine monitoring - no significant concerns");
 
         return {
-          id: `pt${idx + 1}`,
+          id: `pt${offset + idx + 1}`,
           patientId: patientId,
           patientName: patientNames[idx % patientNames.length],
-          memberId: `MBR-${1000 + idx}`,
+          memberId: `MBR-${1000 + offset + idx}`,
           riskScore: avgRiskScore.toFixed(2),
           riskLevel: p.risk_level || "low",
           totalClaims: totalClaims,
@@ -2691,7 +3456,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         };
       });
 
-      res.json(formattedPatients);
+      res.json({ data: formattedPatients, total, page, pageSize });
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/high-risk-patients", "fetch high-risk patients");
     }
@@ -2784,17 +3549,88 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
     }
   });
 
-  // GET /api/fwa/high-risk-doctors - List high-risk doctors from actual detection data
+  // GET /api/fwa/high-risk-doctors - List high-risk doctors with pagination, sorting, and filters
   app.get("/api/fwa/high-risk-doctors", async (req, res) => {
     try {
       const { db } = await import("../db");
       const { sql } = await import("drizzle-orm");
 
-      // Get doctors from doctor_360 table (real data)
-      // Prioritize by BOTH risk score AND exposure amount (weighted)
-      // Filter out invalid doctor IDs (procedure names stored incorrectly)
-      const doctors = await db.execute(sql`
-        SELECT 
+      // Parse pagination and filter params
+      const page = Math.max(1, parseInt(req.query.page as string) || 1);
+      const pageSize = Math.min(100, Math.max(1, parseInt(req.query.pageSize as string) || 20));
+      const offset = (page - 1) * pageSize;
+      const sortBy = (req.query.sortBy as string) || "riskScore";
+      const sortOrder = (req.query.sortOrder as string) === "asc" ? "ASC" : "DESC";
+      const search = (req.query.search as string) || "";
+      const riskTier = (req.query.riskTier as string) || "";
+      const specialty = (req.query.specialty as string) || "";
+      const minScore = parseFloat(req.query.minScore as string) || 0;
+      const maxScore = parseFloat(req.query.maxScore as string) || 100;
+      const dateFrom = (req.query.dateFrom as string) || "";
+      const dateTo = (req.query.dateTo as string) || "";
+      const detectionMethod = (req.query.detectionMethod as string) || "";
+
+      // Build WHERE conditions
+      const conditions: string[] = [
+        "d.doctor_id NOT LIKE 'biopsy%'",
+        "d.doctor_id NOT LIKE 'needle%'",
+        "d.doctor_id NOT LIKE 'excision%'",
+        "d.doctor_id !~ '^[a-z]+ [a-z]+$'"
+      ];
+      if (search) {
+        conditions.push(`(d.doctor_id ILIKE '%${search.replace(/'/g, "''")}%' OR d.doctor_name ILIKE '%${search.replace(/'/g, "''")}%')`);
+      }
+      if (specialty) {
+        conditions.push(`d.specialty ILIKE '%${specialty.replace(/'/g, "''")}%'`);
+      }
+      if (minScore > 0) {
+        conditions.push(`COALESCE(d.risk_score, 0) >= ${minScore}`);
+      }
+      if (maxScore < 100) {
+        conditions.push(`COALESCE(d.risk_score, 0) <= ${maxScore}`);
+      }
+      if (dateFrom) {
+        conditions.push(`ddr.analyzed_at >= '${dateFrom.replace(/'/g, "''")}'::timestamp`);
+      }
+      if (dateTo) {
+        conditions.push(`ddr.analyzed_at <= '${dateTo.replace(/'/g, "''")}'::timestamp + interval '1 day'`);
+      }
+      if (detectionMethod) {
+        conditions.push(`ddr.primary_detection_method = '${detectionMethod.replace(/'/g, "''")}'`);
+      }
+      const riskTierConditions: Record<string, string> = {
+        critical: "COALESCE(d.risk_score, 0) >= 40",
+        high: "COALESCE(d.risk_score, 0) >= 30 AND COALESCE(d.risk_score, 0) < 40",
+        medium: "COALESCE(d.risk_score, 0) >= 20 AND COALESCE(d.risk_score, 0) < 30",
+        low: "COALESCE(d.risk_score, 0) >= 10 AND COALESCE(d.risk_score, 0) < 20",
+        minimal: "COALESCE(d.risk_score, 0) < 10",
+      };
+      if (riskTier && riskTierConditions[riskTier]) {
+        conditions.push(riskTierConditions[riskTier]);
+      }
+      const whereClause = `WHERE ${conditions.join(" AND ")}`;
+
+      // Map sortBy field to SQL column
+      const sortColumns: Record<string, string> = {
+        riskScore: "d.risk_score",
+        totalExposure: "exposure_amount",
+        totalClaims: "(d.claims_summary->>'totalClaims')::int",
+        doctorId: "d.doctor_id",
+        specialty: "d.specialty",
+      };
+      const orderColumn = sortColumns[sortBy] || "d.risk_score";
+
+      // Count query
+      const countResult = await db.execute(sql.raw(`
+        SELECT COUNT(*) as total
+        FROM doctor_360 d
+        ${whereClause}
+      `));
+      const total = parseInt((countResult.rows[0] as any)?.total) || 0;
+
+      // Main data query with pagination
+      const doctors = await db.execute(sql.raw(`
+        SELECT
           d.doctor_id,
           d.doctor_name,
           d.specialty,
@@ -2805,27 +3641,20 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           d.claims_summary,
           d.last_analyzed_at,
           COALESCE((d.claims_summary->>'totalAmount')::numeric, 0) as exposure_amount,
-          -- Priority Score: combines risk (60%) + normalized exposure (40%)
-          (COALESCE(d.risk_score, 0) * 0.6) + 
+          (COALESCE(d.risk_score, 0) * 0.6) +
           (LEAST(COALESCE((d.claims_summary->>'totalAmount')::numeric, 0) / 50000, 40) * 0.4) as priority_score
         FROM doctor_360 d
-        WHERE d.doctor_id NOT LIKE 'biopsy%'
-          AND d.doctor_id NOT LIKE 'needle%'
-          AND d.doctor_id NOT LIKE 'excision%'
-          AND d.doctor_id !~ '^[a-z]+ [a-z]+$'
-        ORDER BY 
-          -- First by risk level bucket (critical/high first)
-          CASE 
+        ${whereClause}
+        ORDER BY
+          CASE
             WHEN COALESCE(d.risk_score, 0) >= 40 THEN 1
             WHEN COALESCE(d.risk_score, 0) >= 30 THEN 2
             WHEN COALESCE(d.risk_score, 0) >= 20 THEN 3
             ELSE 4
           END,
-          -- Then by priority score within each bucket
-          (COALESCE(d.risk_score, 0) * 0.6) + 
-          (LEAST(COALESCE((d.claims_summary->>'totalAmount')::numeric, 0) / 50000, 40) * 0.4) DESC
-        LIMIT 20
-      `);
+          ${orderColumn} ${sortOrder} NULLS LAST
+        LIMIT ${pageSize} OFFSET ${offset}
+      `));
 
       // Helper to safely parse numeric values
       const safeNum = (val: any, fallback: number = 0): number => {
@@ -2834,8 +3663,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         return Number.isFinite(num) ? num : fallback;
       };
 
-      // Dynamic risk level calculation from score (consistent with providers)
-      // Adjusted thresholds to match actual detection score distribution
+      // Dynamic risk level calculation from score
       const calculateRiskLevel = (score: number): "critical" | "high" | "medium" | "low" | "minimal" => {
         if (score >= 40) return "critical";
         if (score >= 30) return "high";
@@ -2856,15 +3684,12 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         const uniquePatients = parseInt(claimsSummary.uniquePatients) || 0;
         const avgClaimAmount = safeNum(claimsSummary.avgAmount, 0);
 
-        // Calculate risk level dynamically from score
         const riskLevel = calculateRiskLevel(riskScore);
 
-        // Determine flagged status
         const isHighRisk = riskLevel === 'high' || riskLevel === 'critical';
         const isCritical = riskLevel === 'critical';
         const flaggedClaims = isCritical ? 2 : (isHighRisk ? 1 : 0);
 
-        // Generate meaningful reasons based on actual data
         const reasons: string[] = [];
         if (isCritical) reasons.push("Critical risk level detected");
         if (isHighRisk) reasons.push("Elevated risk patterns identified");
@@ -2875,7 +3700,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         if (reasons.length === 0) reasons.push("Routine monitoring - no significant concerns");
 
         return {
-          id: `d${idx + 1}`,
+          id: `d${offset + idx + 1}`,
           doctorId: doctorId,
           doctorName: d.doctor_name || `Dr. ${doctorId}`,
           specialty: d.specialty || "General Practice",
@@ -2896,7 +3721,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         };
       });
 
-      res.json(formattedDoctors);
+      res.json({ data: formattedDoctors, total, page, pageSize });
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/high-risk-doctors", "fetch high-risk doctors");
     }
@@ -3065,8 +3890,8 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         }
 
         // If no CPT match, use ICD diagnosis category
-        if (amountRange.base === 7600 && claim.icd) {
-          const diagCategory = claim.icd.charAt(0).toUpperCase();
+        if (amountRange.base === 7600 && claim.primaryDiagnosis) {
+          const diagCategory = claim.primaryDiagnosis.charAt(0).toUpperCase();
           if (diagnosisCategoryAmounts[diagCategory]) {
             amountRange = diagnosisCategoryAmounts[diagCategory];
           }
@@ -3215,7 +4040,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         const claimRef = claim.claimReference || claim.claimNumber || claimId;
         const policyNum = claim.policyNo || claim.policyNumber || "UNKNOWN";
         const providerInfo = claim.providerId || claim.providerName || claim.hospital || "UNKNOWN";
-        const diagnosisCode = claim.principalDiagnosisCode || claim.icd || null;
+        const diagnosisCode = claim.primaryDiagnosis || null;
         const occurrenceDate = claim.claimOccurrenceDate || claim.serviceDate || claim.batchDate;
 
         // Parse amount - handle string or number formats
@@ -3228,34 +4053,28 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
 
         try {
           const createdClaim = await storage.createClaim({
-            id: claimId,
-            claimNumber: claimRef,
-            policyNumber: policyNum,
+            claimNumber: claimRef || claimId,
             registrationDate: claim.batchDate ? new Date(claim.batchDate) : new Date(),
             claimType: claim.claimType || "outpatient",
             hospital: providerInfo,
             amount: amountValue,
             outlierScore: "0.00",
             description: claim.description || null,
-            icd: diagnosisCode,
-            hasSurgery: "No",
+            primaryDiagnosis: diagnosisCode || "UNKNOWN",
+            hasSurgery: false,
             surgeryFee: null,
-            hasIcu: "No",
+            hasIcu: false,
             lengthOfStay: null,
-            similarClaims: null,
-            similarClaimsInHospital: null,
-            providerId: claim.providerId || null,
-            providerName: claim.providerName || null,
-            patientId: claim.patientId || null,
-            patientName: null,
-            serviceDate: occurrenceDate ? new Date(occurrenceDate) : null,
+            providerId: claim.providerId || "UNKNOWN",
+            memberId: claim.patientId || claim.memberId || "UNKNOWN",
+            serviceDate: occurrenceDate ? new Date(occurrenceDate) : new Date(),
             status: "pending",
             category: claim.benefitCode || null,
             flagged: false,
             flagReason: null,
             cptCodes: null,
-            diagnosisCodes: claim.secondaryDiagnosisCodes ? claim.secondaryDiagnosisCodes.split("|") : null,
-          });
+            icdCodes: claim.secondaryDiagnosisCodes ? claim.secondaryDiagnosisCodes.split("|") : null,
+          } as any);
           createdClaims.push({ ...createdClaim, batchId: batch.id });
         } catch (claimError) {
           console.error(`Failed to create claim ${claimId}:`, claimError);
@@ -5178,11 +5997,11 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           id: dbClaim.id,
           claimNumber: dbClaim.claimNumber,
           providerId: dbClaim.providerId,
-          patientId: dbClaim.patientId,
+          patientId: dbClaim.memberId,
           amount: parseFloat(dbClaim.amount as string),
-          diagnosisCode: dbClaim.diagnosis,
-          procedureCode: dbClaim.cptCode,
-          serviceDate: dbClaim.date,
+          diagnosisCode: dbClaim.primaryDiagnosis,
+          procedureCode: dbClaim.cptCodes?.[0] || null,
+          serviceDate: dbClaim.serviceDate,
           description: dbClaim.description,
           claimType: dbClaim.claimType
         };
@@ -5264,13 +6083,13 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           const claimData = {
             id: dbClaim.id,
             claimNumber: dbClaim.claimNumber,
-            providerId: dbClaim.providerId || dbClaim.hospital,
-            patientId: dbClaim.patientId,
+            providerId: dbClaim.providerId || dbClaim.hospital || "UNKNOWN",
+            patientId: dbClaim.memberId,
             amount: parseFloat(dbClaim.amount as string) || 0,
-            diagnosisCode: dbClaim.icd,  // Fixed: use icd field
-            procedureCode: dbClaim.cptCodes?.[0] || null,  // Fixed: use cptCodes array
+            diagnosisCode: dbClaim.primaryDiagnosis,
+            procedureCode: dbClaim.cptCodes?.[0] || undefined,
             serviceDate: dbClaim.serviceDate,
-            description: dbClaim.description,
+            description: dbClaim.description || undefined,
             claimType: dbClaim.claimType
           };
           const result = await engine.runFullDetection(claimData);
@@ -5568,12 +6387,12 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           id: claim.id,
           claimNumber: claim.claimNumber,
           providerId: claim.providerId,
-          patientId: claim.patientId,
+          patientId: claim.memberId,
           amount: parseFloat(claim.amount as string),
-          diagnosisCode: claim.icd,
+          diagnosisCode: claim.primaryDiagnosis,
           procedureCode: claim.cptCodes?.[0],
           serviceDate: claim.serviceDate,
-          description: claim.description,
+          description: claim.description || undefined,
           claimType: claim.claimType
         };
 
@@ -6393,9 +7212,9 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           hits.push({
             claimId: claim.id,
             claimNumber: claim.claimNumber,
-            patientId: claim.patientId,
+            memberId: claim.memberId,
             providerId: claim.providerId,
-            providerName: claim.providerName,
+            hospital: claim.hospital,
             amount: claim.amount,
             claimType: claim.claimType,
             serviceDate: claim.serviceDate,
@@ -6496,17 +7315,17 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         LIMIT 1
       `);
 
-      // If not found, try looking up via claim_reference (aggregated claim-level view)
+      // If not found, try looking up via claim_number (aggregated claim-level view)
       if (result.rows.length === 0) {
         const claimRef = await db.execute(sql`
-          SELECT claim_reference FROM fwa_analyzed_claims WHERE id = ${req.params.claimId} LIMIT 1
+          SELECT claim_number FROM claims_v2 WHERE id = ${req.params.claimId} LIMIT 1
         `);
 
         if (claimRef.rows.length > 0) {
-          const reference = (claimRef.rows[0] as any).claim_reference;
+          const reference = (claimRef.rows[0] as any).claim_number;
           // Get aggregated detection results for all service lines under this claim
           result = await db.execute(sql`
-            SELECT 
+            SELECT
               ${req.params.claimId} as claim_id,
               MAX(dr.composite_score::numeric) as composite_score,
               MAX(dr.composite_risk_level) as composite_risk_level,
@@ -6514,31 +7333,26 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
               MAX(dr.statistical_score::numeric) as statistical_score,
               MAX(dr.unsupervised_score::numeric) as unsupervised_score,
               MAX(dr.rag_llm_score::numeric) as rag_llm_score,
-              MAX(dr.semantic_score::numeric) as semantic_score,
-              (SELECT rule_engine_findings FROM fwa_detection_results dr2 
-               JOIN fwa_analyzed_claims ac2 ON dr2.claim_id = ac2.id 
-               WHERE ac2.claim_reference = ${reference}
+              0 as semantic_score,
+              (SELECT rule_engine_findings FROM fwa_detection_results dr2
+               WHERE dr2.claim_id = ${reference}
                ORDER BY dr2.composite_score::numeric DESC LIMIT 1) as rule_engine_findings,
-              (SELECT statistical_findings FROM fwa_detection_results dr2 
-               JOIN fwa_analyzed_claims ac2 ON dr2.claim_id = ac2.id 
-               WHERE ac2.claim_reference = ${reference}
+              (SELECT statistical_findings FROM fwa_detection_results dr2
+               WHERE dr2.claim_id = ${reference}
                ORDER BY dr2.composite_score::numeric DESC LIMIT 1) as statistical_findings,
-              (SELECT unsupervised_findings FROM fwa_detection_results dr2 
-               JOIN fwa_analyzed_claims ac2 ON dr2.claim_id = ac2.id 
-               WHERE ac2.claim_reference = ${reference}
+              (SELECT unsupervised_findings FROM fwa_detection_results dr2
+               WHERE dr2.claim_id = ${reference}
                ORDER BY dr2.composite_score::numeric DESC LIMIT 1) as unsupervised_findings,
-              (SELECT rag_llm_findings FROM fwa_detection_results dr2 
-               JOIN fwa_analyzed_claims ac2 ON dr2.claim_id = ac2.id 
-               WHERE ac2.claim_reference = ${reference}
+              (SELECT rag_llm_findings FROM fwa_detection_results dr2
+               WHERE dr2.claim_id = ${reference}
                ORDER BY dr2.composite_score::numeric DESC LIMIT 1) as rag_llm_findings,
-              (SELECT semantic_evidence FROM fwa_detection_results dr2 
-               JOIN fwa_analyzed_claims ac2 ON dr2.claim_id = ac2.id 
-               WHERE ac2.claim_reference = ${reference}
+              (SELECT semantic_evidence FROM fwa_detection_results dr2
+               WHERE dr2.claim_id = ${reference}
                ORDER BY dr2.composite_score::numeric DESC LIMIT 1) as semantic_evidence,
               MAX(dr.analyzed_at) as analyzed_at
             FROM fwa_detection_results dr
-            JOIN fwa_analyzed_claims ac ON dr.claim_id = ac.id
-            WHERE ac.claim_reference = ${reference}
+            JOIN claims_v2 c ON dr.claim_id = c.claim_number
+            WHERE c.claim_number = ${reference}
           `);
         }
       }
@@ -6594,7 +7408,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       await db.insert(fwaDetectionResults).values({
         claimId: result.claimId,
         providerId: claim.providerId,
-        patientId: claim.patientId,
+        patientId: claim.memberId,
         compositeScore: String(result.compositeScore),
         compositeRiskLevel: result.compositeRiskLevel as any,
         ruleEngineScore: String(result.ruleEngineScore),
@@ -6622,7 +7436,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
     try {
       const { runProductionDetection, getClaimForAnalysis } = await import("../services/production-detection-engine");
       const { db } = await import("../db");
-      const { fwaAnalyzedClaims, fwaDetectionRuns, fwaDetectionResults } = await import("@shared/schema");
+      const { claims: claimsTable, fwaDetectionRuns, fwaDetectionResults } = await import("@shared/schema");
       const { sql, desc } = await import("drizzle-orm");
 
       const { limit = 10, skipRagLlm = true, weights } = req.body;
@@ -6636,7 +7450,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       }).returning();
 
       // Get random sample of claims
-      const claims = await db.select().from(fwaAnalyzedClaims)
+      const claims = await db.select().from(claimsTable)
         .orderBy(sql`RANDOM()`)
         .limit(Math.min(limit, 50));
 
@@ -6647,24 +7461,24 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
 
       for (const dbClaim of claims) {
         try {
-          const claim = {
+          const claim: AnalyzedClaimData = {
             id: dbClaim.id,
-            claimReference: dbClaim.claimReference,
+            claimNumber: dbClaim.claimNumber,
             providerId: dbClaim.providerId,
-            patientId: dbClaim.patientId,
-            practitionerLicense: dbClaim.practitionerLicense,
-            specialtyCode: dbClaim.specialtyCode,
+            memberId: dbClaim.memberId,
+            practitionerId: dbClaim.practitionerId,
+            specialty: dbClaim.specialty,
             city: dbClaim.city,
             providerType: dbClaim.providerType,
-            unitPrice: dbClaim.unitPrice ? parseFloat(dbClaim.unitPrice) : null,
-            totalAmount: dbClaim.totalAmount ? parseFloat(dbClaim.totalAmount) : null,
-            quantity: dbClaim.quantity,
-            principalDiagnosisCode: dbClaim.principalDiagnosisCode,
-            serviceCode: dbClaim.serviceCode,
-            serviceDescription: dbClaim.serviceDescription,
+            unitPrice: dbClaim.amount ? parseFloat(dbClaim.amount) : null,
+            amount: dbClaim.amount ? parseFloat(dbClaim.amount) : null,
+            quantity: null,
+            primaryDiagnosis: dbClaim.primaryDiagnosis,
+            cptCodes: dbClaim.cptCodes,
+            description: dbClaim.description,
             claimType: dbClaim.claimType,
             lengthOfStay: dbClaim.lengthOfStay,
-            originalStatus: dbClaim.originalStatus,
+            status: dbClaim.status,
             isPreAuthorized: dbClaim.isPreAuthorized || false
           };
 
@@ -6680,7 +7494,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
             claimId: result.claimId,
             caseId: run.id,
             providerId: claim.providerId,
-            patientId: claim.patientId,
+            patientId: claim.memberId,
             compositeScore: String(result.compositeScore),
             compositeRiskLevel: result.compositeRiskLevel as any,
             ruleEngineScore: String(result.ruleEngineScore),
@@ -6765,7 +7579,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       }
 
       const { db } = await import("../db");
-      const { fwaDetectionResults, fwaAnalyzedClaims, fwaCases } = await import("@shared/schema");
+      const { fwaDetectionResults, claims: claimsTable, fwaCases } = await import("@shared/schema");
       const { eq, sql } = await import("drizzle-orm");
 
       // Get detection result
@@ -6778,41 +7592,21 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       }
 
       // Get claim details
-      const [claim] = await db.select().from(fwaAnalyzedClaims)
-        .where(eq(fwaAnalyzedClaims.id, detection.claimId))
+      const [claim] = await db.select().from(claimsTable)
+        .where(eq(claimsTable.claimNumber, detection.claimId))
         .limit(1);
 
       // Create FWA case
       const caseData = {
-        caseNumber: `FWA-${Date.now().toString(36).toUpperCase()}`,
+        caseId: `FWA-${Date.now().toString(36).toUpperCase()}`,
         claimId: detection.claimId,
-        providerId: detection.providerId || claim?.providerId || null,
-        patientId: detection.patientId || claim?.patientId || null,
+        providerId: detection.providerId || claim?.providerId || "UNKNOWN",
+        patientId: detection.patientId || claim?.memberId || "UNKNOWN",
         status: "draft" as const,
         priority: detection.compositeRiskLevel === "critical" ? "critical" as const :
           detection.compositeRiskLevel === "high" ? "high" as const : "medium" as const,
-        riskScore: detection.compositeScore,
+        totalAmount: String(claim?.amount || 0),
         assignedTo: assignedTo || null,
-        summary: detection.detectionSummary || `FWA case created from automated detection with score ${detection.compositeScore}`,
-        findings: {
-          compositeScore: detection.compositeScore,
-          riskLevel: detection.compositeRiskLevel,
-          primaryMethod: detection.primaryDetectionMethod,
-          ruleEngineScore: detection.ruleEngineScore,
-          statisticalScore: detection.statisticalScore,
-          unsupervisedScore: detection.unsupervisedScore,
-          ragLlmScore: detection.ragLlmScore,
-          ruleEngineFindings: detection.ruleEngineFindings,
-          statisticalFindings: detection.statisticalFindings,
-          unsupervisedFindings: detection.unsupervisedFindings,
-          ragLlmFindings: detection.ragLlmFindings
-        } as any,
-        flagType: detection.primaryDetectionMethod || "multi-method",
-        claimAmount: String(claim?.totalAmount || 0),
-        estimatedRecovery: null,
-        actualRecovery: null,
-        sourceType: "automated_detection" as const,
-        sourceReference: detection.id,
       };
 
       const newCase = await storage.createFwaCase(caseData);
@@ -6829,7 +7623,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       const { minScore = 40, limit = 20 } = req.body;
 
       const { db } = await import("../db");
-      const { fwaDetectionResults, fwaAnalyzedClaims, fwaCases } = await import("@shared/schema");
+      const { fwaDetectionResults, claims: claimsTable, fwaCases } = await import("@shared/schema");
       const { sql, desc, gte, notInArray } = await import("drizzle-orm");
 
       // Get existing case claim IDs
@@ -6858,18 +7652,14 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
 
       for (const detection of detections.rows as any[]) {
         const caseData = {
-          caseNumber: `FWA-${Date.now().toString(36).toUpperCase()}-${casesCreated.length}`,
+          caseId: `FWA-${Date.now().toString(36).toUpperCase()}-${casesCreated.length}`,
           claimId: detection.claim_id,
-          providerId: detection.provider_id,
-          patientId: detection.patient_id,
+          providerId: detection.provider_id || "UNKNOWN",
+          patientId: detection.patient_id || "UNKNOWN",
           status: "draft" as const,
           priority: detection.composite_risk_level === "critical" ? "critical" as const :
             detection.composite_risk_level === "high" ? "high" as const : "medium" as const,
-          riskScore: detection.composite_score,
-          summary: detection.detection_summary || `Automated FWA detection - Score: ${detection.composite_score}`,
-          flagType: detection.primary_detection_method || "multi-method",
-          sourceType: "automated_detection" as const,
-          sourceReference: detection.id,
+          totalAmount: String(detection.composite_score || 0),
         };
 
         try {
@@ -6898,9 +7688,9 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
 
       const stats = await db.execute(sql`
         SELECT
-          (SELECT COUNT(*) FROM fwa_analyzed_claims) as total_claims,
-          (SELECT COUNT(DISTINCT provider_id) FROM fwa_analyzed_claims) as unique_providers,
-          (SELECT COUNT(DISTINCT patient_id) FROM fwa_analyzed_claims) as unique_patients,
+          (SELECT COUNT(*) FROM claims_v2) as total_claims,
+          (SELECT COUNT(DISTINCT provider_id) FROM claims_v2) as unique_providers,
+          (SELECT COUNT(DISTINCT member_id) FROM claims_v2) as unique_patients,
           (SELECT COUNT(*) FROM fwa_rules_library WHERE is_active = true) as active_rules,
           (SELECT COUNT(*) FROM fwa_feature_store) as feature_records,
           (SELECT COUNT(*) FROM fwa_detection_runs) as detection_runs,
@@ -6999,7 +7789,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       console.log("[Pipeline] Step 4: Running batch detection...");
       const { runProductionDetection } = await import("../services/production-detection-engine");
       const { db } = await import("../db");
-      const { fwaAnalyzedClaims, fwaDetectionRuns, fwaDetectionResults } = await import("@shared/schema");
+      const { claims: claimsTable, fwaDetectionRuns, fwaDetectionResults } = await import("@shared/schema");
       const { sql } = await import("drizzle-orm");
 
       // Create detection run
@@ -7011,7 +7801,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       }).returning();
 
       // Get sample of claims
-      const claimsForAnalysis = await db.select().from(fwaAnalyzedClaims)
+      const claimsForAnalysis = await db.select().from(claimsTable)
         .orderBy(sql`RANDOM()`)
         .limit(Math.min(batchSize, 100));
 
@@ -7019,37 +7809,37 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
 
       for (const dbClaim of claimsForAnalysis) {
         try {
-          const claim = {
+          const claim: AnalyzedClaimData = {
             id: dbClaim.id,
-            claimReference: dbClaim.claimReference || `REF-${dbClaim.id.substring(0, 8)}`,
+            claimNumber: dbClaim.claimNumber || `REF-${dbClaim.id.substring(0, 8)}`,
             providerId: dbClaim.providerId || "UNKNOWN",
-            patientId: dbClaim.patientId || "UNKNOWN",
-            practitionerLicense: dbClaim.doctorId,
-            specialtyCode: dbClaim.providerSpecialty,
-            city: null,
-            providerType: dbClaim.facilityType,
+            memberId: dbClaim.memberId || "UNKNOWN",
+            practitionerId: dbClaim.practitionerId,
+            specialty: dbClaim.specialty,
+            city: dbClaim.city,
+            providerType: dbClaim.providerType,
             unitPrice: null,
-            totalAmount: parseFloat(String(dbClaim.totalAmount || 0)),
+            amount: parseFloat(String(dbClaim.amount || 0)),
             quantity: null,
-            principalDiagnosisCode: dbClaim.diagnosisCode,
-            serviceCode: dbClaim.procedureCode,
-            serviceDescription: dbClaim.serviceDescription,
+            primaryDiagnosis: dbClaim.primaryDiagnosis,
+            cptCodes: dbClaim.cptCodes,
+            description: dbClaim.description,
             claimType: dbClaim.claimType,
-            lengthOfStay: null,
-            originalStatus: dbClaim.status,
-            isPreAuthorized: false
+            lengthOfStay: dbClaim.lengthOfStay,
+            status: dbClaim.status,
+            isPreAuthorized: dbClaim.isPreAuthorized || false
           };
 
-          const result = await runProductionDetection(claim, { skipRagLlm });
+          const result = await runProductionDetection(claim, undefined, skipRagLlm);
 
           // Save result
           await db.insert(fwaDetectionResults).values({
-            runId: run.id,
+            caseId: run.id,
             claimId: dbClaim.id,
             providerId: claim.providerId,
-            patientId: claim.patientId,
+            patientId: claim.memberId,
             compositeScore: String(result.compositeScore),
-            compositeRiskLevel: result.compositeRiskLevel,
+            compositeRiskLevel: result.compositeRiskLevel as any,
             ruleEngineScore: String(result.ruleEngineScore),
             statisticalScore: String(result.statisticalScore),
             unsupervisedScore: String(result.unsupervisedScore),
@@ -7060,7 +7850,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
             ragLlmFindings: result.ragLlmFindings as any,
             detectionSummary: result.detectionSummary,
             recommendedAction: result.recommendedAction,
-            primaryDetectionMethod: result.primaryDetectionMethod
+            primaryDetectionMethod: result.primaryDetectionMethod as any
           });
 
           analyzed++;
@@ -7107,15 +7897,13 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       for (const detection of highRiskDetections.rows as any[]) {
         try {
           const caseData = {
-            caseNumber: `FWA-PIPE-${Date.now().toString(36).toUpperCase()}-${casesCreated}`,
+            caseId: `FWA-PIPE-${Date.now().toString(36).toUpperCase()}-${casesCreated}`,
             claimId: detection.claim_id,
+            providerId: detection.provider_id || "UNKNOWN",
+            patientId: detection.patient_id || "UNKNOWN",
             status: "draft" as const,
             priority: detection.composite_risk_level === "critical" ? "critical" as const : "high" as const,
-            riskScore: detection.composite_score,
-            summary: `Pipeline-generated case from ${detection.composite_risk_level} risk detection (score: ${detection.composite_score})`,
-            flagType: "automated_pipeline",
-            sourceType: "automated_detection" as const,
-            sourceReference: detection.id,
+            totalAmount: "0.00",
           };
           await storage.createFwaCase(caseData);
           casesCreated++;
@@ -7138,9 +7926,9 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       console.log("[Pipeline] Step 6: Collecting final statistics...");
       const finalStats = await db.execute(sql`
         SELECT
-          (SELECT COUNT(*) FROM fwa_analyzed_claims) as total_claims,
-          (SELECT COUNT(DISTINCT provider_id) FROM fwa_analyzed_claims) as unique_providers,
-          (SELECT COUNT(DISTINCT patient_id) FROM fwa_analyzed_claims) as unique_patients,
+          (SELECT COUNT(*) FROM claims_v2) as total_claims,
+          (SELECT COUNT(DISTINCT provider_id) FROM claims_v2) as unique_providers,
+          (SELECT COUNT(DISTINCT member_id) FROM claims_v2) as unique_patients,
           (SELECT COUNT(*) FROM fwa_rules_library WHERE is_active = true) as active_rules,
           (SELECT COUNT(*) FROM fwa_feature_store) as feature_records,
           (SELECT COUNT(*) FROM fwa_detection_runs) as detection_runs,
@@ -7427,12 +8215,12 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       const featureService = new FeatureEngineeringService();
 
       // Get unique providers
-      const providers = await db.selectDistinct({ providerId: claims.providerId })
+      const providersList = await db.selectDistinct({ providerId: claims.providerId })
         .from(claims)
         .limit(100);
 
       let providerCount = 0;
-      for (const p of providers) {
+      for (const p of providersList) {
         if (p.providerId) {
           const features = await featureService.calculateProviderFeaturesFresh(p.providerId);
 
@@ -7483,12 +8271,12 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       }
 
       // Get unique members
-      const members = await db.selectDistinct({ patientId: claims.patientId })
+      const membersList = await db.selectDistinct({ patientId: claims.memberId })
         .from(claims)
         .limit(100);
 
       let memberCount = 0;
-      for (const m of members) {
+      for (const m of membersList) {
         if (m.patientId) {
           const features = await featureService.calculateMemberFeaturesFresh(m.patientId);
 
@@ -7807,7 +8595,6 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         {
           runDetection: true,
           maxClaims: maxClaims || 10000,
-          skipDuplicates: skipDuplicates !== false
         }
       );
 
@@ -7840,7 +8627,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
   // POST /api/fwa/run-detection-batch - Run 4-method detection on claims without detection results
   app.post("/api/fwa/run-detection-batch", async (req, res) => {
     try {
-      const { runProductionDetection, AnalyzedClaimData } = await import("../services/production-detection-engine");
+      const { runProductionDetection } = await import("../services/production-detection-engine");
       const { limit = 100, claimReferences } = req.body;
 
       console.log(`[Detection Batch] Starting 4-method detection batch...`);
@@ -7858,17 +8645,17 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       if (claimReferences && claimReferences.length > 0) {
         // Process specific claims by reference
         claimsToProcess = await db.execute(sql`
-          SELECT ac.* FROM fwa_analyzed_claims ac
-          LEFT JOIN fwa_detection_results dr ON dr.claim_id = ac.id
-          WHERE ac.claim_reference = ANY(${claimReferences})
+          SELECT c.* FROM claims_v2 c
+          LEFT JOIN fwa_detection_results dr ON dr.claim_id = c.claim_number
+          WHERE c.claim_number = ANY(${claimReferences})
           AND dr.id IS NULL
           LIMIT ${limit}
         `);
       } else {
         // Process any claims without detection results
         claimsToProcess = await db.execute(sql`
-          SELECT ac.* FROM fwa_analyzed_claims ac
-          LEFT JOIN fwa_detection_results dr ON dr.claim_id = ac.id
+          SELECT c.* FROM claims_v2 c
+          LEFT JOIN fwa_detection_results dr ON dr.claim_id = c.claim_number
           WHERE dr.id IS NULL
           LIMIT ${limit}
         `);
@@ -7888,47 +8675,46 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
 
       for (const claim of claims) {
         try {
-          const analyzedClaim = {
+          const analyzedClaim: AnalyzedClaimData = {
             id: claim.id,
-            claimReference: claim.claim_reference,
+            claimNumber: claim.claim_number,
             providerId: claim.provider_id,
-            patientId: claim.patient_id,
-            practitionerLicense: claim.practitioner_license,
-            specialtyCode: claim.specialty_code,
+            memberId: claim.member_id,
+            practitionerId: claim.practitioner_id,
+            specialty: claim.specialty,
             city: claim.city,
             providerType: claim.provider_type,
-            unitPrice: claim.unit_price ? parseFloat(claim.unit_price) : 0,
-            totalAmount: claim.total_amount ? parseFloat(claim.total_amount) : 0,
-            quantity: claim.quantity || 1,
-            principalDiagnosisCode: claim.principal_diagnosis_code,
-            serviceCode: claim.service_code,
-            serviceDescription: claim.service_description,
+            unitPrice: claim.amount ? parseFloat(claim.amount) : 0,
+            amount: claim.amount ? parseFloat(claim.amount) : 0,
+            quantity: 1,
+            primaryDiagnosis: claim.primary_diagnosis,
+            cptCodes: claim.cpt_codes ? [claim.cpt_codes[0]] : null,
+            description: claim.description,
             claimType: claim.claim_type,
             lengthOfStay: claim.length_of_stay,
-            originalStatus: claim.original_status,
+            status: claim.status,
             isPreAuthorized: claim.is_pre_authorized || false
           };
 
           const detection = await runProductionDetection(analyzedClaim, DEFAULT_WEIGHTS, true);
 
           await db.insert(fwaDetectionResults).values({
-            claimId: claim.id,
+            claimId: claim.claim_number,
             providerId: claim.provider_id,
-            patientId: claim.patient_id,
+            patientId: claim.member_id,
             compositeScore: String(detection.compositeScore),
-            compositeRiskLevel: detection.compositeRiskLevel,
+            compositeRiskLevel: detection.compositeRiskLevel as any,
             ruleEngineScore: String(detection.ruleEngineScore),
             statisticalScore: String(detection.statisticalScore),
             unsupervisedScore: String(detection.unsupervisedScore),
             ragLlmScore: String(detection.ragLlmScore),
-            ruleEngineFindings: detection.ruleEngineFindings,
-            statisticalFindings: detection.statisticalFindings,
-            unsupervisedFindings: detection.unsupervisedFindings,
-            ragLlmFindings: detection.ragLlmFindings,
-            primaryDetectionMethod: detection.primaryDetectionMethod,
+            ruleEngineFindings: detection.ruleEngineFindings as any,
+            statisticalFindings: detection.statisticalFindings as any,
+            unsupervisedFindings: detection.unsupervisedFindings as any,
+            ragLlmFindings: detection.ragLlmFindings as any,
+            primaryDetectionMethod: detection.primaryDetectionMethod as any,
             detectionSummary: detection.detectionSummary,
             recommendedAction: detection.recommendedAction,
-            riskFactors: detection.riskFactors,
             processingTimeMs: detection.processingTimeMs,
             analyzedAt: new Date()
           });
@@ -7973,9 +8759,9 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       // Find detection results that need 360 enrichment
       const resultsToEnrich = await db.execute(sql`
         SELECT dr.id, dr.claim_id, dr.composite_score, dr.composite_risk_level,
-               ac.provider_id, ac.patient_id, ac.practitioner_license
+               c.provider_id, c.member_id as patient_id, c.practitioner_id as practitioner_license
         FROM fwa_detection_results dr
-        JOIN fwa_analyzed_claims ac ON dr.claim_id = ac.id
+        JOIN claims_v2 c ON dr.claim_id = c.claim_number
         WHERE dr.detection_summary NOT LIKE '%360 Perspective%'
         LIMIT ${limit}
       `);
@@ -8292,9 +9078,9 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
 
       // Total Impact = combined exposure from all high-risk provider detection results
       const totalImpactQuery = await db.execute(sql`
-        SELECT COALESCE(SUM((aggregated_metrics->>'totalExposure')::numeric), 0) as total
+        SELECT COALESCE(SUM((aggregated_metrics->>'totalAmount')::numeric), 0) as total
         FROM fwa_provider_detection_results
-        WHERE aggregated_metrics->>'totalExposure' IS NOT NULL
+        WHERE aggregated_metrics->>'totalAmount' IS NOT NULL
       `);
       const totalSavings = parseFloat(String(totalImpactQuery.rows?.[0]?.total || 0));
 
@@ -8479,7 +9265,7 @@ Respond ONLY with valid JSON, no markdown or explanations.`;
           max_tokens: 2000,
           response_format: { type: "json_object" }
         });
-      }, 3, 1000);
+      }, { maxRetries: 3, initialDelayMs: 1000 });
 
       const content = response.choices[0]?.message?.content || "{}";
       let generatedRule;
@@ -8596,7 +9382,7 @@ Respond with JSON:
           max_tokens: 2000,
           response_format: { type: "json_object" }
         });
-      }, 3, 1000);
+      }, { maxRetries: 3, initialDelayMs: 1000 });
 
       const content = response.choices[0]?.message?.content || "{}";
       let mappingResult;
@@ -8956,7 +9742,7 @@ Respond with JSON:
         .limit(8);
 
       // Helper: produce a relative-time string from a Date
-      function relativeTimeAgo(date: Date | null): string {
+      const relativeTimeAgo = (date: Date | null): string => {
         if (!date) return "unknown";
         const now = Date.now();
         const diffMs = now - date.getTime();
@@ -8967,10 +9753,10 @@ Respond with JSON:
         if (hours < 24) return `${hours} hours ago`;
         if (days === 1) return "1 day ago";
         return `${days} days ago`;
-      }
+      };
 
       // Map enforcement severity to alert severity
-      function mapEnforcementSeverity(sev: string | null): string {
+      const mapEnforcementSeverity = (sev: string | null): string => {
         switch (sev) {
           case "critical": return "critical";
           case "major": return "high";
@@ -8978,15 +9764,15 @@ Respond with JSON:
           case "minor": return "low";
           default: return "info";
         }
-      }
+      };
 
       // Map FWA case priority directly (already critical/high/medium/low)
-      function mapCaseSeverity(priority: string | null): string {
+      const mapCaseSeverity = (priority: string | null): string => {
         if (priority && ["critical", "high", "medium", "low"].includes(priority)) {
           return priority;
         }
         return "info";
-      }
+      };
 
       // Merge and sort by date desc, keep top 8
       const alerts = [
@@ -9201,7 +9987,7 @@ Respond with JSON:
           SELECT
             COALESCE(SUM(CASE WHEN phase IN ('a3_action') AND status = 'resolved' THEN COALESCE(recovery_amount::decimal, 0) ELSE 0 END), 0) AS prevented,
             COALESCE(SUM(CASE WHEN status = 'resolved' THEN COALESCE(recovery_amount::decimal, 0) ELSE 0 END), 0) AS retrospective,
-            COALESCE(SUM(CASE WHEN status IN ('pending','in_review') THEN COALESCE(total_amount::decimal, 0) ELSE 0 END), 0) AS pending,
+            COALESCE(SUM(CASE WHEN status IN ('draft','analyzing','action_pending') THEN COALESCE(total_amount::decimal, 0) ELSE 0 END), 0) AS pending,
             COALESCE(SUM(COALESCE(total_amount::decimal, 0)), 0) AS total,
             COUNT(CASE WHEN phase = 'a3_action' THEN 1 END)::int AS prosp_count,
             COUNT(*)::int AS retro_count

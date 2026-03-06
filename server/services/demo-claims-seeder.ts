@@ -202,35 +202,29 @@ Return a JSON object with this structure:
   private async insertClaim(claim: GeneratedClaim, provider: ProviderDirectory): Promise<void> {
     const id = `claim-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     
-    const insertData: InsertClaim = {
-      id,
+    const insertData = {
       claimNumber: claim.claimNumber,
-      policyNumber: claim.policyNumber,
       registrationDate: new Date(claim.registrationDate),
       claimType: claim.claimType,
       hospital: claim.hospital || provider.name,
       amount: claim.amount.toString(),
       outlierScore: claim.outlierScore.toString(),
       description: claim.description,
-      icd: claim.icd,
-      hasSurgery: claim.hasSurgery,
+      primaryDiagnosis: claim.icd || "UNKNOWN",
+      hasSurgery: claim.hasSurgery === "Yes",
       surgeryFee: claim.surgeryFee?.toString() || null,
-      hasIcu: claim.hasIcu,
+      hasIcu: claim.hasIcu === "Yes",
       lengthOfStay: claim.lengthOfStay,
-      similarClaims: Math.floor(Math.random() * 20),
-      similarClaimsInHospital: Math.floor(Math.random() * 10),
       providerId: provider.id,
-      providerName: provider.name,
-      patientId: claim.patientId,
-      patientName: claim.patientName,
+      memberId: claim.patientId || "UNKNOWN",
       serviceDate: new Date(claim.serviceDate),
       status: claim.status,
       category: claim.category,
       flagged: claim.flagged,
       flagReason: claim.flagReason,
       cptCodes: claim.cptCodes,
-      diagnosisCodes: claim.diagnosisCodes,
-    };
+      icdCodes: claim.diagnosisCodes,
+    } as InsertClaim;
 
     await storage.createClaim(insertData);
   }

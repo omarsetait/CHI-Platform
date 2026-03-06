@@ -935,8 +935,8 @@ export default function FWACaseDetail() {
   const a2Categories = categories || [];
   const a3Actions = actions || [];
 
-  const prospectiveActions = a3Actions.filter((a) => a.actionType === "preventive" || a.actionType === "prospective");
-  const retrospectiveActions = a3Actions.filter((a) => a.actionType === "recovery" || a.actionType === "retrospective");
+  const prospectiveActions = a3Actions.filter((a) => a.actionType === "preventive" || (a.actionType as string) === "prospective");
+  const retrospectiveActions = a3Actions.filter((a) => a.actionType === "recovery" || (a.actionType as string) === "retrospective");
 
   const timeline = generateTimelineFromCase(fwaCase);
 
@@ -1124,7 +1124,7 @@ export default function FWACaseDetail() {
             </span>
           </AccordionTrigger>
           <AccordionContent className="px-4 pb-4">
-            <DocumentCompareSection claimReference={fwaCase?.claimReference || fwaCase?.claimId || ""} />
+            <DocumentCompareSection claimReference={fwaCase?.claimId || ""} />
           </AccordionContent>
         </AccordionItem>
         <AccordionItem value="findings-a1" className="border rounded-lg">

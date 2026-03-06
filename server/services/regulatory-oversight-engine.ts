@@ -746,15 +746,15 @@ async function analyzePatientBehavior(patientId: string, currentClaim: any): Pro
         COUNT(*)::int as claim_count,
         COALESCE(SUM(CAST(amount AS DECIMAL)), 0) as total_amount,
         COUNT(DISTINCT provider_id) as unique_providers,
-        ARRAY_AGG(DISTINCT icd) FILTER (WHERE icd IS NOT NULL) as diagnoses,
+        ARRAY_AGG(DISTINCT primary_diagnosis) FILTER (WHERE primary_diagnosis IS NOT NULL) as diagnoses,
         ARRAY_AGG(DISTINCT cpt_codes[1]) FILTER (WHERE cpt_codes IS NOT NULL AND array_length(cpt_codes, 1) > 0) as procedures,
         COUNT(*) FILTER (WHERE flagged = true)::int as flagged_count,
         COALESCE(AVG(CAST(amount AS DECIMAL)), 0) as avg_amount
-      FROM claims
-      WHERE patient_id = ${patientId}
+      FROM claims_v2
+      WHERE member_id = ${patientId}
         AND registration_date >= ${cutoffDate}
     `);
-    
+
     const row = historyResult.rows[0];
     if (row) {
       const pattern: ClaimHistoryPattern = {
@@ -784,9 +784,9 @@ async function analyzePatientBehavior(patientId: string, currentClaim: any): Pro
   
   const linkedProviders = await db.execute(sql`
     SELECT DISTINCT c.provider_id, hrp.provider_name, hrp.risk_score
-    FROM claims c
+    FROM claims_v2 c
     JOIN fwa_high_risk_providers hrp ON c.provider_id = hrp.provider_id
-    WHERE c.patient_id = ${patientId}
+    WHERE c.member_id = ${patientId}
       AND hrp.risk_level IN ('high', 'critical')
   `);
   
@@ -829,10 +829,10 @@ async function analyzeProviderBehavior(providerId: string, currentClaim: any): P
       COUNT(*) FILTER (WHERE flagged = true)::int as flagged_claims,
       COALESCE(AVG(CAST(amount AS DECIMAL)), 0) as avg_amount,
       COALESCE(STDDEV(CAST(amount AS DECIMAL)), 0) as stddev_amount
-    FROM claims
+    FROM claims_v2
     WHERE provider_id = ${providerId}
   `);
-  
+
   const stats = providerStats.rows[0];
   const totalClaims = Number(stats?.total_claims) || 0;
   const flaggedClaims = Number(stats?.flagged_claims) || 0;
@@ -844,9 +844,9 @@ async function analyzeProviderBehavior(providerId: string, currentClaim: any): P
   const avgDeviation = stddevAmount > 0 ? (claimAmount - avgAmount) / stddevAmount : 0;
   
   const linkedPatients = await db.execute(sql`
-    SELECT DISTINCT c.patient_id, hrp.patient_name, hrp.risk_score
-    FROM claims c
-    JOIN fwa_high_risk_patients hrp ON c.patient_id = hrp.patient_id
+    SELECT DISTINCT c.member_id, hrp.patient_name, hrp.risk_score
+    FROM claims_v2 c
+    JOIN fwa_high_risk_patients hrp ON c.member_id = hrp.patient_id
     WHERE c.provider_id = ${providerId}
       AND hrp.risk_level IN ('high', 'critical')
     LIMIT 10
@@ -879,7 +879,7 @@ async function analyzeDoctorBehavior(doctorId: string): Promise<BehavioralAnalys
     SELECT DISTINCT hrp.provider_id, hrp.provider_name, hrp.risk_score
     FROM fwa_high_risk_providers hrp
     WHERE hrp.provider_id IN (
-      SELECT DISTINCT provider_id FROM claims 
+      SELECT DISTINCT provider_id FROM claims_v2
       WHERE id IN (SELECT claim_id FROM fwa_detection_results WHERE provider_id = ${doctorId})
     )
     AND hrp.risk_level IN ('high', 'critical')
@@ -1507,15 +1507,15 @@ export async function getClaimHistoryPatterns(
       COUNT(*)::int as claim_count,
       COALESCE(SUM(CAST(amount AS DECIMAL)), 0) as total_amount,
       COUNT(DISTINCT provider_id) as unique_providers,
-      ARRAY_AGG(DISTINCT icd) FILTER (WHERE icd IS NOT NULL) as diagnoses,
+      ARRAY_AGG(DISTINCT primary_diagnosis) FILTER (WHERE primary_diagnosis IS NOT NULL) as diagnoses,
       ARRAY_AGG(DISTINCT cpt_codes[1]) FILTER (WHERE cpt_codes IS NOT NULL AND array_length(cpt_codes, 1) > 0) as procedures,
       COUNT(*) FILTER (WHERE flagged = true)::int as flagged_count,
       COALESCE(AVG(CAST(amount AS DECIMAL)), 0) as avg_amount
-    FROM claims
-    WHERE patient_id = ${patientId}
+    FROM claims_v2
+    WHERE member_id = ${patientId}
       AND registration_date >= ${cutoffDate}
   `);
-  
+
   const row = result.rows[0];
   return {
     lookbackDays,

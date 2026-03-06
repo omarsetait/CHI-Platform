@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import { db } from "../db";
-import { 
+import {
   claims, fwaBehaviors, policyViolationCatalogue,
   fwaDetectionResults, fwaDetectionConfigs,
   fwaRulesLibrary, fwaRuleHits,
@@ -344,6 +344,8 @@ interface ClaimData {
   amount: number;
   diagnosisCode?: string;
   procedureCode?: string;
+  cptCode?: string; // alias for procedureCode
+  icd?: string; // alias for diagnosisCode
   serviceDate?: Date;
   description?: string;
   claimType?: string;
@@ -354,6 +356,8 @@ interface ClaimData {
 
 interface DetectionResult {
   claimId: string;
+  providerId?: string;
+  patientId?: string;
   compositeScore: number;
   compositeRiskLevel: string;
   ruleEngineScore: number;
@@ -826,8 +830,8 @@ async function detectDuplicateClaims(claim: ClaimData): Promise<{
   const similarClaims = await db.select()
     .from(claims)
     .where(and(
-      eq(claims.patientId, claim.patientId),
-      eq(claims.icd, claim.diagnosisCode || "")
+      eq(claims.memberId, claim.patientId),
+      eq(claims.primaryDiagnosis, claim.diagnosisCode || "")
     ))
     .limit(50);
   
@@ -869,7 +873,7 @@ async function detectDiagnosisPatterns(claim: ClaimData): Promise<{
     .from(claims)
     .where(and(
       eq(claims.providerId, claim.providerId),
-      eq(claims.icd, claim.diagnosisCode)
+      eq(claims.primaryDiagnosis, claim.diagnosisCode)
     ));
   
   const frequency = diagnosisCounts[0]?.count || 0;
@@ -973,7 +977,7 @@ async function detectProviderPatterns(claim: ClaimData): Promise<{
   const claimsThisWeek = recentClaims.length;
   
   // Count unique patients
-  const uniquePatients = new Set(recentClaims.map(c => c.patientId)).size;
+  const uniquePatients = new Set(recentClaims.map(c => c.memberId)).size;
   
   const patterns: string[] = [];
   let riskScore = 0;
@@ -1064,7 +1068,7 @@ async function detectServicePatterns(claim: ClaimData): Promise<{
   // Check for patient claims volume (doctor shopping indicator)
   const patientClaims = await db.select({ count: sql<number>`count(*)` })
     .from(claims)
-    .where(eq(claims.patientId, claim.patientId));
+    .where(eq(claims.memberId, claim.patientId));
   
   const patientClaimCount = patientClaims[0]?.count || 0;
   
@@ -1079,7 +1083,7 @@ async function detectServicePatterns(claim: ClaimData): Promise<{
     const sameDayClaims = await db.select({ count: sql<number>`count(*)` })
       .from(claims)
       .where(and(
-        eq(claims.patientId, claim.patientId),
+        eq(claims.memberId, claim.patientId),
         eq(claims.providerId, claim.providerId),
         eq(claims.serviceDate, claim.serviceDate)
       ));
@@ -1213,7 +1217,7 @@ async function calculatePatientPatternFeatureLegacy(patientId: string): Promise<
   // Legacy function kept for backwards compatibility with other code paths
   const claimCount = await db.select({ count: sql<number>`count(*)` })
     .from(claims)
-    .where(eq(claims.patientId, patientId));
+    .where(eq(claims.memberId, patientId));
   
   const count = claimCount[0]?.count || 0;
   const value = Math.min(1, count / 20);
@@ -1991,16 +1995,16 @@ export async function updateDetectionConfig(method: string, updates: {
   weight?: string;
   threshold?: string;
 }): Promise<any> {
-  const existing = await db.select().from(fwaDetectionConfigs).where(eq(fwaDetectionConfigs.method, method)).limit(1);
-  
+  const existing = await db.select().from(fwaDetectionConfigs).where(eq(fwaDetectionConfigs.method, method as any)).limit(1);
+
   if (existing.length === 0) {
     const defaultConfig = DEFAULT_DETECTION_CONFIGS.find(d => d.method === method);
     if (!defaultConfig) {
       throw new Error(`Unknown detection method: ${method}`);
     }
-    
+
     await db.insert(fwaDetectionConfigs).values({
-      method,
+      method: method as any,
       name: defaultConfig.name,
       isEnabled: updates.isEnabled ?? true,
       weight: updates.weight ?? defaultConfig.weight,
@@ -2014,7 +2018,7 @@ export async function updateDetectionConfig(method: string, updates: {
         weight: updates.weight,
         threshold: updates.threshold
       })
-      .where(eq(fwaDetectionConfigs.method, method));
+      .where(eq(fwaDetectionConfigs.method, method as any));
   }
   
   return getDetectionConfigs();
@@ -2029,6 +2033,8 @@ export function getDefaultDetectionConfigs() {
 export async function saveDetectionResult(result: DetectionResult): Promise<void> {
   await db.insert(fwaDetectionResults).values({
     claimId: result.claimId,
+    providerId: result.providerId || null,
+    patientId: result.patientId || null,
     compositeScore: result.compositeScore.toString(),
     compositeRiskLevel: result.compositeRiskLevel as any,
     ruleEngineScore: result.ruleEngineScore.toString(),
@@ -2070,59 +2076,60 @@ export async function aggregateProviderDetection(providerId: string): Promise<{
         COUNT(CASE WHEN dr.composite_risk_level = 'critical' THEN 1 END) as high_risk_claims_count,
         COALESCE(SUM(c.amount::numeric), 0) as total_amount,
         COALESCE(SUM(CASE WHEN dr.composite_risk_level IN ('high', 'critical') THEN c.amount::numeric ELSE 0 END), 0) as flagged_amount,
-        COUNT(DISTINCT COALESCE(dr.patient_id, c.patient_id)) as unique_patients,
+        COUNT(DISTINCT COALESCE(dr.patient_id, c.member_id)) as unique_patients,
         COUNT(DISTINCT COALESCE(dr.provider_id, c.provider_id, '')) as unique_doctors,
-        MODE() WITHIN GROUP (ORDER BY dr.primary_detection_method) as primary_method
+        MODE() WITHIN GROUP (ORDER BY dr.primary_detection_method) as primary_method,
+        COUNT(DISTINCT DATE_TRUNC('month', c.service_date)) as active_months,
+        COUNT(CASE WHEN c.status = 'denied' THEN 1 END) as denied_claims
       FROM fwa_detection_results dr
-      LEFT JOIN claims c ON dr.claim_id = c.id
+      LEFT JOIN claims_v2 c ON dr.claim_id = c.claim_number
       WHERE dr.provider_id = ${providerId}
     `);
-    
+
     const stats = aggregateQuery.rows?.[0];
-    
+
     if (!stats || parseInt(String(stats.total_claims || 0)) === 0) {
-      // No existing detection results - run detection on provider's claims first
+      // No existing detection results - run detection on provider's claims
       const claimsQuery = await db.execute(sql`
-        SELECT id, claim_number, provider_id, patient_id, amount, description, 
-               diagnosis_codes, icd, cpt_codes, claim_type
-        FROM claims 
+        SELECT id, claim_number, provider_id, member_id, amount, description,
+               primary_diagnosis, icd_codes, cpt_codes, claim_type
+        FROM claims_v2
         WHERE provider_id = ${providerId}
         LIMIT 50
       `);
       
-      const claims = claimsQuery.rows || [];
-      if (claims.length === 0) {
+      const claimsList = (claimsQuery.rows || []) as any[];
+      if (claimsList.length === 0) {
         return {
           success: false,
           error: `No claims found for provider ${providerId}`
         };
       }
-      
-      console.log(`[Provider Analysis] Running detection on ${claims.length} claims for ${providerId}`);
-      
+
+      console.log(`[Provider Analysis] Running detection on ${claimsList.length} claims for ${providerId}`);
+
       // Run detection on each claim and save results
       let analyzedCount = 0;
-      for (const claim of claims) {
+      for (const claim of claimsList) {
         try {
-          // Extract diagnosis code from diagnosis_codes array or icd field
-          const diagnosisCodes = claim.diagnosis_codes || claim.icd;
-          const diagnosisCode = Array.isArray(diagnosisCodes) ? diagnosisCodes[0] : String(diagnosisCodes || "");
-          const procedureCodes = claim.cpt_codes;
-          const procedureCode = Array.isArray(procedureCodes) ? procedureCodes[0] : String(procedureCodes || "");
-          
+          const diagnosisCode = String(claim.primary_diagnosis || "");
+          const procedureCode = claim.cpt_codes?.[0] ? String(claim.cpt_codes[0]) : "";
+
           const claimData = {
-            id: String(claim.id),
+            id: String(claim.claim_number || claim.id),
             claimNumber: String(claim.claim_number || claim.id),
             providerId: String(claim.provider_id || providerId),
-            patientId: String(claim.patient_id || "UNKNOWN"),
+            patientId: String(claim.member_id || "UNKNOWN"),
             amount: parseFloat(String(claim.amount || 0)),
-            diagnosisCode: String(diagnosisCode || ""),
-            procedureCode: String(procedureCode || ""),
+            diagnosisCode,
+            procedureCode,
             description: String(claim.description || ""),
             claimType: String(claim.claim_type || "medical")
           };
-          
+
           const result = await runFullDetection(claimData);
+          result.providerId = String(claim.provider_id || providerId);
+          result.patientId = String(claim.member_id || "UNKNOWN");
           await saveDetectionResult(result);
           analyzedCount++;
         } catch (e) {
@@ -2130,7 +2137,7 @@ export async function aggregateProviderDetection(providerId: string): Promise<{
         }
       }
       
-      console.log(`[Provider Analysis] Analyzed ${analyzedCount}/${claims.length} claims for ${providerId}`);
+      console.log(`[Provider Analysis] Analyzed ${analyzedCount}/${claimsList.length} claims for ${providerId}`);
       
       // Re-run the aggregate query now that we have results
       // Use dr.provider_id to match the detection results directly
@@ -2146,11 +2153,13 @@ export async function aggregateProviderDetection(providerId: string): Promise<{
           COUNT(CASE WHEN dr.composite_risk_level = 'critical' THEN 1 END) as high_risk_claims_count,
           COALESCE(SUM(c.amount::numeric), 0) as total_amount,
           COALESCE(SUM(CASE WHEN dr.composite_risk_level IN ('high', 'critical') THEN c.amount::numeric ELSE 0 END), 0) as flagged_amount,
-          COUNT(DISTINCT COALESCE(dr.patient_id, c.patient_id)) as unique_patients,
+          COUNT(DISTINCT COALESCE(dr.patient_id, c.member_id)) as unique_patients,
           COUNT(DISTINCT COALESCE(dr.provider_id, c.provider_id, '')) as unique_doctors,
-          MODE() WITHIN GROUP (ORDER BY dr.primary_detection_method) as primary_method
+          MODE() WITHIN GROUP (ORDER BY dr.primary_detection_method) as primary_method,
+          COUNT(DISTINCT DATE_TRUNC('month', c.service_date)) as active_months,
+          COUNT(CASE WHEN c.status = 'denied' THEN 1 END) as denied_claims
         FROM fwa_detection_results dr
-        LEFT JOIN claims c ON dr.claim_id = c.id
+        LEFT JOIN claims_v2 c ON dr.claim_id = c.claim_number
         WHERE dr.provider_id = ${providerId}
       `);
       
@@ -2205,6 +2214,11 @@ export async function aggregateProviderDetection(providerId: string): Promise<{
     const avgClaimAmount = totalClaims > 0 ? totalAmount / totalClaims : 0;
     const flaggedClaimsPercent = totalClaims > 0 ? (flaggedClaimsCount / totalClaims) * 100 : 0;
     
+    const activeMonths = parseInt(String(stats.active_months || 0));
+    const deniedClaims = parseInt(String(stats.denied_claims || 0));
+    const claimsPerMonth = activeMonths > 0 ? Math.round((totalClaims / activeMonths) * 100) / 100 : totalClaims;
+    const denialRate = totalClaims > 0 ? Math.round((deniedClaims / totalClaims) * 100 * 100) / 100 : 0;
+
     const aggregatedMetrics = {
       totalClaims,
       totalAmount: Math.round(totalAmount * 100) / 100,
@@ -2214,6 +2228,8 @@ export async function aggregateProviderDetection(providerId: string): Promise<{
       flaggedClaimsCount,
       flaggedClaimsPercent: Math.round(flaggedClaimsPercent * 100) / 100,
       highRiskClaimsCount,
+      claimsPerMonth,
+      denialRate,
       topProcedureCodes: [],
       topDiagnosisCodes: []
     };

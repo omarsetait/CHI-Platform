@@ -422,6 +422,17 @@ export function registerPreAuthRoutes(
     }
   });
 
+  // GET /api/pre-auth/claims/pending - Get claims with pending_review status
+  app.get("/api/pre-auth/claims/pending", async (req, res) => {
+    try {
+      const claims = await storage.getPreAuthClaims();
+      const pending = claims.filter(c => c.status === "pending_review");
+      res.json(pending);
+    } catch (error) {
+      handleRouteError(res, error, "/api/pre-auth/claims/pending", "fetch pending claims");
+    }
+  });
+
   // GET /api/pre-auth/claims/by-claim-id/:claimId - Get claim by claimId string
   app.get("/api/pre-auth/claims/by-claim-id/:claimId", async (req, res) => {
     try {
@@ -577,8 +588,8 @@ export function registerPreAuthRoutes(
   // GET /api/pre-auth/claims/:claimId/actions - Get actions for claim
   app.get("/api/pre-auth/claims/:claimId/actions", async (req, res) => {
     try {
-      const actions = await storage.getPreAuthActionsByClaimId(req.params.claimId);
-      res.json(actions);
+      const decision = await storage.getPreAuthDecisionByClaimId(req.params.claimId);
+      res.json(decision ? [decision] : []);
     } catch (error) {
       handleRouteError(res, error, "/api/pre-auth/claims/:claimId/actions", "fetch actions");
     }
@@ -594,7 +605,7 @@ export function registerPreAuthRoutes(
       if (!parsed.success) {
         return res.status(400).json({ error: "Invalid request body", details: parsed.error.errors });
       }
-      const action = await storage.createPreAuthAction(parsed.data);
+      const action = await storage.createPreAuthDecision(parsed.data as any);
       res.status(201).json(action);
     } catch (error) {
       handleRouteError(res, error, "/api/pre-auth/claims/:claimId/actions", "create action");
@@ -1061,19 +1072,19 @@ export function registerPreAuthRoutes(
   // Cognitive Agent Route
   app.post("/api/pre-auth/cognitive-agent", async (req, res) => {
     try {
-      const { claimId } = req.body;
+      const { claimId, agentType } = req.body;
       if (!claimId) {
         return res.status(400).json({ error: "claimId is required" });
       }
 
       const { runPreAuthAgent } = await import("../services/agent-orchestrator");
       const claim = await storage.getPreAuthClaim(claimId) || await storage.getPreAuthClaimByClaimId(claimId);
-      
+
       if (!claim) {
         return res.status(404).json({ error: "Claim not found" });
       }
 
-      const result = await runPreAuthAgent(claim);
+      const result = await runPreAuthAgent(agentType || "regulatory_compliance", claim);
       res.json(result);
     } catch (error) {
       handleRouteError(res, error, "/api/pre-auth/cognitive-agent", "run cognitive agent");

@@ -1,6 +1,6 @@
 import XLSX from 'xlsx';
 import { db } from '../db';
-import { fwaAnalyzedClaims, fwaDetectionResults, fwaDetectionRuns, fwaBatches } from '@shared/schema';
+import { claims, fwaDetectionResults, fwaDetectionRuns, fwaBatches } from '@shared/schema';
 import { sql, eq } from 'drizzle-orm';
 import { runProductionDetection, AnalyzedClaimData } from './production-detection-engine';
 import { runEntityDetectionForBatch, refresh360ForBatch } from './entity-detection-service';
@@ -181,11 +181,11 @@ export async function processExcelBatch(
         const claimRef = String(row.CLAIMREFERENCE || `CLM-${batchId}-${i}`).trim();
         
         if (skipDuplicates) {
-          const existing = await db.select({ id: fwaAnalyzedClaims.id })
-            .from(fwaAnalyzedClaims)
-            .where(eq(fwaAnalyzedClaims.claimReference, claimRef))
+          const existing = await db.select({ id: claims.id })
+            .from(claims)
+            .where(eq(claims.claimNumber, claimRef))
             .limit(1);
-          
+
           if (existing.length > 0) {
             continue;
           }
@@ -195,44 +195,32 @@ export async function processExcelBatch(
         const quantity = Number(row.RQUANTITY) || 1;
         const totalAmount = unitPrice * quantity;
         
-        const result = await db.insert(fwaAnalyzedClaims).values({
-          claimReference: claimRef,
-          batchNumber: String(row.BATCHNUMBER || ''),
-          batchDate: excelDateToJSDate(row.BATCHDATE),
-          patientId: String(row.PATIENTID || 'UNKNOWN').trim(),
-          dateOfBirth: excelDateToJSDate(row.DATEOFBIRTH),
-          gender: row.GENDER || null,
+        const result = await db.insert(claims).values({
+          claimNumber: claimRef,
+          memberId: String(row.PATIENTID || 'UNKNOWN').trim(),
           isNewborn: row.ISNEWBORN === 1,
           isChronic: row.CHRONIC === 'Yes',
           isPreExisting: row.PREEXISTING === true,
-          policyNo: String(row.POLICYNO || ''),
-          policyEffectiveDate: excelDateToJSDate(row.POLICYEFFECTIVEDATE),
-          policyExpiryDate: excelDateToJSDate(row.POLICYEXPIRYDATE),
+          policyEffectiveDate: excelDateToJSDate(row.POLICYEFFECTIVEDATE)?.toISOString().split('T')[0] ?? null,
+          policyExpiryDate: excelDateToJSDate(row.POLICYEXPIRYDATE)?.toISOString().split('T')[0] ?? null,
           groupNo: String(row.GROUPNO || ''),
           providerId: String(row.PROVIDERID || 'UNKNOWN').trim(),
-          practitionerLicense: String(row.PRACTITIONERLICENSE || ''),
-          specialtyCode: String(row.SPECIALITYCODE || ''),
+          practitionerId: String(row.PRACTITIONERLICENSE || ''),
+          specialty: String(row.SPECIALITYCODE || ''),
           city: row.CITY || null,
           providerType: row.PROVIDERTYPE || null,
-          claimType: row.CLAIMTYPE || row.CLAIMBENEFITCODE || null,
-          claimOccurrenceDate: excelDateToJSDate(row.CLAIMOCCURRENCEDATE),
-          startDate: excelDateToJSDate(row.STARTDATE),
+          claimType: row.CLAIMTYPE || row.CLAIMBENEFITCODE || 'unknown',
+          serviceDate: excelDateToJSDate(row.CLAIMOCCURRENCEDATE) ?? new Date(),
+          registrationDate: excelDateToJSDate(row.STARTDATE) ?? new Date(),
           lengthOfStay: row.LENGTHOFSTAY || null,
           isPreAuthorized: row.ISPREAUTHORIZED === 1,
-          authorizationId: row.AUTHORIZATIONID ? String(row.AUTHORIZATIONID) : null,
-          serviceCode: row.SERVICECODE || null,
-          serviceType: row.SERVICETYPE || null,
-          serviceDescription: row.SERVICEDESCRIPTION || row.PROVIDERSERVICEDESCRIPTION || null,
-          unitPrice: String(unitPrice),
-          quantity: quantity,
-          totalAmount: String(totalAmount),
-          principalDiagnosisCode: row.PRINCIPALDIAGNOSISCODE || null,
-          secondaryDiagnosisCodes: row.SECONDARYDIAGNOSISCODES ? [row.SECONDARYDIAGNOSISCODES] : null,
-          claimSupportingInfo: row.CLAIMSUPPORTINGINFO || null,
-          originalStatus: row.STATUS || null,
-          aiStatus: row.AISTATUS || null,
-          importedAt: new Date()
-        }).returning({ id: fwaAnalyzedClaims.id });
+          cptCodes: row.SERVICECODE ? [row.SERVICECODE] : null,
+          description: row.SERVICEDESCRIPTION || row.PROVIDERSERVICEDESCRIPTION || null,
+          amount: String(totalAmount),
+          primaryDiagnosis: row.PRINCIPALDIAGNOSISCODE || 'unknown',
+          icdCodes: row.SECONDARYDIAGNOSISCODES ? [row.SECONDARYDIAGNOSISCODES] : null,
+          status: row.STATUS || "pending",
+        }).returning({ id: claims.id });
         
         if (result.length > 0) {
           insertedClaimIds.push(result[0].id);
@@ -290,31 +278,31 @@ export async function processExcelBatch(
         const claimId = insertedClaimIds[i];
         
         try {
-          const claimData = await db.select().from(fwaAnalyzedClaims)
-            .where(eq(fwaAnalyzedClaims.id, claimId))
+          const claimData = await db.select().from(claims)
+            .where(eq(claims.id, claimId))
             .limit(1);
-          
+
           if (claimData.length === 0) continue;
-          
+
           const claim = claimData[0];
           const analyzedClaim: AnalyzedClaimData = {
             id: claim.id,
-            claimReference: claim.claimReference,
-            providerId: claim.providerId,
-            patientId: claim.patientId,
-            practitionerLicense: claim.practitionerLicense,
-            specialtyCode: claim.specialtyCode,
+            claimNumber: claim.claimNumber || "",
+            providerId: claim.providerId || "",
+            memberId: claim.memberId || "",
+            practitionerId: claim.practitionerId,
+            specialty: claim.specialty,
             city: claim.city,
             providerType: claim.providerType,
-            unitPrice: claim.unitPrice ? parseFloat(claim.unitPrice) : 0,
-            totalAmount: claim.totalAmount ? parseFloat(claim.totalAmount) : 0,
-            quantity: claim.quantity || 1,
-            principalDiagnosisCode: claim.principalDiagnosisCode,
-            serviceCode: claim.serviceCode,
-            serviceDescription: claim.serviceDescription,
+            unitPrice: null,
+            amount: claim.amount ? parseFloat(claim.amount) : 0,
+            quantity: null,
+            primaryDiagnosis: claim.primaryDiagnosis,
+            cptCodes: claim.cptCodes,
+            description: claim.description,
             claimType: claim.claimType,
             lengthOfStay: claim.lengthOfStay,
-            originalStatus: claim.originalStatus,
+            status: claim.status,
             isPreAuthorized: claim.isPreAuthorized || false
           };
 
@@ -323,9 +311,9 @@ export async function processExcelBatch(
           await db.insert(fwaDetectionResults).values({
             claimId: claimId,
             providerId: claim.providerId,
-            patientId: claim.patientId,
+            patientId: claim.memberId,
             compositeScore: String(detection.compositeScore),
-            compositeRiskLevel: detection.compositeRiskLevel,
+            compositeRiskLevel: detection.compositeRiskLevel as any,
             ruleEngineScore: String(detection.ruleEngineScore),
             statisticalScore: String(detection.statisticalScore),
             unsupervisedScore: String(detection.unsupervisedScore),
@@ -334,10 +322,9 @@ export async function processExcelBatch(
             statisticalFindings: detection.statisticalFindings,
             unsupervisedFindings: detection.unsupervisedFindings,
             ragLlmFindings: detection.ragLlmFindings,
-            primaryDetectionMethod: detection.primaryDetectionMethod,
+            primaryDetectionMethod: detection.primaryDetectionMethod as any,
             detectionSummary: detection.detectionSummary,
             recommendedAction: detection.recommendedAction,
-            riskFactors: detection.riskFactors,
             processingTimeMs: detection.processingTimeMs,
             analyzedAt: new Date()
           });

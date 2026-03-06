@@ -49,7 +49,7 @@ export class NetworkFeatureService {
     let totalPairCount = 0;
     
     // Sum all triplets matching this provider-patient pair (regardless of hospital)
-    for (const [key, count] of this.tripletFrequencyCache.entries()) {
+    for (const [key, count] of Array.from(this.tripletFrequencyCache.entries())) {
       if (key.startsWith(pairPrefix)) {
         totalPairCount += count;
       }
@@ -79,9 +79,9 @@ export class NetworkFeatureService {
 
     const day90Ago = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
 
-    // Note: doctor_id doesn't exist in claims table, so we use provider_id and hospital for network analysis
+    // Note: doctor_id doesn't exist in claims_v2 table, so we use provider_id and hospital for network analysis
     const [providerPatients, providerClaims, patientProviders] = await Promise.all([
-      db.select({ count: sql<number>`COUNT(DISTINCT patient_id)` })
+      db.select({ count: sql<number>`COUNT(DISTINCT member_id)` })
         .from(claims)
         .where(and(
           eq(claims.providerId, providerId),
@@ -96,7 +96,7 @@ export class NetworkFeatureService {
       patientId ? db.select({ count: sql<number>`COUNT(DISTINCT provider_id)` })
         .from(claims)
         .where(and(
-          eq(claims.patientId, patientId),
+          eq(claims.memberId, patientId),
           gte(claims.serviceDate, day90Ago)
         )) : Promise.resolve([{ count: 0 }])
     ]);
@@ -175,27 +175,27 @@ export class NetworkFeatureService {
 
     const day90Ago = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
 
-    // Query same patient claims and multi-provider patterns (no doctor_id in claims table)
+    // Query same patient claims and multi-provider patterns (no doctor_id in claims_v2 table)
     const [samePatientClaims, multiProviderPatterns] = await Promise.all([
       db.select({ count: sql<number>`count(*)` })
         .from(claims)
         .where(and(
           eq(claims.providerId, providerId),
-          eq(claims.patientId, patientId),
+          eq(claims.memberId, patientId),
           gte(claims.serviceDate, day90Ago)
         )),
-      
+
       // Check for patient visiting multiple providers with same diagnosis (potential referral fraud)
       db.execute(sql`
-        SELECT COUNT(*) as count FROM claims c1
+        SELECT COUNT(*) as count FROM claims_v2 c1
         WHERE c1.provider_id = ${providerId}
-        AND c1.patient_id = ${patientId}
+        AND c1.member_id = ${patientId}
         AND c1.service_date >= ${day90Ago}
         AND EXISTS (
-          SELECT 1 FROM claims c2
+          SELECT 1 FROM claims_v2 c2
           WHERE c2.provider_id != ${providerId}
-          AND c2.patient_id = ${patientId}
-          AND c2.icd = c1.icd
+          AND c2.member_id = ${patientId}
+          AND c2.primary_diagnosis = c1.primary_diagnosis
           AND c2.service_date >= ${day90Ago}
           AND ABS(EXTRACT(DAY FROM c2.service_date - c1.service_date)) <= 7
         )
@@ -228,14 +228,14 @@ export class NetworkFeatureService {
 
     const day90Ago = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
 
-    // Use provider_id:patient_id:hospital as triplet key (no doctor_id in claims table)
+    // Use provider_id:member_id:hospital as triplet key (no doctor_id in claims_v2 table)
     const tripletCounts = await db.execute(sql`
-      SELECT 
-        provider_id || ':' || patient_id || ':' || COALESCE(hospital, 'none') as triplet,
+      SELECT
+        provider_id || ':' || member_id || ':' || COALESCE(hospital, 'none') as triplet,
         COUNT(*) as cnt
-      FROM claims
+      FROM claims_v2
       WHERE service_date >= ${day90Ago}
-      GROUP BY provider_id, patient_id, hospital
+      GROUP BY provider_id, member_id, hospital
     `);
 
     this.tripletFrequencyCache.clear();

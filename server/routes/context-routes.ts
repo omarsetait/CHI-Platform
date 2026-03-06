@@ -49,12 +49,12 @@ export function registerContextRoutes(
       const detectionStats = await db.execute(sql`
         SELECT 
           COUNT(*) as total_detections,
-          COUNT(DISTINCT ac.claim_reference) as flagged_claims,
+          COUNT(DISTINCT ac.claim_number) as flagged_claims,
           COUNT(DISTINCT dr.provider_id) as unique_providers,
-          COUNT(DISTINCT ac.claim_reference) FILTER (WHERE dr.composite_risk_level IN ('critical', 'high')) as critical_detections,
+          COUNT(DISTINCT ac.claim_number) FILTER (WHERE dr.composite_risk_level IN ('critical', 'high')) as critical_detections,
           MAX(dr.analyzed_at) as last_analyzed
         FROM fwa_detection_results dr
-        JOIN fwa_analyzed_claims ac ON ac.id = dr.claim_id
+        JOIN claims_v2 ac ON ac.id = dr.claim_id
         WHERE dr.patient_id = ${req.params.patientId}
       `);
       
@@ -62,22 +62,22 @@ export function registerContextRoutes(
       // Healthcare claims have multiple service lines per claim - aggregate to claim level
       const claims = await db.execute(sql`
         SELECT 
-          ac.claim_reference,
+          ac.claim_number,
           MIN(ac.id) as first_claim_id,
           COUNT(*) as service_line_count,
-          SUM(ac.total_amount) as total_claim_amount,
-          MIN(ac.claim_occurrence_date) as service_date, 
+          SUM(ac.amount) as total_claim_amount,
+          MIN(ac.service_date) as service_date, 
           MIN(ac.provider_id) as provider_id,
-          MIN(ac.principal_diagnosis_code) as diagnosis,
-          MIN(ac.practitioner_license) as practitioner_license,
-          STRING_AGG(DISTINCT COALESCE(ac.service_description, ac.service_code), ', ') as services,
+          MIN(ac.primary_diagnosis) as diagnosis,
+          MIN(ac.practitioner_id) as practitioner_id,
+          STRING_AGG(DISTINCT COALESCE(ac.description, ac.cpt_codes[1]), ', ') as services,
           MAX(dr.composite_score) as detection_score,
           MAX(dr.composite_risk_level) as risk_level
-        FROM fwa_analyzed_claims ac
+        FROM claims_v2 ac
         LEFT JOIN fwa_detection_results dr ON dr.claim_id = ac.id
-        WHERE ac.patient_id = ${req.params.patientId}
-        GROUP BY ac.claim_reference
-        ORDER BY MIN(ac.claim_occurrence_date) DESC
+        WHERE ac.member_id = ${req.params.patientId}
+        GROUP BY ac.claim_number
+        ORDER BY MIN(ac.service_date) DESC
         LIMIT 20
       `);
       
@@ -98,7 +98,7 @@ export function registerContextRoutes(
       const visitHistory = claims.rows.map((c: any) => ({
         date: c.service_date,
         claimId: c.first_claim_id,
-        claimReference: c.claim_reference,
+        claimReference: c.claim_number,
         providerId: c.provider_id,
         providerName: c.provider_id,
         visitType: c.service_line_count > 1 
@@ -107,7 +107,7 @@ export function registerContextRoutes(
         claimAmount: parseFloat(c.total_claim_amount) || 0,
         serviceCount: parseInt(c.service_line_count) || 1,
         diagnosis: c.diagnosis,
-        doctor: c.practitioner_license,
+        doctor: c.practitioner_id,
         detectionScore: parseFloat(c.detection_score) || 0,
         riskLevel: c.risk_level || 'minimal'
       }));
@@ -115,16 +115,16 @@ export function registerContextRoutes(
       // Get unique diagnoses from claims for chronic conditions display
       const diagnoses = await db.execute(sql`
         SELECT DISTINCT 
-          ac.principal_diagnosis_code as code,
-          MIN(ac.claim_occurrence_date) as first_diagnosed,
+          ac.primary_diagnosis as code,
+          MIN(ac.service_date) as first_diagnosed,
           MIN(ac.provider_id) as diagnosing_provider,
-          COUNT(DISTINCT ac.claim_reference) as claim_count
-        FROM fwa_analyzed_claims ac
-        WHERE ac.patient_id = ${req.params.patientId}
-          AND ac.principal_diagnosis_code IS NOT NULL
-          AND ac.principal_diagnosis_code != ''
-        GROUP BY ac.principal_diagnosis_code
-        ORDER BY MIN(ac.claim_occurrence_date) DESC
+          COUNT(DISTINCT ac.claim_number) as claim_count
+        FROM claims_v2 ac
+        WHERE ac.member_id = ${req.params.patientId}
+          AND ac.primary_diagnosis IS NOT NULL
+          AND ac.primary_diagnosis != ''
+        GROUP BY ac.primary_diagnosis
+        ORDER BY MIN(ac.service_date) DESC
         LIMIT 10
       `);
       
@@ -273,38 +273,38 @@ export function registerContextRoutes(
       const detectionStats = await db.execute(sql`
         SELECT 
           COUNT(*) as total_detections,
-          COUNT(DISTINCT ac.claim_reference) as flagged_claims,
+          COUNT(DISTINCT ac.claim_number) as flagged_claims,
           COUNT(DISTINCT dr.patient_id) as unique_patients,
-          COUNT(DISTINCT ac.claim_reference) FILTER (WHERE dr.composite_risk_level IN ('critical', 'high')) as critical_detections,
+          COUNT(DISTINCT ac.claim_number) FILTER (WHERE dr.composite_risk_level IN ('critical', 'high')) as critical_detections,
           MAX(dr.analyzed_at) as last_analyzed
         FROM fwa_detection_results dr
-        JOIN fwa_analyzed_claims ac ON ac.id = dr.claim_id
+        JOIN claims_v2 ac ON ac.id = dr.claim_id
         WHERE dr.provider_id = ${req.params.providerId}
       `);
       
       // Get claims statistics
       const claimStats = await db.execute(sql`
-        SELECT 
-          COUNT(DISTINCT claim_reference) as total_claims,
+        SELECT
+          COUNT(DISTINCT claim_number) as total_claims,
           COUNT(*) as total_service_lines,
-          COALESCE(SUM(total_amount), 0) as total_amount,
-          COUNT(DISTINCT patient_id) as unique_patients,
-          COUNT(DISTINCT practitioner_license) as affiliated_doctors
-        FROM fwa_analyzed_claims
+          COALESCE(SUM(amount::numeric), 0) as total_amount,
+          COUNT(DISTINCT member_id) as unique_patients,
+          COUNT(DISTINCT practitioner_id) as affiliated_doctors
+        FROM claims_v2
         WHERE provider_id = ${req.params.providerId}
       `);
       
       // Get affiliated doctors from claims
       const doctorsQuery = await db.execute(sql`
         SELECT DISTINCT 
-          ac.practitioner_license as doctor_id,
-          COUNT(DISTINCT ac.claim_reference) as claim_count
-        FROM fwa_analyzed_claims ac
+          ac.practitioner_id as doctor_id,
+          COUNT(DISTINCT ac.claim_number) as claim_count
+        FROM claims_v2 ac
         WHERE ac.provider_id = ${req.params.providerId}
-          AND ac.practitioner_license IS NOT NULL
-          AND ac.practitioner_license != ''
-        GROUP BY ac.practitioner_license
-        ORDER BY COUNT(DISTINCT ac.claim_reference) DESC
+          AND ac.practitioner_id IS NOT NULL
+          AND ac.practitioner_id != ''
+        GROUP BY ac.practitioner_id
+        ORDER BY COUNT(DISTINCT ac.claim_number) DESC
         LIMIT 10
       `);
       
@@ -450,35 +450,35 @@ export function registerContextRoutes(
       const detectionStats = await db.execute(sql`
         SELECT 
           COUNT(*) as total_detections,
-          COUNT(DISTINCT ac.claim_reference) as flagged_claims,
-          COUNT(DISTINCT ac.patient_id) as unique_patients,
-          COUNT(DISTINCT ac.claim_reference) FILTER (WHERE dr.composite_risk_level IN ('critical', 'high')) as critical_detections,
+          COUNT(DISTINCT ac.claim_number) as flagged_claims,
+          COUNT(DISTINCT ac.member_id) as unique_patients,
+          COUNT(DISTINCT ac.claim_number) FILTER (WHERE dr.composite_risk_level IN ('critical', 'high')) as critical_detections,
           MAX(dr.analyzed_at) as last_analyzed
         FROM fwa_detection_results dr
-        JOIN fwa_analyzed_claims ac ON dr.claim_id = ac.id
-        WHERE ac.practitioner_license = ${req.params.doctorId}
+        JOIN claims_v2 ac ON dr.claim_id = ac.id
+        WHERE ac.practitioner_id = ${req.params.doctorId}
       `);
       
       // Get claim statistics - count CLAIMS (by claim_reference) not service lines
       const claimStats = await db.execute(sql`
-        SELECT 
-          COUNT(DISTINCT claim_reference) as total_claims,
+        SELECT
+          COUNT(DISTINCT claim_number) as total_claims,
           COUNT(*) as total_service_lines,
-          COALESCE(SUM(total_amount), 0) as total_amount,
-          COUNT(DISTINCT patient_id) as unique_patients,
+          COALESCE(SUM(amount::numeric), 0) as total_amount,
+          COUNT(DISTINCT member_id) as unique_patients,
           COUNT(DISTINCT provider_id) as facilities
-        FROM fwa_analyzed_claims
-        WHERE practitioner_license = ${req.params.doctorId}
+        FROM claims_v2
+        WHERE practitioner_id = ${req.params.doctorId}
       `);
       
       // Get recent claims for practice patterns with detection data
       const recentClaims = await db.execute(sql`
-        SELECT ac.service_code, ac.service_description, ac.total_amount, ac.claim_occurrence_date,
+        SELECT ac.cpt_codes, ac.description as service_description, ac.amount, ac.service_date,
                dr.composite_score as detection_score, dr.composite_risk_level as claim_risk_level
-        FROM fwa_analyzed_claims ac
+        FROM claims_v2 ac
         LEFT JOIN fwa_detection_results dr ON dr.claim_id = ac.id
-        WHERE ac.practitioner_license = ${req.params.doctorId}
-        ORDER BY ac.claim_occurrence_date DESC
+        WHERE ac.practitioner_id = ${req.params.doctorId}
+        ORDER BY ac.service_date DESC
         LIMIT 10
       `);
       
@@ -486,22 +486,22 @@ export function registerContextRoutes(
       const facilitiesQuery = await db.execute(sql`
         SELECT DISTINCT 
           ac.provider_id as facility_id,
-          COUNT(DISTINCT ac.claim_reference) as claim_count
-        FROM fwa_analyzed_claims ac
-        WHERE ac.practitioner_license = ${req.params.doctorId}
+          COUNT(DISTINCT ac.claim_number) as claim_count
+        FROM claims_v2 ac
+        WHERE ac.practitioner_id = ${req.params.doctorId}
           AND ac.provider_id IS NOT NULL
         GROUP BY ac.provider_id
-        ORDER BY COUNT(DISTINCT ac.claim_reference) DESC
+        ORDER BY COUNT(DISTINCT ac.claim_number) DESC
         LIMIT 10
       `);
       
       // Get specialty code from claims (if available)
       const specialtyQuery = await db.execute(sql`
-        SELECT specialty_code, COUNT(*) as cnt
-        FROM fwa_analyzed_claims
-        WHERE practitioner_license = ${req.params.doctorId}
-          AND specialty_code IS NOT NULL AND specialty_code != ''
-        GROUP BY specialty_code
+        SELECT specialty, COUNT(*) as cnt
+        FROM claims_v2
+        WHERE practitioner_id = ${req.params.doctorId}
+          AND specialty IS NOT NULL AND specialty != ''
+        GROUP BY specialty
         ORDER BY COUNT(*) DESC
         LIMIT 1
       `);
@@ -515,7 +515,7 @@ export function registerContextRoutes(
       
       // Get specialty from query result or map from service types
       const specialtyRow = specialtyQuery.rows[0] as any;
-      const derivedSpecialty = specialtyRow?.specialty_code || null;
+      const derivedSpecialty = specialtyRow?.specialty || null;
       
       const stats = detectionStats.rows[0] || {};
       const claimInfo = claimStats.rows[0] || {};
@@ -586,9 +586,9 @@ export function registerContextRoutes(
         },
         flagsHistory: flagsHistory.length > 0 ? flagsHistory : null,
         recentClaims: recentClaims.rows.map((c: any) => ({
-          service: c.service_description || c.service_code,
-          amount: parseFloat(c.total_amount) || 0,
-          date: c.claim_occurrence_date,
+          service: c.service_description || c.cpt_codes,
+          amount: parseFloat(c.amount) || 0,
+          date: c.service_date,
           detectionScore: parseFloat(c.detection_score) || 0,
           riskLevel: c.claim_risk_level || 'minimal'
         })),

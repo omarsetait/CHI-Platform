@@ -128,7 +128,7 @@ export async function detectPreAuthViolations(claim: any): Promise<FWARuleResult
 // Chronic/Pre-Existing Condition Abuse Detection
 export async function detectChronicAbusePatterns(claim: any): Promise<FWARuleResult[]> {
   const results: FWARuleResult[] = [];
-  const patientId = claim.patientId || claim.insuredId;
+  const patientId = claim.memberId;
 
   // Rule 1: Pre-Existing Condition within Waiting Period
   if (claim.preExistingFlag && claim.policyEffectiveDate) {
@@ -165,9 +165,9 @@ export async function detectChronicAbusePatterns(claim: any): Promise<FWARuleRes
     const recentClaimsResult = await db.execute(sql`
       SELECT COUNT(*)::int as claim_count, 
              COALESCE(SUM(CAST(amount AS DECIMAL)), 0) as total_amount
-      FROM claims
-      WHERE (patient_id = ${patientId} OR insured_id = ${patientId})
-        AND chronic_flag = true
+      FROM claims_v2
+      WHERE member_id = ${patientId}
+        AND is_chronic = true
         AND registration_date >= ${thirtyDaysAgo}
     `);
     
@@ -247,7 +247,7 @@ export async function detectChronicAbusePatterns(claim: any): Promise<FWARuleRes
 // Geographic Anomaly Detection
 export async function detectGeographicAnomalies(claim: any): Promise<FWARuleResult[]> {
   const results: FWARuleResult[] = [];
-  const patientId = claim.patientId || claim.insuredId;
+  const patientId = claim.memberId;
 
   // Rule 1: Multi-Region Claims Same Day
   if (patientId && claim.providerRegion) {
@@ -258,19 +258,19 @@ export async function detectGeographicAnomalies(claim: any): Promise<FWARuleResu
     sameDayEnd.setHours(23, 59, 59, 999);
     
     const sameDayRegions = await db.execute(sql`
-      SELECT DISTINCT provider_region, provider_city, COUNT(*)::int as claim_count
-      FROM claims
-      WHERE (patient_id = ${patientId} OR insured_id = ${patientId})
+      SELECT DISTINCT city, COUNT(*)::int as claim_count
+      FROM claims_v2
+      WHERE member_id = ${patientId}
         AND service_date >= ${sameDayStart}
         AND service_date <= ${sameDayEnd}
-        AND provider_region IS NOT NULL
-      GROUP BY provider_region, provider_city
+        AND city IS NOT NULL
+      GROUP BY city
     `);
     
     const uniqueRegions = sameDayRegions.rows.length;
     
     if (uniqueRegions >= 2) {
-      const regions = sameDayRegions.rows.map(r => `${r.provider_city} (${r.provider_region})`);
+      const regions = sameDayRegions.rows.map(r => `${(r as any).city}`);
       results.push({
         ruleId: "GEO-001",
         ruleName: "Multi-Region Same-Day Claims",
@@ -295,13 +295,13 @@ export async function detectGeographicAnomalies(claim: any): Promise<FWARuleResu
     ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
     
     const regionStats = await db.execute(sql`
-      SELECT provider_region, COUNT(*)::int as claim_count,
+      SELECT city, COUNT(*)::int as claim_count,
              COALESCE(SUM(CAST(amount AS DECIMAL)), 0) as total_amount
-      FROM claims
-      WHERE (patient_id = ${patientId} OR insured_id = ${patientId})
+      FROM claims_v2
+      WHERE member_id = ${patientId}
         AND registration_date >= ${ninetyDaysAgo}
-        AND provider_region IS NOT NULL
-      GROUP BY provider_region
+        AND city IS NOT NULL
+      GROUP BY city
       ORDER BY claim_count DESC
     `);
     
@@ -316,7 +316,7 @@ export async function detectGeographicAnomalies(claim: any): Promise<FWARuleResu
         confidence: 0.75,
         evidence: [
           `Patient has claims in ${regions.length} different regions in 90 days`,
-          `Regions: ${regions.map(r => r.provider_region).join(", ")}`,
+          `Regions: ${regions.map(r => (r as any).city).join(", ")}`,
           `May indicate doctor shopping or treatment seeking behavior`
         ],
         recommendation: "Review for care coordination or potential abuse pattern"
@@ -333,10 +333,10 @@ export async function detectGeographicAnomalies(claim: any): Promise<FWARuleResu
       const outOfNetworkStats = await db.execute(sql`
         SELECT COUNT(*)::int as oon_count,
                COALESCE(SUM(CAST(amount AS DECIMAL)), 0) as oon_amount
-        FROM claims
-        WHERE (patient_id = ${patientId} OR insured_id = ${patientId})
+        FROM claims_v2
+        WHERE member_id = ${patientId}
           AND registration_date >= ${thirtyDaysAgo}
-          AND provider_network ILIKE '%out%'
+          AND provider_type ILIKE '%out%'
       `);
       
       const oonCount = Number(outOfNetworkStats.rows[0]?.oon_count || 0);
@@ -676,7 +676,7 @@ export async function seedEnhancedFWARules(): Promise<number> {
         description: rule.description,
         category: rule.category,
         severity: rule.severity,
-        conditions: rule.conditions,
+        conditions: rule.conditions as any,
         regulatoryReference: rule.regulatoryReference,
         weight: rule.weight,
         isActive: true,

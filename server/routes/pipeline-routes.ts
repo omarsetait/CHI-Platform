@@ -56,9 +56,9 @@ export function registerPipelineRoutes(app: Express) {
   app.get("/api/pipeline/info", async (req, res) => {
     try {
       const stats = await db.execute(sql`
-        SELECT 
-          (SELECT COUNT(*) FROM claims) as total_claims,
-          (SELECT COUNT(*) FROM fwa_analyzed_claims) as analyzed_claims,
+        SELECT
+          (SELECT COUNT(*) FROM claims_v2) as total_claims,
+          (SELECT COUNT(DISTINCT claim_id) FROM fwa_detection_results) as analyzed_claims,
           (SELECT COUNT(*) FROM fwa_detection_results) as claim_detections,
           (SELECT COUNT(*) FROM fwa_provider_detection_results) as provider_detections,
           (SELECT COUNT(*) FROM fwa_patient_detection_results) as patient_detections,
@@ -67,7 +67,7 @@ export function registerPipelineRoutes(app: Express) {
 
       const row = stats.rows[0] as any;
       const progress = getPipelineProgress();
-      
+
       res.json({
         running: pipelineRunning,
         progress,
@@ -241,9 +241,9 @@ export function registerPipelineRoutes(app: Express) {
   app.get("/api/pipeline/stats", async (req, res) => {
     try {
       const stats = await db.execute(sql`
-        SELECT 
-          (SELECT COUNT(*) FROM claims) as total_claims,
-          (SELECT COUNT(*) FROM fwa_analyzed_claims) as analyzed_claims,
+        SELECT
+          (SELECT COUNT(*) FROM claims_v2) as total_claims,
+          (SELECT COUNT(DISTINCT claim_id) FROM fwa_detection_results) as analyzed_claims,
           (SELECT COUNT(*) FROM fwa_detection_results) as claim_detections,
           (SELECT COUNT(*) FROM fwa_provider_detection_results) as provider_detections,
           (SELECT COUNT(*) FROM fwa_patient_detection_results) as patient_detections,
@@ -328,8 +328,8 @@ export function registerPipelineRoutes(app: Express) {
       }
 
       if (target === "all" || target === "analyzed") {
-        await db.execute(sql`TRUNCATE TABLE fwa_analyzed_claims RESTART IDENTITY CASCADE`);
-        clearedTables.push("fwa_analyzed_claims");
+        await db.execute(sql`TRUNCATE TABLE claims_v2 RESTART IDENTITY CASCADE`);
+        clearedTables.push("claims_v2");
       }
 
       lastPipelineResult = null;

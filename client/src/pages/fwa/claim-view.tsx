@@ -105,20 +105,20 @@ function getDiagnosisDescription(code: string | null | undefined): string {
 
 interface ClaimData {
   id: string;
-  claimReference: string;
+  claimNumber: string;
   providerId: string;
   patientId: string;
   practitionerLicense: string;
-  principalDiagnosisCode: string;
+  primaryDiagnosis: string;
   serviceCode: string;
-  serviceDescription: string;
-  totalAmount: number;
+  description: string;
+  amount: number;
   unitPrice: number;
   quantity: number;
   claimType: string;
   city: string;
   providerType: string;
-  claimOccurrenceDate?: string;
+  serviceDate?: string;
 }
 
 interface DetectionResult {
@@ -200,7 +200,7 @@ export default function FWAClaimView() {
               <FileText className="w-8 h-8 text-primary" />
               <div>
                 <h1 className="text-2xl font-bold" data-testid="text-claim-reference">
-                  Claim: {claim.claimReference}
+                  Claim: {claim.claimNumber}
                 </h1>
                 <p className="text-sm text-muted-foreground">
                   ID: {claim.id}
@@ -228,7 +228,7 @@ export default function FWAClaimView() {
               <span className="text-sm text-muted-foreground">Amount</span>
             </div>
             <p className="text-2xl font-bold" data-testid="text-amount">
-              {formatCurrency(claim.totalAmount)}
+              {formatCurrency(claim.amount)}
             </p>
           </CardContent>
         </Card>
@@ -289,25 +289,25 @@ export default function FWAClaimView() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <p className="text-sm text-muted-foreground">Diagnosis Code</p>
-                  <p className="font-medium">{claim.principalDiagnosisCode || "-"}</p>
-                  {getDiagnosisDescription(claim.principalDiagnosisCode) && (
+                  <p className="font-medium">{claim.primaryDiagnosis || "-"}</p>
+                  {getDiagnosisDescription(claim.primaryDiagnosis) && (
                     <p className="text-xs text-muted-foreground mt-0.5">
-                      {getDiagnosisDescription(claim.principalDiagnosisCode)}
+                      {getDiagnosisDescription(claim.primaryDiagnosis)}
                     </p>
                   )}
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Service Code</p>
                   <p className="font-medium">{claim.serviceCode || "-"}</p>
-                  {claim.serviceDescription && (
+                  {claim.description && (
                     <p className="text-xs text-muted-foreground mt-0.5">
-                      {claim.serviceDescription}
+                      {claim.description}
                     </p>
                   )}
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Service Description</p>
-                  <p className="font-medium">{claim.serviceDescription || "-"}</p>
+                  <p className="font-medium">{claim.description || "-"}</p>
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Claim Type</p>
@@ -315,7 +315,7 @@ export default function FWAClaimView() {
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Unit Price</p>
-                  <p className="font-medium">{formatCurrency(claim.unitPrice || claim.totalAmount)}</p>
+                  <p className="font-medium">{formatCurrency(claim.unitPrice || claim.amount)}</p>
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Quantity</p>

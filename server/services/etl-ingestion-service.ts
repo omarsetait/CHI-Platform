@@ -16,31 +16,30 @@ import { z } from "zod";
 export const claimIngestionSchema = z.object({
   id: z.string().optional(),
   claimNumber: z.string().min(1, "Claim number required"),
-  policyNumber: z.string().min(1, "Policy number required"),
-  registrationDate: z.string().or(z.date()).transform(v => new Date(v)),
-  claimType: z.string().min(1, "Claim type required"),
-  hospital: z.string().min(1, "Hospital required"),
+  registrationDate: z.string().or(z.date()).transform(v => new Date(v)).optional().nullable(),
+  claimType: z.string().optional().nullable(),
+  hospital: z.string().optional().nullable(),
   amount: z.number().or(z.string()).transform(v => Number(v)),
   outlierScore: z.number().or(z.string()).transform(v => Number(v)).default(0),
   description: z.string().optional().nullable(),
-  icd: z.string().optional().nullable(),
+  primaryDiagnosis: z.string().optional().nullable(),
   hasSurgery: z.string().optional().nullable(),
   surgeryFee: z.number().or(z.string()).transform(v => v ? Number(v) : null).optional().nullable(),
   hasIcu: z.string().optional().nullable(),
   lengthOfStay: z.number().optional().nullable(),
-  similarClaims: z.number().optional().nullable(),
-  similarClaimsInHospital: z.number().optional().nullable(),
   providerId: z.string().optional().nullable(),
-  providerName: z.string().optional().nullable(),
-  patientId: z.string().optional().nullable(),
-  patientName: z.string().optional().nullable(),
+  memberId: z.string().optional().nullable(),
   serviceDate: z.string().or(z.date()).transform(v => v ? new Date(v) : null).optional().nullable(),
   status: z.string().default("pending"),
   category: z.string().optional().nullable(),
   flagged: z.boolean().default(false),
   flagReason: z.string().optional().nullable(),
   cptCodes: z.array(z.string()).optional().nullable(),
-  diagnosisCodes: z.array(z.string()).optional().nullable(),
+  icdCodes: z.array(z.string()).optional().nullable(),
+  specialty: z.string().optional().nullable(),
+  practitionerId: z.string().optional().nullable(),
+  city: z.string().optional().nullable(),
+  providerType: z.string().optional().nullable(),
 });
 
 export const providerIngestionSchema = z.object({
@@ -169,7 +168,7 @@ const claimQualityRules: DataQualityRule[] = [
   },
   {
     name: "icd_format",
-    check: (r) => !r.icd || /^[A-Z]\d{2}(\.\d{1,2})?$/i.test(r.icd),
+    check: (r) => !r.primaryDiagnosis || /^[A-Z]\d{2}(\.\d{1,2})?$/i.test(r.primaryDiagnosis),
     message: "ICD code format appears invalid",
     severity: "warning"
   },
@@ -339,7 +338,7 @@ export async function bulkIngestClaims(
     if (options.skipDuplicates && deduplicatedRecords.length > 0) {
       const claimNumbers = deduplicatedRecords.map(r => r.claimNumber);
       const existing = await db.execute(
-        sql`SELECT claim_number FROM claims WHERE claim_number = ANY(ARRAY[${sql.join(claimNumbers.map(cn => sql`${cn}`), sql`,`)}]::text[])`
+        sql`SELECT claim_number FROM claims_v2 WHERE claim_number = ANY(ARRAY[${sql.join(claimNumbers.map(cn => sql`${cn}`), sql`,`)}]::text[])`
       );
       const existingSet = new Set((existing.rows as any[]).map(r => r.claim_number));
       recordsToInsert = deduplicatedRecords.filter(r => !existingSet.has(r.claimNumber));
@@ -363,31 +362,30 @@ export async function bulkIngestClaims(
         const values = batch.map(r => ({
           id: r.id,
           claimNumber: r.claimNumber,
-          policyNumber: r.policyNumber,
           registrationDate: r.registrationDate,
           claimType: r.claimType,
           hospital: r.hospital,
           amount: String(r.amount),
           outlierScore: String(r.outlierScore || 0),
           description: r.description,
-          icd: r.icd,
+          primaryDiagnosis: r.primaryDiagnosis,
           hasSurgery: r.hasSurgery,
           surgeryFee: r.surgeryFee ? String(r.surgeryFee) : null,
           hasIcu: r.hasIcu,
           lengthOfStay: r.lengthOfStay,
-          similarClaims: r.similarClaims,
-          similarClaimsInHospital: r.similarClaimsInHospital,
           providerId: r.providerId,
-          providerName: r.providerName,
-          patientId: r.patientId,
-          patientName: r.patientName,
+          memberId: r.memberId,
+          practitionerId: r.practitionerId,
+          specialty: r.specialty,
+          city: r.city,
+          providerType: r.providerType,
           serviceDate: r.serviceDate,
           status: r.status,
           category: r.category,
           flagged: r.flagged,
           flagReason: r.flagReason,
           cptCodes: r.cptCodes,
-          diagnosisCodes: r.diagnosisCodes,
+          icdCodes: r.icdCodes,
         }));
 
         await db.insert(claims).values(values).onConflictDoNothing();
@@ -407,31 +405,30 @@ export async function bulkIngestClaims(
             await db.insert(claims).values({
               id: record.id,
               claimNumber: record.claimNumber,
-              policyNumber: record.policyNumber,
               registrationDate: record.registrationDate,
               claimType: record.claimType,
               hospital: record.hospital,
               amount: String(record.amount),
               outlierScore: String(record.outlierScore || 0),
               description: record.description,
-              icd: record.icd,
+              primaryDiagnosis: record.primaryDiagnosis,
               hasSurgery: record.hasSurgery,
               surgeryFee: record.surgeryFee ? String(record.surgeryFee) : null,
               hasIcu: record.hasIcu,
               lengthOfStay: record.lengthOfStay,
-              similarClaims: record.similarClaims,
-              similarClaimsInHospital: record.similarClaimsInHospital,
               providerId: record.providerId,
-              providerName: record.providerName,
-              patientId: record.patientId,
-              patientName: record.patientName,
+              memberId: record.memberId,
+              practitionerId: record.practitionerId,
+              specialty: record.specialty,
+              city: record.city,
+              providerType: record.providerType,
               serviceDate: record.serviceDate,
               status: record.status,
               category: record.category,
               flagged: record.flagged,
               flagReason: record.flagReason,
               cptCodes: record.cptCodes,
-              diagnosisCodes: record.diagnosisCodes,
+              icdCodes: record.icdCodes,
             }).onConflictDoNothing();
             successCount++;
           } catch (err: any) {
@@ -620,17 +617,13 @@ export async function bulkIngestDoctors(
     for (let i = 0; i < unique.length; i += batchSize) {
       const batch = unique.slice(i, i + batchSize);
       try {
-        await db.insert(doctors).values(batch.map(r => ({
-          id: r.id,
-          name: r.name,
-          nameAr: r.nameAr,
-          licenseNumber: r.licenseNumber,
+        await db.insert(fwaHighRiskDoctors).values(batch.map(r => ({
+          doctorId: r.licenseNumber || r.id,
+          doctorName: r.name,
           specialty: r.specialty,
-          providerId: r.providerId,
-          providerName: r.providerName,
-          yearsExperience: r.yearsExperience,
-          qualifications: r.qualifications,
-          status: r.status,
+          licenseNumber: r.licenseNumber,
+          organization: r.providerName,
+          riskScore: "0.00",
         }))).onConflictDoNothing();
         successCount += batch.length;
       } catch (err: any) {
@@ -701,17 +694,11 @@ export async function bulkIngestPatients(
     for (let i = 0; i < unique.length; i += batchSize) {
       const batch = unique.slice(i, i + batchSize);
       try {
-        await db.insert(patients).values(batch.map(r => ({
-          id: r.id,
-          nationalId: r.nationalId,
-          name: r.name,
-          dateOfBirth: r.dateOfBirth,
-          gender: r.gender,
-          city: r.city,
-          region: r.region,
-          insuranceId: r.insuranceId,
-          insuranceClass: r.insuranceClass,
-          riskCategory: r.riskCategory,
+        await db.insert(fwaHighRiskPatients).values(batch.map(r => ({
+          patientId: r.nationalId || r.id,
+          patientName: r.name,
+          memberId: r.insuranceId,
+          riskScore: "0.00",
         }))).onConflictDoNothing();
         successCount += batch.length;
       } catch (err: any) {
@@ -776,7 +763,7 @@ export async function getDatabaseStats(): Promise<{
   try {
     // Table counts
     const countQueries = await Promise.all([
-      db.execute(sql`SELECT COUNT(*) as count FROM claims`),
+      db.execute(sql`SELECT COUNT(*) as count FROM claims_v2`),
       db.execute(sql`SELECT COUNT(*) as count FROM providers`),
       db.execute(sql`SELECT COUNT(*) as count FROM doctors`),
       db.execute(sql`SELECT COUNT(*) as count FROM patients`),

@@ -1,5 +1,5 @@
 import { db } from "../db";
-import { claims, fwaAnalyzedClaims, fwaDetectionResults } from "@shared/schema";
+import { claims, fwaDetectionResults } from "@shared/schema";
 import { eq, sql, inArray } from "drizzle-orm";
 import { getDetectionThresholds } from "./detection-threshold-service";
 import { runFastDetection, runRuleEngineDetection, runStatisticalDetection, runUnsupervisedDetection } from "./fwa-detection-engine";
@@ -126,7 +126,7 @@ export async function runBulkSqlDetection(batchSize: number = 100000): Promise<{
   try {
     // Count claims without detection results
     const unprocessedCount = await db.execute(sql`
-      SELECT COUNT(*) as count FROM fwa_analyzed_claims ac
+      SELECT COUNT(*) as count FROM claims_v2 ac
       WHERE NOT EXISTS (SELECT 1 FROM fwa_detection_results dr WHERE dr.claim_id = ac.id)
     `);
     const remaining = parseInt((unprocessedCount.rows[0] as any).count);
@@ -142,30 +142,30 @@ export async function runBulkSqlDetection(batchSize: number = 100000): Promise<{
       const result = await db.execute(sql`
         WITH pop_stats AS (
           SELECT 
-            AVG(total_amount) as avg_amount,
-            STDDEV(total_amount) as std_amount
-          FROM fwa_analyzed_claims
-          WHERE total_amount IS NOT NULL AND total_amount > 0
+            AVG(amount::numeric) as avg_amount,
+            STDDEV(amount::numeric) as std_amount
+          FROM claims_v2
+          WHERE amount IS NOT NULL AND amount::numeric > 0
         ),
         claim_data AS (
           SELECT 
-            ac.id, ac.provider_id, ac.patient_id, ac.total_amount,
+            ac.id, ac.provider_id, ac.member_id, ac.amount,
             ac.is_chronic, ac.is_pre_existing, ac.is_newborn, ac.is_pre_authorized, ac.length_of_stay,
-            (ac.total_amount - ps.avg_amount) / NULLIF(ps.std_amount, 0) as z_score
-          FROM fwa_analyzed_claims ac, pop_stats ps
+            (ac.amount - ps.avg_amount) / NULLIF(ps.std_amount, 0) as z_score
+          FROM claims_v2 ac, pop_stats ps
           WHERE NOT EXISTS (SELECT 1 FROM fwa_detection_results dr WHERE dr.claim_id = ac.id)
           LIMIT ${batchSize}
         ),
         detection_calc AS (
           SELECT 
-            cd.id, cd.provider_id, cd.patient_id,
+            cd.id, cd.provider_id, cd.member_id,
             -- Rule Engine Score: Based on detected rule violations
             LEAST(100, 
-              CASE WHEN cd.is_chronic AND cd.total_amount > 10000 THEN 20 ELSE 0 END +
+              CASE WHEN cd.is_chronic AND cd.amount > 10000 THEN 20 ELSE 0 END +
               CASE WHEN cd.is_pre_existing THEN 15 ELSE 0 END +
-              CASE WHEN cd.is_newborn AND cd.total_amount > 50000 THEN 25 ELSE 0 END +
+              CASE WHEN cd.is_newborn AND cd.amount > 50000 THEN 25 ELSE 0 END +
               CASE WHEN cd.is_pre_authorized = false THEN 30 ELSE 0 END +
-              CASE WHEN COALESCE(cd.length_of_stay, 0) = 0 AND cd.total_amount > 5000 THEN 35 ELSE 0 END
+              CASE WHEN COALESCE(cd.length_of_stay, 0) = 0 AND cd.amount > 5000 THEN 35 ELSE 0 END
             )::numeric as rule_score,
             -- Statistical Score: Z-score based
             LEAST(100, GREATEST(0, 
@@ -189,7 +189,7 @@ export async function runBulkSqlDetection(batchSize: number = 100000): Promise<{
           matched_rules, risk_factors, recommended_action, analyzed_at
         )
         SELECT 
-          dc.id, dc.provider_id, dc.patient_id,
+          dc.id, dc.provider_id, dc.member_id,
           dc.rule_score, dc.stat_score, dc.unsup_score, dc.rag_llm_score, dc.semantic_score,
           ROUND((dc.rule_score * 0.30 + dc.stat_score * 0.22 + dc.unsup_score * 0.18 + dc.rag_llm_score * 0.15 + dc.semantic_score * 0.15)::numeric, 2),
           CASE 
@@ -271,43 +271,43 @@ export async function runBulkSemanticDetection(batchSize: number = 50000): Promi
       WITH clinical_mapping AS (
         SELECT 
           dr.claim_id,
-          ac.principal_diagnosis_code,
-          ac.service_code,
-          ac.service_description,
+          ac.primary_diagnosis,
+          ac.cpt_codes,
+          ac.description,
           -- Extract ICD-10 chapter (first letter or first 3 chars)
-          UPPER(LEFT(COALESCE(ac.principal_diagnosis_code, ''), 1)) as icd_chapter,
+          UPPER(LEFT(COALESCE(ac.primary_diagnosis, ''), 1)) as icd_chapter,
           -- Determine service type from description/code
           CASE 
-            WHEN LOWER(ac.service_description) LIKE '%tablet%' OR LOWER(ac.service_description) LIKE '%capsule%' 
-                 OR LOWER(ac.service_description) LIKE '%mg%' OR LOWER(ac.service_description) LIKE '%injection%'
+            WHEN LOWER(ac.description) LIKE '%tablet%' OR LOWER(ac.description) LIKE '%capsule%' 
+                 OR LOWER(ac.description) LIKE '%mg%' OR LOWER(ac.description) LIKE '%injection%'
                  THEN 'medication'
-            WHEN LOWER(ac.service_description) LIKE '%surgery%' OR LOWER(ac.service_description) LIKE '%repair%'
-                 OR LOWER(ac.service_description) LIKE '%removal%' OR LOWER(ac.service_description) LIKE '%replacement%'
+            WHEN LOWER(ac.description) LIKE '%surgery%' OR LOWER(ac.description) LIKE '%repair%'
+                 OR LOWER(ac.description) LIKE '%removal%' OR LOWER(ac.description) LIKE '%replacement%'
                  THEN 'surgery'
-            WHEN LOWER(ac.service_description) LIKE '%x-ray%' OR LOWER(ac.service_description) LIKE '%ct%'
-                 OR LOWER(ac.service_description) LIKE '%mri%' OR LOWER(ac.service_description) LIKE '%ultrasound%'
-                 OR LOWER(ac.service_description) LIKE '%scan%'
+            WHEN LOWER(ac.description) LIKE '%x-ray%' OR LOWER(ac.description) LIKE '%ct%'
+                 OR LOWER(ac.description) LIKE '%mri%' OR LOWER(ac.description) LIKE '%ultrasound%'
+                 OR LOWER(ac.description) LIKE '%scan%'
                  THEN 'imaging'
-            WHEN LOWER(ac.service_description) LIKE '%lab%' OR LOWER(ac.service_description) LIKE '%test%'
-                 OR LOWER(ac.service_description) LIKE '%blood%' OR LOWER(ac.service_description) LIKE '%culture%'
+            WHEN LOWER(ac.description) LIKE '%lab%' OR LOWER(ac.description) LIKE '%test%'
+                 OR LOWER(ac.description) LIKE '%blood%' OR LOWER(ac.description) LIKE '%culture%'
                  THEN 'laboratory'
-            WHEN LOWER(ac.service_description) LIKE '%consult%' OR LOWER(ac.service_description) LIKE '%evaluation%'
-                 OR LOWER(ac.service_description) LIKE '%visit%' OR LOWER(ac.service_description) LIKE '%exam%'
+            WHEN LOWER(ac.description) LIKE '%consult%' OR LOWER(ac.description) LIKE '%evaluation%'
+                 OR LOWER(ac.description) LIKE '%visit%' OR LOWER(ac.description) LIKE '%exam%'
                  THEN 'evaluation'
-            WHEN LOWER(ac.service_description) LIKE '%therapy%' OR LOWER(ac.service_description) LIKE '%rehabilitation%'
+            WHEN LOWER(ac.description) LIKE '%therapy%' OR LOWER(ac.description) LIKE '%rehabilitation%'
                  THEN 'therapy'
             ELSE 'other'
           END as service_type
         FROM fwa_detection_results dr
-        JOIN fwa_analyzed_claims ac ON dr.claim_id = ac.id
+        JOIN claims_v2 ac ON dr.claim_id = ac.id
         WHERE dr.semantic_score <= 5
-          AND ac.principal_diagnosis_code IS NOT NULL
-          AND ac.service_description IS NOT NULL
+          AND ac.primary_diagnosis IS NOT NULL
+          AND ac.description IS NOT NULL
       ),
       semantic_scores AS (
         SELECT 
           claim_id,
-          principal_diagnosis_code,
+          primary_diagnosis,
           service_type,
           icd_chapter,
           -- Calculate semantic score based on clinical appropriateness
@@ -383,9 +383,9 @@ export async function runBulkRagLlmDetection(batchSize: number = 50000): Promise
       WITH claim_patterns AS (
         SELECT 
           dr.claim_id,
-          ac.principal_diagnosis_code,
-          ac.service_description,
-          ac.total_amount,
+          ac.primary_diagnosis,
+          ac.description,
+          ac.amount,
           ac.is_chronic,
           ac.is_pre_existing,
           ac.is_newborn,
@@ -394,16 +394,16 @@ export async function runBulkRagLlmDetection(batchSize: number = 50000): Promise
           ac.claim_type,
           ac.provider_id,
           -- Count claims from same provider in same day
-          (SELECT COUNT(*) FROM fwa_analyzed_claims ac2 
+          (SELECT COUNT(*) FROM claims_v2 ac2 
            WHERE ac2.provider_id = ac.provider_id 
-           AND ac2.claim_occurrence_date = ac.claim_occurrence_date) as same_day_claims,
+           AND ac2.service_date = ac.service_date) as same_day_claims,
           -- Check for duplicate service descriptions
-          (SELECT COUNT(*) FROM fwa_analyzed_claims ac2 
-           WHERE ac2.patient_id = ac.patient_id 
-           AND ac2.service_description = ac.service_description
+          (SELECT COUNT(*) FROM claims_v2 ac2 
+           WHERE ac2.member_id = ac.member_id 
+           AND ac2.description = ac.description
            AND ac2.id != ac.id) as duplicate_services
         FROM fwa_detection_results dr
-        JOIN fwa_analyzed_claims ac ON dr.claim_id = ac.id
+        JOIN claims_v2 ac ON dr.claim_id = ac.id
         WHERE dr.rag_llm_score <= 5
       ),
       rag_scores AS (
@@ -414,8 +414,8 @@ export async function runBulkRagLlmDetection(batchSize: number = 50000): Promise
             -- Base score
             8 +
             -- High-value claims warrant review
-            CASE WHEN total_amount > 50000 THEN 20 ELSE 0 END +
-            CASE WHEN total_amount > 100000 THEN 15 ELSE 0 END +
+            CASE WHEN amount::numeric > 50000 THEN 20 ELSE 0 END +
+            CASE WHEN amount::numeric > 100000 THEN 15 ELSE 0 END +
             -- Duplicate services are suspicious
             CASE WHEN duplicate_services > 2 THEN 25 ELSE duplicate_services * 8 END +
             -- High volume same-day claims
@@ -423,7 +423,7 @@ export async function runBulkRagLlmDetection(batchSize: number = 50000): Promise
             -- Pre-authorization bypass is a red flag
             CASE WHEN is_pre_authorized = false THEN 15 ELSE 0 END +
             -- Chronic with high amount
-            CASE WHEN is_chronic AND total_amount > 20000 THEN 12 ELSE 0 END +
+            CASE WHEN is_chronic AND amount::numeric > 20000 THEN 12 ELSE 0 END +
             -- Zero LOS inpatient
             CASE WHEN claim_type = 'inpatient' AND COALESCE(length_of_stay, 0) = 0 THEN 18 ELSE 0 END +
             -- Random variation to simulate AI analysis
@@ -610,95 +610,22 @@ export async function runFullPipeline(claimIds?: string[]): Promise<PipelineResu
 }
 
 async function preprocessClaims(claimIds?: string[]): Promise<{ processed: number; errors: number }> {
-  let processed = 0;
-  let errorCount = 0;
-
+  // With claims, data is already in claims_v2 table - no separate preprocessing needed.
+  // Just count the claims that will be processed.
   try {
-    let claimsToProcess;
+    let count: number;
     if (claimIds && claimIds.length > 0) {
-      claimsToProcess = await db.select().from(claims).where(inArray(claims.id, claimIds));
+      const result = await db.select().from(claims).where(inArray(claims.id, claimIds));
+      count = result.length;
     } else {
-      const existingAnalyzed = await db.execute(sql`SELECT id FROM fwa_analyzed_claims`);
-      const existingIds = new Set((existingAnalyzed.rows as any[]).map(r => r.id));
-
-      const allClaims = await db.select().from(claims);
-      claimsToProcess = allClaims.filter(c => !existingIds.has(c.id));
+      const result = await db.select().from(claims);
+      count = result.length;
     }
-
-    console.log(`[Preprocessing] Processing ${claimsToProcess.length} claims...`);
-
-    for (const claim of claimsToProcess) {
-      try {
-        const existingCheck = await db.execute(sql`
-          SELECT id FROM fwa_analyzed_claims WHERE id = ${claim.id} LIMIT 1
-        `);
-
-        if (existingCheck.rows.length > 0) {
-          continue;
-        }
-
-        // Use raw SQL to insert with correct field mapping
-        await db.execute(sql`
-          INSERT INTO fwa_analyzed_claims (
-            id, claim_reference, batch_number, patient_id, date_of_birth, gender,
-            is_newborn, is_chronic, is_pre_existing, policy_no, policy_effective_date,
-            policy_expiry_date, group_no, provider_id, practitioner_license, specialty_code,
-            city, provider_type, claim_type, claim_occurrence_date, claim_benefit_code,
-            length_of_stay, is_pre_authorized, authorization_id, principal_diagnosis_code,
-            secondary_diagnosis_codes, service_type, service_code, service_description,
-            unit_price, quantity, total_amount, patient_share, original_status, ai_status,
-            source_file, created_at
-          ) VALUES (
-            ${claim.id},
-            ${claim.claimNumber || claim.id},
-            ${claim.lotNo?.toString() || null},
-            ${claim.patientId || 'UNKNOWN'},
-            ${claim.dateOfBirth ? new Date(claim.dateOfBirth) : null},
-            ${claim.gender || null},
-            ${claim.newbornFlag || false},
-            ${claim.chronicFlag || false},
-            ${claim.preExistingFlag || false},
-            ${claim.policyNumber || null},
-            ${claim.policyEffectiveDate ? new Date(claim.policyEffectiveDate) : null},
-            ${claim.policyExpiryDate ? new Date(claim.policyExpiryDate) : null},
-            ${claim.groupNo || null},
-            ${claim.hcpId || claim.providerId || 'UNKNOWN'},
-            ${claim.practitionerId || null},
-            ${claim.specialtyCode || null},
-            ${claim.providerCity || null},
-            ${claim.providerType || null},
-            ${claim.claimType || null},
-            ${claim.occurrenceDate ? new Date(claim.occurrenceDate) : null},
-            ${claim.claimBenefit || null},
-            ${claim.lengthOfStay || null},
-            ${claim.isPreAuthorized || false},
-            ${claim.preAuthorizationId || null},
-            ${claim.diagnosisCodes?.[0] || claim.icd || null},
-            NULL,
-            ${claim.serviceType || null},
-            ${claim.serviceCode || claim.cptCodes?.[0] || null},
-            ${claim.serviceDescription || claim.description || null},
-            ${claim.unitPrice?.toString() || null},
-            ${claim.rQuantity || null},
-            ${claim.amount?.toString() || claim.serviceClaimedAmount?.toString() || null},
-            ${claim.patientShareLc?.toString() || null},
-            ${claim.adjudicationStatus || null},
-            ${claim.aiStatus || null},
-            'pipeline_import',
-            NOW()
-          )
-        `);
-        processed++;
-      } catch (err) {
-        errorCount++;
-        console.error(`[Preprocessing] Error processing claim ${claim.id}:`, err);
-      }
-    }
-
-    return { processed, errors: errorCount };
+    console.log(`[Preprocessing] ${count} claims ready in claims_v2 (no migration needed)`);
+    return { processed: count, errors: 0 };
   } catch (error) {
     console.error("[Preprocessing] Fatal error:", error);
-    return { processed, errors: errorCount + 1 };
+    return { processed: 0, errors: 1 };
   }
 }
 
@@ -729,20 +656,16 @@ async function extractAndUpsertEntities(): Promise<{ providers: number; patients
         MAX(network_tier) as network_tier,
         NOW()
       FROM (
-        SELECT 
+        SELECT
           COALESCE(c.provider_id, c.hospital) as provider_id,
-          COALESCE(c.provider_name, c.hospital, 'Unknown Provider') as name,
+          COALESCE(c.hospital, 'Unknown Provider') as name,
           c.specialty as specialty,
           c.hospital as organization,
-          c.provider_city as city,
-          c.provider_region as region,
-          COALESCE(c.provider_network, 'unknown') as contract_status,
-          CASE 
-            WHEN c.provider_network = 'preferred' THEN 'tier1'
-            WHEN c.provider_network = 'network' THEN 'tier2'
-            ELSE 'tier3'
-          END as network_tier
-        FROM claims c
+          c.city as city,
+          NULL::text as region,
+          'unknown' as contract_status,
+          'tier3' as network_tier
+        FROM claims_v2 c
         WHERE c.provider_id IS NOT NULL OR c.hospital IS NOT NULL
       ) sub
       WHERE provider_id IS NOT NULL AND provider_id != ''
@@ -783,19 +706,19 @@ async function extractAndUpsertEntities(): Promise<{ providers: number; patients
         jsonb_build_object('total_claims', 0, 'total_amount', 0) as claims_summary,
         NOW()
       FROM (
-        SELECT 
-          COALESCE(c.patient_id, c.insured_id) as patient_id,
-          COALESCE(c.patient_name, 'Patient ' || COALESCE(c.patient_id, c.insured_id)) as patient_name,
-          c.date_of_birth,
-          c.gender,
-          c.policy_number,
-          COALESCE(c.policy_effective_date, c.registration_date) as member_since,
-          COALESCE(c.chronic_flag, false) as chronic_flag,
-          COALESCE(c.maternity_flag, false) as maternity_flag,
-          COALESCE(c.pre_existing_flag, false) as pre_existing_flag,
-          COALESCE(c.newborn_flag, false) as newborn_flag
-        FROM claims c
-        WHERE c.patient_id IS NOT NULL OR c.insured_id IS NOT NULL
+        SELECT
+          c.member_id as patient_id,
+          'Patient ' || c.member_id as patient_name,
+          NULL::timestamp as date_of_birth,
+          NULL::text as gender,
+          NULL::text as policy_number,
+          COALESCE(c.policy_effective_date::timestamp, c.registration_date) as member_since,
+          COALESCE(c.is_chronic, false) as chronic_flag,
+          COALESCE(c.is_maternity, false) as maternity_flag,
+          COALESCE(c.is_pre_existing, false) as pre_existing_flag,
+          COALESCE(c.is_newborn, false) as newborn_flag
+        FROM claims_v2 c
+        WHERE c.member_id IS NOT NULL
       ) sub
       WHERE patient_id IS NOT NULL AND patient_id != ''
       GROUP BY patient_id
@@ -828,17 +751,16 @@ async function extractAndUpsertEntities(): Promise<{ providers: number; patients
         MAX(primary_facility_name) as primary_facility_name,
         'low'::entity_risk_level as risk_level,
         0 as risk_score,
-        jsonb_build_object('specialty_code', MAX(specialty_code)) as practice_patterns,
+        jsonb_build_object('specialty', MAX(specialty)) as practice_patterns,
         NOW()
       FROM (
-        SELECT 
+        SELECT
           c.practitioner_id as doctor_id,
           COALESCE('Dr. ' || c.practitioner_id, 'Unknown Doctor') as doctor_name,
           c.specialty,
           COALESCE(c.provider_id, c.hospital) as primary_facility_id,
-          c.hospital as primary_facility_name,
-          c.specialty_code
-        FROM claims c
+          c.hospital as primary_facility_name
+        FROM claims_v2 c
         WHERE c.practitioner_id IS NOT NULL
       ) sub
       WHERE doctor_id IS NOT NULL AND doctor_id != ''
@@ -865,11 +787,11 @@ async function extractAndUpsertEntities(): Promise<{ providers: number; patients
           'first_claim_date', MIN(c.registration_date),
           'last_claim_date', MAX(c.registration_date)
         )
-        FROM claims c
-        WHERE COALESCE(c.patient_id, c.insured_id) = p.patient_id
+        FROM claims_v2 c
+        WHERE c.member_id = p.patient_id
       )
       WHERE EXISTS (
-        SELECT 1 FROM claims c WHERE COALESCE(c.patient_id, c.insured_id) = p.patient_id
+        SELECT 1 FROM claims_v2 c WHERE c.member_id = p.patient_id
       )
     `);
 
@@ -895,21 +817,21 @@ async function computeEntityFeatures(): Promise<{ providers: number; patients: n
         claim_count, total_amount, avg_claim_amount, max_claim_amount,
         unique_patients, unique_doctors, preauth_ratio, z_score, created_at
       )
-      SELECT 
+      SELECT
         'provider',
         provider_id,
-        COALESCE(MIN(claim_occurrence_date), NOW() - INTERVAL '1 year'),
-        COALESCE(MAX(claim_occurrence_date), NOW()),
+        COALESCE(MIN(service_date), NOW() - INTERVAL '1 year'),
+        COALESCE(MAX(service_date), NOW()),
         COUNT(*),
-        SUM(COALESCE(total_amount, 0)),
-        AVG(COALESCE(total_amount, 0)),
-        MAX(COALESCE(total_amount, 0)),
-        COUNT(DISTINCT patient_id),
-        COUNT(DISTINCT practitioner_license),
+        SUM(COALESCE(amount::numeric, 0)),
+        AVG(COALESCE(amount::numeric, 0)),
+        MAX(COALESCE(amount::numeric, 0)),
+        COUNT(DISTINCT member_id),
+        COUNT(DISTINCT practitioner_id),
         AVG(CASE WHEN is_pre_authorized THEN 1.0 ELSE 0.0 END),
         (COUNT(*) - AVG(COUNT(*)) OVER()) / NULLIF(STDDEV(COUNT(*)) OVER(), 0),
         NOW()
-      FROM fwa_analyzed_claims
+      FROM claims_v2
       WHERE provider_id IS NOT NULL AND provider_id != ''
       GROUP BY provider_id
       ON CONFLICT (entity_type, entity_id) DO UPDATE SET
@@ -931,21 +853,21 @@ async function computeEntityFeatures(): Promise<{ providers: number; patients: n
         claim_count, total_amount, avg_claim_amount, max_claim_amount,
         unique_providers, unique_doctors, created_at
       )
-      SELECT 
+      SELECT
         'patient',
-        patient_id,
-        COALESCE(MIN(claim_occurrence_date), NOW() - INTERVAL '1 year'),
-        COALESCE(MAX(claim_occurrence_date), NOW()),
+        member_id,
+        COALESCE(MIN(service_date), NOW() - INTERVAL '1 year'),
+        COALESCE(MAX(service_date), NOW()),
         COUNT(*),
-        SUM(COALESCE(total_amount, 0)),
-        AVG(COALESCE(total_amount, 0)),
-        MAX(COALESCE(total_amount, 0)),
+        SUM(COALESCE(amount::numeric, 0)),
+        AVG(COALESCE(amount::numeric, 0)),
+        MAX(COALESCE(amount::numeric, 0)),
         COUNT(DISTINCT provider_id),
-        COUNT(DISTINCT practitioner_license),
+        COUNT(DISTINCT practitioner_id),
         NOW()
-      FROM fwa_analyzed_claims
-      WHERE patient_id IS NOT NULL AND patient_id != ''
-      GROUP BY patient_id
+      FROM claims_v2
+      WHERE member_id IS NOT NULL AND member_id != ''
+      GROUP BY member_id
       ON CONFLICT (entity_type, entity_id) DO UPDATE SET
         claim_count = EXCLUDED.claim_count,
         total_amount = EXCLUDED.total_amount,
@@ -964,21 +886,21 @@ async function computeEntityFeatures(): Promise<{ providers: number; patients: n
         claim_count, total_amount, avg_claim_amount, max_claim_amount,
         unique_patients, unique_providers, created_at
       )
-      SELECT 
+      SELECT
         'doctor',
-        practitioner_license,
-        COALESCE(MIN(claim_occurrence_date), NOW() - INTERVAL '1 year'),
-        COALESCE(MAX(claim_occurrence_date), NOW()),
+        practitioner_id,
+        COALESCE(MIN(service_date), NOW() - INTERVAL '1 year'),
+        COALESCE(MAX(service_date), NOW()),
         COUNT(*),
-        SUM(COALESCE(total_amount, 0)),
-        AVG(COALESCE(total_amount, 0)),
-        MAX(COALESCE(total_amount, 0)),
-        COUNT(DISTINCT patient_id),
+        SUM(COALESCE(amount::numeric, 0)),
+        AVG(COALESCE(amount::numeric, 0)),
+        MAX(COALESCE(amount::numeric, 0)),
+        COUNT(DISTINCT member_id),
         COUNT(DISTINCT provider_id),
         NOW()
-      FROM fwa_analyzed_claims
-      WHERE practitioner_license IS NOT NULL AND practitioner_license != ''
-      GROUP BY practitioner_license
+      FROM claims_v2
+      WHERE practitioner_id IS NOT NULL AND practitioner_id != ''
+      GROUP BY practitioner_id
       ON CONFLICT (entity_type, entity_id) DO UPDATE SET
         claim_count = EXCLUDED.claim_count,
         total_amount = EXCLUDED.total_amount,
@@ -1006,11 +928,11 @@ async function runClaimDetection(claimIds?: string[]): Promise<{ processed: numb
   try {
     let claimsToAnalyze;
     if (claimIds && claimIds.length > 0) {
-      claimsToAnalyze = await db.select().from(fwaAnalyzedClaims)
-        .where(inArray(fwaAnalyzedClaims.id, claimIds));
+      claimsToAnalyze = await db.select().from(claims)
+        .where(inArray(claims.id, claimIds));
     } else {
       // For full rerun, get all claims
-      claimsToAnalyze = await db.select().from(fwaAnalyzedClaims);
+      claimsToAnalyze = await db.select().from(claims);
     }
 
     const totalClaims = claimsToAnalyze.length;
@@ -1030,15 +952,15 @@ async function runClaimDetection(claimIds?: string[]): Promise<{ processed: numb
             // Use the REAL 5-method detection engine (fast mode - skips RAG/LLM for bulk processing)
             const detection = await runFastDetection({
               id: claim.id,
-              amount: parseFloat(String(claim.totalAmount || "0")),
+              amount: parseFloat(String(claim.amount || "0")),
               providerId: claim.providerId,
-              patientId: claim.patientId,
-              diagnosisCode: claim.principalDiagnosisCode || "",
-              procedureCode: claim.serviceCode || "",
-              serviceDate: claim.claimOccurrenceDate?.toISOString(),
+              patientId: claim.memberId,
+              diagnosisCode: claim.primaryDiagnosis || "",
+              procedureCode: claim.cptCodes?.[0] || "",
+              serviceDate: claim.serviceDate ?? undefined,
               claimType: claim.claimType || "",
-              description: claim.serviceDescription || "",
-              claimNumber: claim.claimReference
+              description: claim.description || "",
+              claimNumber: claim.claimNumber
             });
 
             // Store results
@@ -1051,7 +973,7 @@ async function runClaimDetection(claimIds?: string[]): Promise<{ processed: numb
               ) VALUES (
                 ${claim.id},
                 ${claim.providerId},
-                ${claim.patientId},
+                ${claim.memberId},
                 ${detection.compositeScore},
                 ${detection.compositeRiskLevel},
                 ${detection.ruleEngineScore},
@@ -1150,7 +1072,7 @@ async function detectClaimFWA(claim: any, thresholds: any, popAvg: number, popSt
   }
 
   // Rule 2: Chronic condition high-value claim
-  const amount = parseFloat(claim.totalAmount || "0");
+  const amount = parseFloat(claim.amount || "0");
   if (claim.isChronic && amount > 10000) {
     ruleScore += 20;
     matchedRules.push({ code: "CHRONIC-001", name: "High-value chronic claim", severity: "medium" });
@@ -1467,7 +1389,7 @@ async function runDoctorDetection(): Promise<{ processed: number; flagged: numbe
     const result = await db.execute(sql`
       WITH claim_aggregates AS (
         SELECT 
-          ac.practitioner_license as doctor_id,
+          ac.practitioner_id as doctor_id,
           COUNT(*) as claim_count,
           COUNT(DISTINCT dr.patient_id) as unique_patients,
           LEAST(AVG(COALESCE(dr.rule_engine_score, 0)), 100) as avg_rule,
@@ -1477,9 +1399,9 @@ async function runDoctorDetection(): Promise<{ processed: number; flagged: numbe
           LEAST(AVG(COALESCE(dr.semantic_score, 0)), 100) as avg_semantic,
           SUM(CASE WHEN dr.composite_risk_level IN ('high', 'critical') THEN 1 ELSE 0 END) as high_risk_claims
         FROM fwa_detection_results dr
-        JOIN fwa_analyzed_claims ac ON dr.claim_id = ac.id
-        WHERE ac.practitioner_license IS NOT NULL AND ac.practitioner_license != ''
-        GROUP BY ac.practitioner_license
+        JOIN claims_v2 ac ON dr.claim_id = ac.id
+        WHERE ac.practitioner_id IS NOT NULL AND ac.practitioner_id != ''
+        GROUP BY ac.practitioner_id
       ),
       feature_data AS (
         SELECT entity_id, z_score, claim_count as feature_claims, unique_patients

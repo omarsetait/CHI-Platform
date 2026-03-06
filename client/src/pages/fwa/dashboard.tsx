@@ -287,7 +287,7 @@ export default function OperationsCenter() {
     pendingPreAuth: 0,
   };
 
-  const rawMetrics = summary?.keyMetrics || {};
+  const rawMetrics: Record<string, any> = summary?.keyMetrics || {};
   const metrics = {
     activeCases: rawMetrics.activeCases || 0,
     highRiskCount: rawMetrics.highRiskCount || 0,

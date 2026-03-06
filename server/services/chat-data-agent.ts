@@ -262,8 +262,8 @@ export async function queryPlatformData(
       messages.push(choice.message);
 
       for (const toolCall of choice.message.tool_calls) {
-        const toolName = toolCall.function.name;
-        const toolArgs = JSON.parse(toolCall.function.arguments);
+        const toolName = (toolCall as any).function.name;
+        const toolArgs = JSON.parse((toolCall as any).function.arguments);
         toolsUsed.push(toolName);
 
         const toolResult = await executeDataTool(toolName, toolArgs);

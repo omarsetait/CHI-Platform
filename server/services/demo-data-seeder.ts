@@ -1313,6 +1313,14 @@ export async function seedDatabaseWithDemoData(): Promise<void> {
     // Seed Pre-Auth demo claims if empty
     await seedPreAuthDemoData();
 
+    // Seed BRD-aligned master data (5K claims across 6 normalized tables)
+    try {
+      const { seedBrdDemoData } = await import("./brd-data-seeder");
+      await seedBrdDemoData();
+    } catch (error) {
+      console.error("[Seeder] Error seeding BRD data:", error);
+    }
+
     console.log("[Seeder] All background seeding complete");
   } catch (error) {
     console.error("[Seeder] Critical error during background seeding:", error);
@@ -1803,13 +1811,13 @@ async function seedProviderRelationsData(): Promise<void> {
       providerType: "Hospital",
       networkTier: "Tier 1",
       serviceTypes: ["Inpatient", "Outpatient", "Emergency", "Surgery"],
-      volumeRange: "3000-6000",
+      volumeRangeMin: "3000",
+      volumeRangeMax: "6000",
       memberCount: 15,
-      avgCpm: "1150.00",
-      medianCpm: "1080.00",
-      cpmP25: "920.00",
-      cpmP75: "1280.00",
-      updatedAt: new Date()
+      avgCostPerMember: "1150.00",
+      avgClaimsPerMember: "1080.00",
+      avgBillingAmount: "920.00",
+      stdDevCpm: "1280.00",
     });
 
     const peerGroup2 = await storage.createPeerGroup({
@@ -1818,13 +1826,13 @@ async function seedProviderRelationsData(): Promise<void> {
       providerType: "Clinic",
       networkTier: "Tier 2",
       serviceTypes: ["Outpatient", "Diagnostics"],
-      volumeRange: "1000-3000",
+      volumeRangeMin: "1000",
+      volumeRangeMax: "3000",
       memberCount: 22,
-      avgCpm: "680.00",
-      medianCpm: "650.00",
-      cpmP25: "520.00",
-      cpmP75: "780.00",
-      updatedAt: new Date()
+      avgCostPerMember: "680.00",
+      avgClaimsPerMember: "650.00",
+      avgBillingAmount: "520.00",
+      stdDevCpm: "780.00",
     });
 
     console.log(`[Seeder] Created ${2} peer groups`);
@@ -2010,18 +2018,17 @@ async function seedProviderRelationsData(): Promise<void> {
       title: "Q4 2025 Reconciliation Evidence Pack",
       status: "locked",
       targetAmount: "505000",
-      documents: [
-        { docId: "doc-001", name: "Claims Summary Report", type: "pdf", addedAt: new Date("2025-12-28") },
-        { docId: "doc-002", name: "Denial Analysis", type: "xlsx", addedAt: new Date("2025-12-29") },
-        { docId: "doc-003", name: "Coding Audit Results", type: "pdf", addedAt: new Date("2025-12-30") }
+      attachments: [
+        { fileName: "Claims Summary Report", fileType: "pdf", fileSize: 1024, uploadedAt: "2025-12-28" },
+        { fileName: "Denial Analysis", fileType: "xlsx", fileSize: 2048, uploadedAt: "2025-12-29" },
+        { fileName: "Coding Audit Results", fileType: "pdf", fileSize: 1536, uploadedAt: "2025-12-30" }
       ],
-      findings: [
-        { findingId: "f-001", category: "Upcoding", description: "99215 billed when 99214 appropriate", amount: "245000" },
-        { findingId: "f-002", category: "Unbundling", description: "Separate billing for bundled services", amount: "182000" },
-        { findingId: "f-003", category: "Documentation", description: "Missing medical necessity documentation", amount: "78000" }
+      categories: [
+        { name: "Upcoding", claimCount: 12, amount: 245000, confidence: "high", sampleSize: 50 },
+        { name: "Unbundling", claimCount: 8, amount: 182000, confidence: "high", sampleSize: 30 },
+        { name: "Documentation", claimCount: 5, amount: 78000, confidence: "medium", sampleSize: 20 }
       ],
-      totalFindings: 3,
-      totalAmount: "505000",
+      totalClaimCount: 25,
       lockedAt: new Date("2026-01-05"),
       lockedBy: "Sarah Johnson"
     });
@@ -2034,14 +2041,13 @@ async function seedProviderRelationsData(): Promise<void> {
       title: "Contract Renewal Evidence Pack",
       status: "draft",
       targetAmount: "125000",
-      documents: [
-        { docId: "doc-004", name: "Performance Metrics", type: "pdf", addedAt: new Date("2026-01-02") }
+      attachments: [
+        { fileName: "Performance Metrics", fileType: "pdf", fileSize: 1024, uploadedAt: "2026-01-02" }
       ],
-      findings: [
-        { findingId: "f-004", category: "Prior Auth", description: "Procedures without authorization", amount: "125000" }
+      categories: [
+        { name: "Prior Auth", claimCount: 3, amount: 125000, confidence: "high", sampleSize: 10 }
       ],
-      totalFindings: 1,
-      totalAmount: "125000"
+      totalClaimCount: 3,
     });
 
     console.log("[Seeder] Created 2 evidence packs");
@@ -2051,33 +2057,33 @@ async function seedProviderRelationsData(): Promise<void> {
       sessionNumber: "RS-2026-001",
       providerId: "FAC-001",
       providerName: "King Faisal Specialist Hospital",
-      sessionType: "quarterly_review",
-      status: "negotiating",
+      meetingType: "quarterly_review",
+      status: "in_progress",
       scheduledDate: new Date("2026-01-15T10:00:00"),
-      participants: [
-        { name: "Sarah Johnson", role: "Provider Relations Manager", email: "sarah.j@tawuniya.com" },
-        { name: "Dr. Ahmed Al-Rashid", role: "Provider Medical Director", email: "ahmed.r@kfsh.org" }
+      attendees: [
+        { name: "Sarah Johnson", role: "Provider Relations Manager", organization: "Tawuniya", email: "sarah.j@tawuniya.com" },
+        { name: "Dr. Ahmed Al-Rashid", role: "Provider Medical Director", organization: "KFSH", email: "ahmed.r@kfsh.org" }
       ],
       agenda: [
-        { topic: "Q4 2025 Performance Review", duration: 30, presenter: "Sarah Johnson" },
-        { topic: "Billing Discrepancy Discussion", duration: 45, presenter: "Sarah Johnson" },
-        { topic: "Remediation Plan", duration: 30, presenter: "Dr. Ahmed Al-Rashid" }
+        "Q4 2025 Performance Review (30 min, Sarah Johnson)",
+        "Billing Discrepancy Discussion (45 min, Sarah Johnson)",
+        "Remediation Plan (30 min, Dr. Ahmed Al-Rashid)"
       ],
-      notes: "Focus on coding education and billing process improvements"
+      minutes: "Focus on coding education and billing process improvements"
     });
 
     await storage.createReconciliationSession({
       sessionNumber: "RS-2026-002",
       providerId: "FAC-002",
       providerName: "Saudi German Hospital Riyadh",
-      sessionType: "contract_renewal",
+      meetingType: "contract_renewal",
       status: "scheduled",
       scheduledDate: new Date("2026-01-22T14:00:00"),
-      participants: [
-        { name: "Mohammed Al-Harbi", role: "Contract Specialist", email: "mohammed.h@tawuniya.com" }
+      attendees: [
+        { name: "Mohammed Al-Harbi", role: "Contract Specialist", organization: "Tawuniya", email: "mohammed.h@tawuniya.com" }
       ],
       agenda: [
-        { topic: "Contract Terms Review", duration: 60, presenter: "Mohammed Al-Harbi" }
+        "Contract Terms Review (60 min, Mohammed Al-Harbi)"
       ]
     });
 
@@ -2088,16 +2094,15 @@ async function seedProviderRelationsData(): Promise<void> {
       settlementNumber: "STL-2026-001",
       providerId: "FAC-001",
       providerName: "King Faisal Specialist Hospital",
-      period: "Q4 2025",
+      periodStart: new Date("2025-10-01"),
+      periodEnd: new Date("2025-12-31"),
       status: "negotiating",
-      originalAmount: "9875000",
       proposedAmount: "9370000",
       agreedAmount: null,
-      discrepancyAmount: "505000",
-      lineItems: [
-        { category: "Upcoding Adjustments", description: "E&M level corrections", billedAmount: "1250000", approvedAmount: "1005000", variance: "245000" },
-        { category: "Unbundling", description: "Bundled procedure corrections", billedAmount: "890000", approvedAmount: "708000", variance: "182000" },
-        { category: "Documentation", description: "Claims lacking documentation", billedAmount: "156000", approvedAmount: "78000", variance: "78000" }
+      categories: [
+        { name: "Upcoding Adjustments", proposedAmount: 245000, agreedAmount: 0, claimCount: 12 },
+        { name: "Unbundling", proposedAmount: 182000, agreedAmount: 0, claimCount: 8 },
+        { name: "Documentation", proposedAmount: 78000, agreedAmount: 0, claimCount: 5 }
       ],
       providerAcceptance: null,
       providerSignatory: null,
@@ -2108,13 +2113,12 @@ async function seedProviderRelationsData(): Promise<void> {
       settlementNumber: "STL-2025-089",
       providerId: "FAC-005",
       providerName: "Dr. Sulaiman Al Habib Medical Center",
-      period: "Q3 2025",
-      status: "finalized",
-      originalAmount: "41165500",
+      periodStart: new Date("2025-07-01"),
+      periodEnd: new Date("2025-09-30"),
+      status: "agreed",
       proposedAmount: "41165500",
       agreedAmount: "41165500",
-      discrepancyAmount: "0",
-      lineItems: [],
+      categories: [],
       providerAcceptance: true,
       providerSignatory: "Dr. Sulaiman Al Habib",
       providerSignedAt: new Date("2025-12-22"),
@@ -2172,8 +2176,8 @@ async function seedContext360Data(): Promise<void> {
         })),
         claimsSummary: {
           totalClaims: patient.totalClaims,
-          totalAmount: patient.totalClaimsAmount,
-          avgClaimAmount: Math.round(patient.totalClaimsAmount / patient.totalClaims),
+          totalAmount: parseFloat(patient.totalAmount),
+          avgClaimAmount: Math.round(parseFloat(patient.totalAmount) / patient.totalClaims),
           claimsByYear: { "2024": Math.floor(patient.totalClaims * 0.4), "2025": Math.ceil(patient.totalClaims * 0.6) },
           claimsByCategory: { "Outpatient": 45, "Emergency": 15, "Pharmacy": 25, "Lab": 15 },
           uniqueProviders: patient.uniqueProviders,
@@ -2534,7 +2538,7 @@ async function seedSimulationLabData(): Promise<void> {
     ];
 
     for (const rule of shadowRulesData) {
-      await storage.createShadowRule(rule);
+      await storage.createShadowRule(rule as any);
     }
     console.log(`[Seeder] Created ${shadowRulesData.length} shadow rules`);
 
@@ -3230,7 +3234,7 @@ async function seedDetectionResults() {
         providerName: "Saudi German Hospital",
         description: "Service unbundling concerns requiring ongoing monitoring",
         findingDate: new Date(Date.now() - 15 * 24 * 60 * 60 * 1000),
-        status: "monitoring" as const,
+        status: "finding" as const,
       },
     ];
     try {
