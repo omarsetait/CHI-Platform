@@ -1280,22 +1280,16 @@ export async function seedDatabaseWithDemoData(): Promise<void> {
       seedIfEmpty("Provider CPM Metrics", () => storage.getAllProviderCpmMetrics(), seedProviderCpmMetricsData),
     ]);
     
-    // Seed FWA Analyzed Claims - Critical for the platform to work
-    console.log("[Seeder] Checking FWA Analyzed Claims...");
+    // Claims data now comes from BRD seeder via claims_v2 — skip legacy fwaAnalyzedClaims seeder
     try {
       const { db } = await import("../db");
-      const { fwaAnalyzedClaims } = await import("@shared/schema");
+      const { claims } = await import("@shared/schema");
       const { count } = await import("drizzle-orm");
-      const result = await db.select({ count: count() }).from(fwaAnalyzedClaims);
+      const result = await db.select({ count: count() }).from(claims);
       const claimCount = result[0]?.count || 0;
-      if (claimCount < 100) {
-        console.log(`[Seeder] FWA Analyzed Claims only has ${claimCount} records, seeding...`);
-        await seedFwaAnalyzedClaimsData();
-      } else {
-        console.log(`[Seeder] FWA Analyzed Claims already has ${claimCount} records, skipping`);
-      }
+      console.log(`[Seeder] claims_v2 has ${claimCount} records, legacy fwaAnalyzedClaims seeder skipped`);
     } catch (error) {
-      console.error("[Seeder] Error checking/seeding FWA Analyzed Claims:", error);
+      console.error("[Seeder] Error checking claims_v2 count:", error);
     }
     
     // Always seed detection results (for Operations Center dashboard)
@@ -2907,145 +2901,6 @@ async function seedGraphAnalysisData(): Promise<void> {
   } catch (error) {
     console.error("[Seeder] Error seeding Graph Analysis:", error);
   }
-}
-
-// Seed FWA Analyzed Claims - Core claims data for the platform
-async function seedFwaAnalyzedClaimsData(): Promise<void> {
-  const providers = [
-    { id: "PRV-GEN-0001", name: "King Faisal Specialist Hospital", type: "Hospital", city: "Riyadh" },
-    { id: "PRV-GEN-0002", name: "Saudi German Hospital", type: "Hospital", city: "Jeddah" },
-    { id: "PRV-GEN-0003", name: "Dr. Sulaiman Al Habib Medical Group", type: "Hospital", city: "Riyadh" },
-    { id: "PRV-GEN-0004", name: "Dallah Hospital", type: "Hospital", city: "Riyadh" },
-    { id: "PRV-GEN-0005", name: "International Medical Center", type: "Hospital", city: "Jeddah" },
-    { id: "PRV-GEN-0006", name: "National Guard Hospital", type: "Hospital", city: "Riyadh" },
-    { id: "PRV-GEN-0007", name: "Johns Hopkins Aramco Healthcare", type: "Hospital", city: "Dhahran" },
-    { id: "PRV-GEN-0008", name: "Mouwasat Medical Services", type: "Hospital", city: "Dammam" },
-  ];
-
-  const doctors = [
-    { id: "DOC-001", specialty: "Cardiology" },
-    { id: "DOC-002", specialty: "Orthopedics" },
-    { id: "DOC-003", specialty: "Internal Medicine" },
-    { id: "DOC-004", specialty: "General Surgery" },
-    { id: "DOC-005", specialty: "Oncology" },
-    { id: "DOC-006", specialty: "Neurology" },
-    { id: "DOC-007", specialty: "Pediatrics" },
-    { id: "DOC-008", specialty: "Emergency Medicine" },
-  ];
-
-  const diagnosisCodes = [
-    { code: "I25.10", desc: "Atherosclerotic heart disease" },
-    { code: "M54.5", desc: "Low back pain" },
-    { code: "J06.9", desc: "Acute upper respiratory infection" },
-    { code: "K21.0", desc: "Gastro-esophageal reflux disease" },
-    { code: "E11.9", desc: "Type 2 diabetes mellitus" },
-    { code: "I10", desc: "Essential hypertension" },
-    { code: "F32.9", desc: "Major depressive disorder" },
-    { code: "G43.909", desc: "Migraine, unspecified" },
-    { code: "J18.9", desc: "Pneumonia, unspecified" },
-    { code: "N39.0", desc: "Urinary tract infection" },
-  ];
-
-  const serviceCodes = [
-    { code: "99213", desc: "Office visit - established patient, low", price: 250 },
-    { code: "99214", desc: "Office visit - established patient, moderate", price: 400 },
-    { code: "99215", desc: "Office visit - established patient, high", price: 600 },
-    { code: "99283", desc: "Emergency dept visit - moderate", price: 800 },
-    { code: "99284", desc: "Emergency dept visit - moderately severe", price: 1200 },
-    { code: "99285", desc: "Emergency dept visit - high severity", price: 2000 },
-    { code: "71046", desc: "Chest X-ray, 2 views", price: 350 },
-    { code: "73030", desc: "X-ray shoulder complete", price: 280 },
-    { code: "93000", desc: "Electrocardiogram complete", price: 200 },
-    { code: "80053", desc: "Comprehensive metabolic panel", price: 150 },
-    { code: "85025", desc: "Complete blood count", price: 80 },
-    { code: "36415", desc: "Venipuncture", price: 30 },
-    { code: "97110", desc: "Physical therapy - therapeutic exercises", price: 180 },
-    { code: "27447", desc: "Total knee replacement", price: 45000 },
-    { code: "33533", desc: "Coronary artery bypass", price: 120000 },
-  ];
-
-  const claimTypes = ["Inpatient", "Outpatient", "Emergency", "Pharmacy"];
-  const statuses = ["approved", "denied", "pending", "flagged", "under_review"];
-
-  const claims: any[] = [];
-  const now = new Date();
-  const threeMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 3, 1);
-
-  for (let i = 0; i < 500; i++) {
-    const provider = providers[Math.floor(Math.random() * providers.length)];
-    const doctor = doctors[Math.floor(Math.random() * doctors.length)];
-    const diagnosis = diagnosisCodes[Math.floor(Math.random() * diagnosisCodes.length)];
-    const service = serviceCodes[Math.floor(Math.random() * serviceCodes.length)];
-    const claimType = claimTypes[Math.floor(Math.random() * claimTypes.length)];
-    const status = statuses[Math.floor(Math.random() * statuses.length)];
-    
-    const quantity = Math.floor(Math.random() * 3) + 1;
-    const basePrice = service.price * (0.8 + Math.random() * 0.4);
-    const totalAmount = basePrice * quantity;
-    const patientShare = totalAmount * (Math.random() * 0.2);
-    
-    const claimDate = new Date(threeMonthsAgo.getTime() + Math.random() * (now.getTime() - threeMonthsAgo.getTime()));
-    const patientId = `PAT-${String(Math.floor(Math.random() * 1000) + 1).padStart(4, '0')}`;
-    
-    claims.push({
-      claimReference: `CLM-2025-${String(i + 1).padStart(6, '0')}`,
-      batchNumber: `BATCH-${Math.floor(i / 50) + 1}`,
-      batchDate: claimDate,
-      patientId,
-      dateOfBirth: new Date(1950 + Math.floor(Math.random() * 50), Math.floor(Math.random() * 12), Math.floor(Math.random() * 28) + 1),
-      gender: Math.random() > 0.5 ? "Male" : "Female",
-      isNewborn: false,
-      isChronic: Math.random() > 0.8,
-      isPreExisting: Math.random() > 0.9,
-      policyNo: `POL-${String(Math.floor(Math.random() * 100000)).padStart(6, '0')}`,
-      policyEffectiveDate: new Date(2024, 0, 1),
-      policyExpiryDate: new Date(2025, 11, 31),
-      groupNo: `GRP-${Math.floor(Math.random() * 100) + 1}`,
-      providerId: provider.id,
-      practitionerLicense: doctor.id,
-      specialtyCode: doctor.specialty,
-      city: provider.city,
-      providerType: provider.type,
-      claimType,
-      claimOccurrenceDate: claimDate,
-      claimBenefitCode: "MEDICAL",
-      lengthOfStay: claimType === "Inpatient" ? Math.floor(Math.random() * 10) + 1 : null,
-      isPreAuthorized: Math.random() > 0.7,
-      authorizationId: Math.random() > 0.7 ? `AUTH-${Math.floor(Math.random() * 10000)}` : null,
-      principalDiagnosisCode: diagnosis.code,
-      secondaryDiagnosisCodes: Math.random() > 0.5 ? [diagnosisCodes[Math.floor(Math.random() * diagnosisCodes.length)].code] : [],
-      claimSupportingInfo: diagnosis.desc,
-      serviceType: service.desc,
-      serviceCode: service.code,
-      serviceDescription: service.desc,
-      unitPrice: basePrice.toFixed(2),
-      quantity,
-      totalAmount: totalAmount.toFixed(2),
-      patientShare: patientShare.toFixed(2),
-      originalStatus: status,
-      aiStatus: status === "flagged" ? "high_risk" : status === "under_review" ? "medium_risk" : "low_risk",
-      validationResults: status === "flagged" ? { issues: ["Potential duplicate", "High amount"] } : null,
-      sourceFile: "demo-seed.csv"
-    });
-  }
-
-  // Insert claims using db
-  const { db } = await import("../db");
-  const { fwaAnalyzedClaims } = await import("@shared/schema");
-  
-  console.log(`[Seeder] Inserting ${claims.length} analyzed claims...`);
-  
-  // Insert in batches of 50
-  for (let i = 0; i < claims.length; i += 50) {
-    const batch = claims.slice(i, i + 50);
-    try {
-      await db.insert(fwaAnalyzedClaims).values(batch).onConflictDoNothing();
-    } catch (err) {
-      console.error(`[Seeder] Error inserting claims batch ${i / 50 + 1}:`, err);
-    }
-  }
-  
-  console.log("[Seeder] FWA Analyzed Claims seeding complete");
 }
 
 // Seed detection results tables for Operations Center dashboard
