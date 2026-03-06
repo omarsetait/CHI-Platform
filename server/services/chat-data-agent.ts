@@ -143,13 +143,13 @@ async function executeDataTool(name: string, args: Record<string, unknown>): Pro
 
         let result;
         if (hasStatusFilter && hasGroup) {
-          result = await db.execute(sql`SELECT ${sql.raw(selectExpr)} FROM claims WHERE status = ${status} GROUP BY 1 ORDER BY count DESC LIMIT ${safeLimit}`);
+          result = await db.execute(sql`SELECT ${sql.raw(selectExpr)} FROM claims_v2 WHERE status = ${status} GROUP BY 1 ORDER BY count DESC LIMIT ${safeLimit}`);
         } else if (hasStatusFilter) {
-          result = await db.execute(sql`SELECT ${sql.raw(selectExpr)} FROM claims WHERE status = ${status} LIMIT ${safeLimit}`);
+          result = await db.execute(sql`SELECT ${sql.raw(selectExpr)} FROM claims_v2 WHERE status = ${status} LIMIT ${safeLimit}`);
         } else if (hasGroup) {
-          result = await db.execute(sql`SELECT ${sql.raw(selectExpr)} FROM claims GROUP BY 1 ORDER BY count DESC LIMIT ${safeLimit}`);
+          result = await db.execute(sql`SELECT ${sql.raw(selectExpr)} FROM claims_v2 GROUP BY 1 ORDER BY count DESC LIMIT ${safeLimit}`);
         } else {
-          result = await db.execute(sql`SELECT ${sql.raw(selectExpr)} FROM claims LIMIT ${safeLimit}`);
+          result = await db.execute(sql`SELECT ${sql.raw(selectExpr)} FROM claims_v2 LIMIT ${safeLimit}`);
         }
         return JSON.stringify(result.rows);
       }

@@ -1203,7 +1203,7 @@ async function seed() {
     await db.execute(sql`DELETE FROM fwa_cases`);
     await db.execute(sql`DELETE FROM online_listening_mentions`);
     await db.execute(sql`DELETE FROM enforcement_cases`);
-    await db.execute(sql`DELETE FROM claims`);
+    await db.execute(sql`DELETE FROM claims_v2`);
     await db.execute(sql`DELETE FROM fwa_high_risk_doctors`);
     await db.execute(sql`DELETE FROM fwa_high_risk_patients`);
     await db.execute(sql`DELETE FROM fwa_high_risk_providers`);

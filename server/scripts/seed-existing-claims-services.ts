@@ -172,7 +172,7 @@ async function seedServicesForExistingClaims() {
     // Get all claims that don't have services
     const claimsResult = await client.query(`
         SELECT c.id, c.claim_type, c.service_date, c.flagged
-        FROM claims c
+        FROM claims_v2 c
         LEFT JOIN fwa_claim_services s ON c.id = s.claim_id
         WHERE s.id IS NULL
     `);

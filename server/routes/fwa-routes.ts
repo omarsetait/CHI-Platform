@@ -1455,10 +1455,10 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           SELECT
             provider_id,
             COUNT(*)::int as claim_count,
-            COUNT(DISTINCT patient_id)::int as patient_count,
+            COUNT(DISTINCT member_id)::int as patient_count,
             COALESCE(SUM(amount::numeric), 0) as total_exposure,
             COALESCE(AVG(amount::numeric), 0) as avg_amount
-          FROM claims
+          FROM claims_v2
           WHERE provider_id IS NOT NULL
           GROUP BY provider_id
         )
@@ -3353,12 +3353,12 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         ),
         claim_amounts AS (
           SELECT
-            patient_id,
+            member_id as patient_id,
             COALESCE(SUM(amount::decimal), 0) as total_amount,
             COALESCE(AVG(amount::decimal), 0) as avg_claim_amount
-          FROM claims
-          WHERE patient_id IS NOT NULL AND amount IS NOT NULL
-          GROUP BY patient_id
+          FROM claims_v2
+          WHERE member_id IS NOT NULL AND amount IS NOT NULL
+          GROUP BY member_id
         )
         SELECT
           ds.patient_id,
