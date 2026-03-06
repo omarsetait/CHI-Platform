@@ -194,6 +194,31 @@ export async function createDatabaseIndexes(): Promise<void> {
     console.error("[DB] Error creating indexes:", error);
   }
 
+  // Migrate legacy tables: rename to _backup if they still exist as tables
+  try {
+    // Check if legacy 'claims' table exists as a BASE TABLE (not a view)
+    const legacyClaimsCheck = await db.execute(sql`
+      SELECT table_type FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name = 'claims' AND table_type = 'BASE TABLE'
+    `);
+    if (legacyClaimsCheck.rows.length > 0) {
+      await db.execute(sql`ALTER TABLE claims RENAME TO _legacy_claims_backup`);
+      console.log("[DB] Renamed legacy 'claims' table to '_legacy_claims_backup'");
+    }
+
+    // Check if legacy 'fwa_analyzed_claims' table exists as a BASE TABLE
+    const legacyFwaCheck = await db.execute(sql`
+      SELECT table_type FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name = 'fwa_analyzed_claims' AND table_type = 'BASE TABLE'
+    `);
+    if (legacyFwaCheck.rows.length > 0) {
+      await db.execute(sql`ALTER TABLE fwa_analyzed_claims RENAME TO _legacy_fwa_analyzed_claims_backup`);
+      console.log("[DB] Renamed legacy 'fwa_analyzed_claims' table to '_legacy_fwa_analyzed_claims_backup'");
+    }
+  } catch (error) {
+    console.error("[DB] Error migrating legacy tables:", error);
+  }
+
   // Create backward-compatibility views for legacy table names
   try {
     await db.execute(sql`
