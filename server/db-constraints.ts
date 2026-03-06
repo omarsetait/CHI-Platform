@@ -160,4 +160,41 @@ export async function createDatabaseConstraints(): Promise<void> {
   } catch (error) {
     console.error("[DB] Error creating constraints:", error);
   }
+
+  // Add FK constraints for entity references
+  console.log("[DB] Creating FK constraints...");
+  try {
+    await db.execute(sql`
+      -- Timeline FK constraints
+      DO $$ BEGIN
+        ALTER TABLE fwa_provider_timeline
+          ADD CONSTRAINT fk_provider_timeline_provider FOREIGN KEY (provider_id) REFERENCES providers(id);
+      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+      DO $$ BEGIN
+        ALTER TABLE fwa_doctor_timeline
+          ADD CONSTRAINT fk_doctor_timeline_doctor FOREIGN KEY (doctor_id) REFERENCES practitioners(id);
+      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+      DO $$ BEGIN
+        ALTER TABLE fwa_patient_timeline
+          ADD CONSTRAINT fk_patient_timeline_patient FOREIGN KEY (patient_id) REFERENCES members(id);
+      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+      -- Detection results FK constraints
+      DO $$ BEGIN
+        ALTER TABLE fwa_detection_results
+          ADD CONSTRAINT fk_detection_results_claim FOREIGN KEY (claim_id) REFERENCES claims_v2(id);
+      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+      -- Chat FK constraints (with CASCADE delete)
+      DO $$ BEGIN
+        ALTER TABLE chat_messages
+          ADD CONSTRAINT fk_chat_messages_conversation FOREIGN KEY (conversation_id) REFERENCES chat_conversations(id) ON DELETE CASCADE;
+      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+    `);
+    console.log("[DB] FK constraints created successfully");
+  } catch (error) {
+    console.error("[DB] Error creating FK constraints:", error);
+  }
 }
