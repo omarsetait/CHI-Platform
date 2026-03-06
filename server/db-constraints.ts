@@ -129,13 +129,72 @@ export async function createDatabaseConstraints(): Promise<void> {
       EXCEPTION WHEN duplicate_object THEN NULL; END $$;
       
       DO $$ BEGIN
-        ALTER TABLE claim_ingest_items 
+        ALTER TABLE claim_ingest_items
           ADD CONSTRAINT chk_claim_ingest_items_risk CHECK (risk_score IS NULL OR (risk_score >= 0 AND risk_score <= 100));
+      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+      -- Claims V2 amount constraints
+      DO $$ BEGIN
+        ALTER TABLE claims_v2
+          ADD CONSTRAINT chk_claims_v2_amount CHECK (amount::numeric >= 0);
+      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+      DO $$ BEGIN
+        ALTER TABLE claims_v2
+          ADD CONSTRAINT chk_claims_v2_approved_amount CHECK (approved_amount IS NULL OR approved_amount::numeric >= 0);
+      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+      -- Detection score constraints (non-negative)
+      DO $$ BEGIN
+        ALTER TABLE fwa_detection_results
+          ADD CONSTRAINT chk_detection_results_composite CHECK (composite_score::numeric >= 0);
+      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+      DO $$ BEGIN
+        ALTER TABLE fwa_provider_detection_results
+          ADD CONSTRAINT chk_provider_detection_composite CHECK (composite_score::numeric >= 0);
       EXCEPTION WHEN duplicate_object THEN NULL; END $$;
     `);
     
     console.log("[DB] Database CHECK constraints created successfully");
   } catch (error) {
     console.error("[DB] Error creating constraints:", error);
+  }
+
+  // Add FK constraints for entity references
+  console.log("[DB] Creating FK constraints...");
+  try {
+    await db.execute(sql`
+      -- Timeline FK constraints
+      DO $$ BEGIN
+        ALTER TABLE fwa_provider_timeline
+          ADD CONSTRAINT fk_provider_timeline_provider FOREIGN KEY (provider_id) REFERENCES providers(id);
+      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+      DO $$ BEGIN
+        ALTER TABLE fwa_doctor_timeline
+          ADD CONSTRAINT fk_doctor_timeline_doctor FOREIGN KEY (doctor_id) REFERENCES practitioners(id);
+      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+      DO $$ BEGIN
+        ALTER TABLE fwa_patient_timeline
+          ADD CONSTRAINT fk_patient_timeline_patient FOREIGN KEY (patient_id) REFERENCES members(id);
+      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+      -- Detection results FK constraints
+      DO $$ BEGIN
+        ALTER TABLE fwa_detection_results
+          ADD CONSTRAINT fk_detection_results_claim FOREIGN KEY (claim_id) REFERENCES claims_v2(id);
+      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+      -- Chat FK constraints (with CASCADE delete)
+      DO $$ BEGIN
+        ALTER TABLE chat_messages
+          ADD CONSTRAINT fk_chat_messages_conversation FOREIGN KEY (conversation_id) REFERENCES chat_conversations(id) ON DELETE CASCADE;
+      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+    `);
+    console.log("[DB] FK constraints created successfully");
+  } catch (error) {
+    console.error("[DB] Error creating FK constraints:", error);
   }
 }

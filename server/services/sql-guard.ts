@@ -3,7 +3,7 @@ import { sql } from "drizzle-orm";
 
 const ALLOWED_TABLES = new Set([
   // Claims & Pre-Auth
-  "claims", "pre_auth_claims", "pre_auth_decisions", "pre_auth_signals",
+  "claims", "claims_v2", "pre_auth_claims", "pre_auth_decisions", "pre_auth_signals",
   // FWA
   "fwa_cases", "fwa_analysis_findings", "fwa_high_risk_providers",
   "fwa_high_risk_patients", "fwa_high_risk_doctors", "fwa_analyzed_claims",

@@ -459,9 +459,9 @@ export interface IStorage {
 
   // Enforcement Dossiers
   createEnforcementDossier(data: InsertEnforcementDossier): Promise<EnforcementDossier>;
-  getEnforcementDossier(id: number): Promise<EnforcementDossier | undefined>;
+  getEnforcementDossier(id: string): Promise<EnforcementDossier | undefined>;
   getEnforcementDossierByCaseId(caseId: string): Promise<EnforcementDossier | undefined>;
-  updateEnforcementDossier(id: number, data: Partial<InsertEnforcementDossier>): Promise<EnforcementDossier | undefined>;
+  updateEnforcementDossier(id: string, data: Partial<InsertEnforcementDossier>): Promise<EnforcementDossier | undefined>;
   listEnforcementDossiers(filters?: { status?: string; stage?: string }): Promise<EnforcementDossier[]>;
 
   // Detection results for enforcement workflow
@@ -1121,9 +1121,7 @@ export class MemStorage implements IStorage {
   }
 
   async getFwaFindingsByCaseId(caseId: string): Promise<FwaAnalysisFinding[]> {
-    return Array.from(this.fwaAnalysisFindings.values()).filter(
-      (finding) => finding.caseId === caseId,
-    );
+    return this.getFwaAnalysisFindingsByCaseId(caseId);
   }
 
   async createFwaFinding(data: InsertFwaAnalysisFinding): Promise<FwaAnalysisFinding> {
@@ -2672,8 +2670,7 @@ export class MemStorage implements IStorage {
   private providerComplaintsMap: Map<string, ProviderComplaint> = new Map();
   private onlineListeningMentionsMap: Map<string, OnlineListeningMention> = new Map();
   private enforcementCasesMap: Map<string, EnforcementCase> = new Map();
-  private enforcementDossiersMap: Map<number, EnforcementDossier> = new Map();
-  private enforcementDossierIdCounter: number = 1;
+  private enforcementDossiersMap: Map<string, EnforcementDossier> = new Map();
   private regulatoryCircularsMap: Map<string, RegulatoryCircular> = new Map();
   private auditSessionsMap: Map<string, AuditSession> = new Map();
 
@@ -2769,13 +2766,13 @@ export class MemStorage implements IStorage {
 
   // Enforcement Dossier CRUD (MemStorage)
   async createEnforcementDossier(data: InsertEnforcementDossier): Promise<EnforcementDossier> {
-    const id = this.enforcementDossierIdCounter++;
+    const id = crypto.randomUUID();
     const dossier = { ...data, id, createdAt: new Date(), updatedAt: new Date() } as EnforcementDossier;
     this.enforcementDossiersMap.set(id, dossier);
     return dossier;
   }
 
-  async getEnforcementDossier(id: number): Promise<EnforcementDossier | undefined> {
+  async getEnforcementDossier(id: string): Promise<EnforcementDossier | undefined> {
     return this.enforcementDossiersMap.get(id);
   }
 
@@ -2783,7 +2780,7 @@ export class MemStorage implements IStorage {
     return Array.from(this.enforcementDossiersMap.values()).find(d => d.caseId === caseId);
   }
 
-  async updateEnforcementDossier(id: number, data: Partial<InsertEnforcementDossier>): Promise<EnforcementDossier | undefined> {
+  async updateEnforcementDossier(id: string, data: Partial<InsertEnforcementDossier>): Promise<EnforcementDossier | undefined> {
     const existing = this.enforcementDossiersMap.get(id);
     if (!existing) return undefined;
     const updated = { ...existing, ...data, updatedAt: new Date() } as EnforcementDossier;
@@ -3242,8 +3239,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getFwaFindingsByCaseId(caseId: string): Promise<FwaAnalysisFinding[]> {
-    const results = await db.select().from(fwaAnalysisFindings).where(eq(fwaAnalysisFindings.caseId, caseId)).orderBy(desc(fwaAnalysisFindings.createdAt));
-    return results;
+    return this.getFwaAnalysisFindingsByCaseId(caseId);
   }
 
   async createFwaFinding(data: InsertFwaAnalysisFinding): Promise<FwaAnalysisFinding> {
@@ -4074,7 +4070,7 @@ export class DatabaseStorage implements IStorage {
     return dossier;
   }
 
-  async getEnforcementDossier(id: number): Promise<EnforcementDossier | undefined> {
+  async getEnforcementDossier(id: string): Promise<EnforcementDossier | undefined> {
     const [dossier] = await db.select().from(enforcementDossiers).where(eq(enforcementDossiers.id, id));
     return dossier;
   }
@@ -4084,7 +4080,7 @@ export class DatabaseStorage implements IStorage {
     return dossier;
   }
 
-  async updateEnforcementDossier(id: number, data: Partial<InsertEnforcementDossier>): Promise<EnforcementDossier | undefined> {
+  async updateEnforcementDossier(id: string, data: Partial<InsertEnforcementDossier>): Promise<EnforcementDossier | undefined> {
     const [dossier] = await db
       .update(enforcementDossiers)
       .set({ ...data, updatedAt: new Date() })

@@ -58,142 +58,6 @@ export const insertAuditLogSchema = createInsertSchema(auditLogs).omit({
 export type InsertAuditLog = z.infer<typeof insertAuditLogSchema>;
 export type AuditLog = typeof auditLogs.$inferSelect;
 
-// Legacy claim schema - kept for backward compatibility with demo-data-seeder
-export const legacyClaims = pgTable("claims", {
-  id: varchar("id").primaryKey(),
-  claimNumber: text("claim_number").notNull(),
-  policyNumber: text("policy_number").notNull(),
-  registrationDate: timestamp("registration_date").notNull(),
-  claimType: text("claim_type").notNull(),
-  hospital: text("hospital").notNull(),
-  amount: decimal("amount", { precision: 12, scale: 2 }).notNull(),
-  outlierScore: decimal("outlier_score", { precision: 3, scale: 2 }).notNull(),
-  description: text("description"),
-  icd: text("icd"),
-  hasSurgery: text("has_surgery"),
-  surgeryFee: decimal("surgery_fee", { precision: 12, scale: 2 }),
-  hasIcu: text("has_icu"),
-  lengthOfStay: integer("length_of_stay"),
-  similarClaims: integer("similar_claims"),
-  similarClaimsInHospital: integer("similar_claims_in_hospital"),
-  providerId: text("provider_id"),
-  providerName: text("provider_name"),
-  patientId: text("patient_id"),
-  patientName: text("patient_name"),
-  serviceDate: timestamp("service_date"),
-  status: text("status").default("pending"),
-  category: text("category"),
-  flagged: boolean("flagged").default(false),
-  flagReason: text("flag_reason"),
-  cptCodes: text("cpt_codes").array(),
-  diagnosisCodes: text("diagnosis_codes").array(),
-  
-  // === NEW FIELDS FROM REAL SAUDI HEALTHCARE DATA ===
-  
-  // Official References
-  mdgfClaimNumber: text("mdgf_claim_number"), // Official MDGF claim reference
-  lotNo: integer("lot_no"),
-  batchType: text("batch_type"),
-  
-  // Enhanced Clinical Data
-  secondaryIcds: text("secondary_icds").array(), // Comorbidities array
-  dischargeDiagnosisCodes: text("discharge_diagnosis_codes").array(),
-  dischargeOtherDiag: text("discharge_other_diag"),
-  claimIcd10Descriptions: text("claim_icd10_descriptions"),
-  
-  // Patient Demographics
-  insuredId: text("insured_id"), // National ID or Iqama
-  dateOfBirth: timestamp("date_of_birth"),
-  gender: text("gender"),
-  nationality: text("nationality"),
-  coverageRelationship: text("coverage_relationship"), // Self, Spouse, Child, etc.
-  
-  // Provider Details
-  hcpId: text("hcp_id"), // Healthcare Provider ID
-  hcpCode: text("hcp_code"),
-  practitionerId: text("practitioner_id"),
-  specialtyCode: text("specialty_code"), // Standardized specialty code
-  specialty: text("specialty"), // Specialty name
-  providerType: text("provider_type"), // Hospital, Clinic, Lab, etc.
-  providerCity: text("provider_city"),
-  providerRegion: text("provider_region"),
-  providerNetwork: text("provider_network"), // Network tier
-  providerContractId: text("provider_contract_id"),
-  
-  // Service Details
-  serviceType: text("service_type"),
-  serviceCode: text("service_code"),
-  serviceDescription: text("service_description"),
-  providerServiceDescription: text("provider_service_description"),
-  listedServiceCode: text("listed_service_code"),
-  listedServiceDesc: text("listed_service_desc"),
-  startDate: timestamp("start_date"),
-  rQuantity: integer("r_quantity"),
-  duration: integer("duration"),
-  unitPrice: decimal("unit_price", { precision: 12, scale: 2 }),
-  patientShareLc: decimal("patient_share_lc", { precision: 12, scale: 2 }),
-  serviceLineNo: integer("service_line_no"),
-  
-  // Financial Amounts
-  serviceClaimedAmount: decimal("service_claimed_amount", { precision: 12, scale: 2 }),
-  netPayableAmount: decimal("net_payable_amount", { precision: 12, scale: 2 }),
-  claimBenefit: text("claim_benefit"),
-  
-  // Pre-Authorization
-  preAuthorizationId: text("pre_authorization_id"),
-  preAuthorizationStatus: text("pre_authorization_status"),
-  preAuthorizationPatientId: text("pre_authorization_patient_id"),
-  preAuthorizationPractitionerId: text("pre_authorization_practitioner_id"),
-  preAuthorizationChiefComplaint: text("pre_authorization_chief_complaint"),
-  preAuthorizationIcd10s: text("pre_authorization_icd10s").array(),
-  isPreAuthorizationRequired: boolean("is_pre_authorization_required"),
-  isPreAuthorized: boolean("is_pre_authorized"),
-  
-  // Policy Info
-  policyEffectiveDate: timestamp("policy_effective_date"),
-  policyExpiryDate: timestamp("policy_expiry_date"),
-  groupNo: text("group_no"),
-  
-  // Policy Flags (Critical for FWA)
-  maternityFlag: boolean("maternity_flag").default(false),
-  newbornFlag: boolean("newborn_flag").default(false),
-  chronicFlag: boolean("chronic_flag").default(false),
-  preExistingFlag: boolean("pre_existing_flag").default(false),
-  resubmission: boolean("resubmission").default(false),
-  
-  // Dates
-  occurrenceDate: timestamp("occurrence_date"),
-  dateOfClaimSubmission: timestamp("date_of_claim_submission"),
-  dischargeDate: timestamp("discharge_date"),
-  dischargeDisposition: text("discharge_disposition"),
-  onAdmission: text("on_admission"),
-  admissionDate: timestamp("admission_date"),
-  
-  // AI/ML Status Fields
-  aiStatus: text("ai_status"),
-  aiTopFeatures: text("ai_top_features"),
-  aiProviderStatus: text("ai_provider_status"),
-  aiPatientStatus: text("ai_patient_status"),
-  aiTopFeaturePositive: text("ai_top_feature_positive"),
-  
-  // Workflow Fields
-  isRetrievedByWq: boolean("is_retrieved_by_wq").default(false),
-  wqAction: text("wq_action"),
-  tachyActivityType: text("tachy_activity_type"),
-  medicationDuration: integer("medication_duration"),
-  workQueueFeedback: text("work_queue_feedback"),
-  adjudicationStatus: text("adjudication_status"),
-  adjudicationSource: text("adjudication_source"),
-  source: text("source"), // Data source
-  validationStatus: text("validation_status"),
-  validationComment: text("validation_comment"),
-});
-
-export type LegacyClaim = typeof legacyClaims.$inferSelect;
-export type InsertLegacyClaim = z.infer<typeof insertLegacyClaimSchema>;
-
-export const insertLegacyClaimSchema = createInsertSchema(legacyClaims);
-
 // ============================================
 // Pre-Authorization Module Schema
 // ============================================
@@ -1241,14 +1105,6 @@ export const insertReconciliationEntitySchema = createInsertSchema(reconciliatio
 export type InsertReconciliationEntity = z.infer<typeof insertReconciliationEntitySchema>;
 export type ReconciliationEntity = typeof reconciliationEntities.$inferSelect;
 
-// FWA Category Enum for findings
-export const fwaCategoryEnum = pgEnum("fwa_category", [
-  "coding",
-  "management",
-  "physician",
-  "patient"
-]);
-
 // Reconciliation Findings Table
 export const reconciliationFindings = pgTable("reconciliation_findings", {
   id: text("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -1262,7 +1118,7 @@ export const reconciliationFindings = pgTable("reconciliation_findings", {
   recommendedAction: text("recommended_action"),
   evidence: jsonb("evidence").$type<Record<string, any>>().default({}),
   relatedClaimIds: text("related_claim_ids").array().default([]),
-  fwaCategory: fwaCategoryEnum("fwa_category"),
+  fwaCategory: fwaCategoryTypeEnum("fwa_category"),
   status: text("status").default("open"),
   createdAt: timestamp("created_at").defaultNow()
 });
@@ -2239,7 +2095,7 @@ export type EnforcementCase = typeof enforcementCases.$inferSelect;
 
 // Enforcement Dossiers Table - Agentic workflow case dossiers
 export const enforcementDossiers = pgTable("enforcement_dossiers", {
-  id: serial("id").primaryKey(),
+  id: text("id").primaryKey().default(sql`gen_random_uuid()`),
   caseId: text("case_id").notNull(),
   enforcementCaseId: text("enforcement_case_id").notNull(),
   claimIds: jsonb("claim_ids").notNull().default([]),
@@ -3744,81 +3600,6 @@ export const serviceLines = pgTable("service_lines", {
 export const insertServiceLineSchema = createInsertSchema(serviceLines).omit({ id: true, createdAt: true });
 export type InsertServiceLine = z.infer<typeof insertServiceLineSchema>;
 export type ServiceLine = typeof serviceLines.$inferSelect;
-
-// Analyzed Claims - Imported claims for analysis
-export const fwaAnalyzedClaims = pgTable("fwa_analyzed_claims", {
-  id: text("id").primaryKey().default(sql`gen_random_uuid()`),
-  
-  // Core identifiers
-  claimReference: text("claim_reference").notNull(),
-  batchNumber: text("batch_number"),
-  batchDate: timestamp("batch_date"),
-  
-  // Patient info (hashed for privacy)
-  patientId: text("patient_id").notNull(),
-  dateOfBirth: timestamp("date_of_birth"),
-  gender: text("gender"),
-  isNewborn: boolean("is_newborn").default(false),
-  isChronic: boolean("is_chronic").default(false),
-  isPreExisting: boolean("is_pre_existing").default(false),
-  
-  // Policy info
-  policyNo: text("policy_no"),
-  policyEffectiveDate: timestamp("policy_effective_date"),
-  policyExpiryDate: timestamp("policy_expiry_date"),
-  groupNo: text("group_no"),
-  
-  // Provider info
-  providerId: text("provider_id").notNull(),
-  practitionerLicense: text("practitioner_license"),
-  specialtyCode: text("specialty_code"),
-  city: text("city"),
-  providerType: text("provider_type"),
-  
-  // Claim details
-  claimType: text("claim_type"), // inpatient, outpatient, emergency
-  claimOccurrenceDate: timestamp("claim_occurrence_date"),
-  claimBenefitCode: text("claim_benefit_code"),
-  lengthOfStay: integer("length_of_stay"),
-  isPreAuthorized: boolean("is_pre_authorized").default(false),
-  authorizationId: text("authorization_id"),
-  
-  // Clinical info
-  principalDiagnosisCode: text("principal_diagnosis_code"),
-  secondaryDiagnosisCodes: text("secondary_diagnosis_codes").array(),
-  claimSupportingInfo: text("claim_supporting_info"),
-  
-  // Service details
-  serviceType: text("service_type"),
-  serviceCode: text("service_code"),
-  serviceDescription: text("service_description"),
-  unitPrice: decimal("unit_price", { precision: 12, scale: 2 }),
-  quantity: integer("quantity"),
-  totalAmount: decimal("total_amount", { precision: 12, scale: 2 }),
-  patientShare: decimal("patient_share", { precision: 12, scale: 2 }),
-  
-  // Status from source
-  originalStatus: text("original_status"),
-  aiStatus: text("ai_status"),
-  validationResults: jsonb("validation_results"),
-  
-  // Computed fields for analysis
-  embedding: text("embedding"), // Vector embedding for similarity search
-  
-  // Import metadata
-  importedAt: timestamp("imported_at").defaultNow(),
-  sourceFile: text("source_file"),
-  
-  createdAt: timestamp("created_at").defaultNow()
-});
-
-export const insertFwaAnalyzedClaimSchema = createInsertSchema(fwaAnalyzedClaims).omit({
-  id: true,
-  createdAt: true,
-  importedAt: true
-});
-export type InsertFwaAnalyzedClaim = z.infer<typeof insertFwaAnalyzedClaimSchema>;
-export type FwaAnalyzedClaim = typeof fwaAnalyzedClaims.$inferSelect;
 
 // Feature Store - Pre-computed features for statistical/ML analysis
 export const fwaFeatureStore = pgTable("fwa_feature_store", {

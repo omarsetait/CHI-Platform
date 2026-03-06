@@ -311,7 +311,7 @@ export function registerETLRoutes(app: Express) {
       const { sql } = await import("drizzle-orm");
       
       const query = sql.raw(`
-        SELECT * FROM claims 
+        SELECT * FROM claims_v2
         ${whereClause}
         ORDER BY ${orderBy} ${orderDirection}, id ${orderDirection}
         LIMIT ${pageLimit + 1}

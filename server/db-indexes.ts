@@ -128,10 +128,137 @@ export async function createDatabaseIndexes(): Promise<void> {
       -- Reconciliation Entities indexes
       CREATE INDEX IF NOT EXISTS idx_reconciliation_entities_entity_id ON reconciliation_entities(entity_id);
       CREATE INDEX IF NOT EXISTS idx_reconciliation_entities_entity_type ON reconciliation_entities(entity_type);
+
+      -- Claims V2 indexes (most-queried table)
+      CREATE INDEX IF NOT EXISTS idx_claims_v2_member_id ON claims_v2(member_id);
+      CREATE INDEX IF NOT EXISTS idx_claims_v2_provider_id ON claims_v2(provider_id);
+      CREATE INDEX IF NOT EXISTS idx_claims_v2_practitioner_id ON claims_v2(practitioner_id);
+      CREATE INDEX IF NOT EXISTS idx_claims_v2_service_date ON claims_v2(service_date);
+      CREATE INDEX IF NOT EXISTS idx_claims_v2_status ON claims_v2(status);
+      CREATE INDEX IF NOT EXISTS idx_claims_v2_primary_diagnosis ON claims_v2(primary_diagnosis);
+      CREATE INDEX IF NOT EXISTS idx_claims_v2_claim_type ON claims_v2(claim_type);
+      CREATE INDEX IF NOT EXISTS idx_claims_v2_created_at ON claims_v2(created_at);
+      CREATE INDEX IF NOT EXISTS idx_claims_v2_flagged ON claims_v2(flagged) WHERE flagged = true;
+
+      -- Service Lines indexes
+      CREATE INDEX IF NOT EXISTS idx_service_lines_claim_id ON service_lines(claim_id);
+      CREATE INDEX IF NOT EXISTS idx_service_lines_service_code ON service_lines(service_code);
+
+      -- Detection Results indexes
+      CREATE INDEX IF NOT EXISTS idx_fwa_detection_results_claim_id ON fwa_detection_results(claim_id);
+      CREATE INDEX IF NOT EXISTS idx_fwa_detection_results_provider_id ON fwa_detection_results(provider_id);
+      CREATE INDEX IF NOT EXISTS idx_fwa_detection_results_composite_score ON fwa_detection_results(composite_score);
+      CREATE INDEX IF NOT EXISTS idx_fwa_detection_results_risk_level ON fwa_detection_results(composite_risk_level);
+      CREATE INDEX IF NOT EXISTS idx_fwa_detection_results_analyzed_at ON fwa_detection_results(analyzed_at);
+
+      -- Provider Detection Results indexes
+      CREATE INDEX IF NOT EXISTS idx_fwa_provider_detection_provider_id ON fwa_provider_detection_results(provider_id);
+      CREATE INDEX IF NOT EXISTS idx_fwa_provider_detection_risk_level ON fwa_provider_detection_results(risk_level);
+
+      -- Entity Timeline indexes
+      CREATE INDEX IF NOT EXISTS idx_fwa_provider_timeline_provider_id ON fwa_provider_timeline(provider_id);
+      CREATE INDEX IF NOT EXISTS idx_fwa_provider_timeline_batch_date ON fwa_provider_timeline(batch_date);
+      CREATE INDEX IF NOT EXISTS idx_fwa_doctor_timeline_doctor_id ON fwa_doctor_timeline(doctor_id);
+      CREATE INDEX IF NOT EXISTS idx_fwa_patient_timeline_patient_id ON fwa_patient_timeline(patient_id);
+
+      -- Feature Store indexes
+      CREATE INDEX IF NOT EXISTS idx_fwa_feature_store_entity ON fwa_feature_store(entity_type, entity_id);
+      CREATE INDEX IF NOT EXISTS idx_provider_feature_store_provider_id ON provider_feature_store(provider_id);
+      CREATE INDEX IF NOT EXISTS idx_member_feature_store_member_id ON member_feature_store(member_id);
+
+      -- Enforcement indexes
+      CREATE INDEX IF NOT EXISTS idx_enforcement_cases_status ON enforcement_cases(status);
+      CREATE INDEX IF NOT EXISTS idx_enforcement_cases_provider_id ON enforcement_cases(provider_id);
+      CREATE INDEX IF NOT EXISTS idx_enforcement_dossiers_case_id ON enforcement_dossiers(case_id);
+
+      -- Chat indexes
+      CREATE INDEX IF NOT EXISTS idx_chat_messages_conversation_id ON chat_messages(conversation_id);
+      CREATE INDEX IF NOT EXISTS idx_chat_conversations_session_id ON chat_conversations(session_id);
+
+      -- KPI indexes
+      CREATE INDEX IF NOT EXISTS idx_kpi_results_definition_id ON kpi_results(kpi_definition_id);
+      CREATE INDEX IF NOT EXISTS idx_kpi_results_period_start ON kpi_results(period_start);
+
+      -- High-risk entity indexes
+      CREATE INDEX IF NOT EXISTS idx_fwa_high_risk_providers_risk_level ON fwa_high_risk_providers(risk_level);
+      CREATE INDEX IF NOT EXISTS idx_fwa_high_risk_patients_risk_level ON fwa_high_risk_patients(risk_level);
+      CREATE INDEX IF NOT EXISTS idx_fwa_high_risk_doctors_risk_level ON fwa_high_risk_doctors(risk_level);
+
+      -- Knowledge documents indexes
+      CREATE INDEX IF NOT EXISTS idx_knowledge_documents_category ON knowledge_documents(category);
+      CREATE INDEX IF NOT EXISTS idx_knowledge_documents_status ON knowledge_documents(processing_status);
     `);
     
     console.log("[DB] Database indexes created successfully");
   } catch (error) {
     console.error("[DB] Error creating indexes:", error);
+  }
+
+  // Migrate enforcementDossiers PK from serial to UUID text
+  try {
+    const colCheck = await db.execute(sql`
+      SELECT data_type FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'enforcement_dossiers' AND column_name = 'id'
+    `);
+    if (colCheck.rows.length > 0 && colCheck.rows[0].data_type === 'integer') {
+      await db.execute(sql`
+        ALTER TABLE enforcement_dossiers ADD COLUMN new_id TEXT DEFAULT gen_random_uuid();
+        UPDATE enforcement_dossiers SET new_id = gen_random_uuid() WHERE new_id IS NULL;
+        ALTER TABLE enforcement_dossiers DROP CONSTRAINT enforcement_dossiers_pkey;
+        ALTER TABLE enforcement_dossiers DROP COLUMN id;
+        ALTER TABLE enforcement_dossiers RENAME COLUMN new_id TO id;
+        ALTER TABLE enforcement_dossiers ADD PRIMARY KEY (id);
+      `);
+      console.log("[DB] Migrated enforcementDossiers PK from serial to UUID text");
+    }
+  } catch (error) {
+    console.error("[DB] Error migrating enforcementDossiers PK:", error);
+  }
+
+  // Migrate legacy tables: rename to _backup if they still exist as tables
+  try {
+    // Check if legacy 'claims' table exists as a BASE TABLE (not a view)
+    const legacyClaimsCheck = await db.execute(sql`
+      SELECT table_type FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name = 'claims' AND table_type = 'BASE TABLE'
+    `);
+    if (legacyClaimsCheck.rows.length > 0) {
+      await db.execute(sql`ALTER TABLE claims RENAME TO _legacy_claims_backup`);
+      console.log("[DB] Renamed legacy 'claims' table to '_legacy_claims_backup'");
+    }
+
+    // Check if legacy 'fwa_analyzed_claims' table exists as a BASE TABLE
+    const legacyFwaCheck = await db.execute(sql`
+      SELECT table_type FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name = 'fwa_analyzed_claims' AND table_type = 'BASE TABLE'
+    `);
+    if (legacyFwaCheck.rows.length > 0) {
+      await db.execute(sql`ALTER TABLE fwa_analyzed_claims RENAME TO _legacy_fwa_analyzed_claims_backup`);
+      console.log("[DB] Renamed legacy 'fwa_analyzed_claims' table to '_legacy_fwa_analyzed_claims_backup'");
+    }
+  } catch (error) {
+    console.error("[DB] Error migrating legacy tables:", error);
+  }
+
+  // Create backward-compatibility views for legacy table names
+  try {
+    await db.execute(sql`
+      CREATE OR REPLACE VIEW fwa_analyzed_claims AS
+      SELECT
+        id,
+        claim_number as claim_reference,
+        member_id as patient_id,
+        provider_id,
+        primary_diagnosis as icd,
+        cpt_codes[1] as cpt,
+        amount as total_amount,
+        status,
+        service_date,
+        created_at
+      FROM claims_v2;
+    `);
+    console.log("[DB] Backward-compatibility views created successfully");
+  } catch (error) {
+    console.error("[DB] Error creating backward-compatibility views:", error);
   }
 }

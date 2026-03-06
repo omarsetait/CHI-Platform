@@ -40,7 +40,7 @@ export function registerEnforcementWorkflowRoutes(
   // Execute the current stage of the workflow
   app.post('/api/fwa/enforcement-workflow/:id/execute', async (req, res) => {
     try {
-      const dossierRecord = await storage.getEnforcementDossier(Number(req.params.id));
+      const dossierRecord = await storage.getEnforcementDossier(req.params.id);
       if (!dossierRecord) {
         return res.status(404).json({ error: 'Dossier not found' });
       }
@@ -78,7 +78,7 @@ export function registerEnforcementWorkflowRoutes(
   // Run workflow until HITL gate
   app.post('/api/fwa/enforcement-workflow/:id/run', async (req, res) => {
     try {
-      const dossierRecord = await storage.getEnforcementDossier(Number(req.params.id));
+      const dossierRecord = await storage.getEnforcementDossier(req.params.id);
       if (!dossierRecord) {
         return res.status(404).json({ error: 'Dossier not found' });
       }
@@ -112,7 +112,7 @@ export function registerEnforcementWorkflowRoutes(
   app.post('/api/fwa/enforcement-workflow/:id/approve', async (req, res) => {
     try {
       const { reviewerId, reviewerName, decision, notes } = req.body;
-      const dossierRecord = await storage.getEnforcementDossier(Number(req.params.id));
+      const dossierRecord = await storage.getEnforcementDossier(req.params.id);
       if (!dossierRecord) {
         return res.status(404).json({ error: 'Dossier not found' });
       }
@@ -145,7 +145,7 @@ export function registerEnforcementWorkflowRoutes(
   // Get dossier details
   app.get('/api/fwa/enforcement-workflow/:id', async (req, res) => {
     try {
-      const dossier = await storage.getEnforcementDossier(Number(req.params.id));
+      const dossier = await storage.getEnforcementDossier(req.params.id);
       if (!dossier) {
         return res.status(404).json({ error: 'Dossier not found' });
       }
