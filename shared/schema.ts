@@ -1241,15 +1241,6 @@ export const insertReconciliationEntitySchema = createInsertSchema(reconciliatio
 export type InsertReconciliationEntity = z.infer<typeof insertReconciliationEntitySchema>;
 export type ReconciliationEntity = typeof reconciliationEntities.$inferSelect;
 
-// DEPRECATED: Duplicate of fwaCategoryTypeEnum (line 568) with same values but different DB name.
-// Use fwaCategoryTypeEnum for new code. This enum kept for backward compat with reconciliation_findings.fwa_category column.
-export const fwaCategoryEnum = pgEnum("fwa_category", [
-  "coding",
-  "management",
-  "physician",
-  "patient"
-]);
-
 // Reconciliation Findings Table
 export const reconciliationFindings = pgTable("reconciliation_findings", {
   id: text("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -1263,7 +1254,7 @@ export const reconciliationFindings = pgTable("reconciliation_findings", {
   recommendedAction: text("recommended_action"),
   evidence: jsonb("evidence").$type<Record<string, any>>().default({}),
   relatedClaimIds: text("related_claim_ids").array().default([]),
-  fwaCategory: fwaCategoryEnum("fwa_category"),
+  fwaCategory: fwaCategoryTypeEnum("fwa_category"),
   status: text("status").default("open"),
   createdAt: timestamp("created_at").defaultNow()
 });
