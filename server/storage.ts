@@ -1121,9 +1121,7 @@ export class MemStorage implements IStorage {
   }
 
   async getFwaFindingsByCaseId(caseId: string): Promise<FwaAnalysisFinding[]> {
-    return Array.from(this.fwaAnalysisFindings.values()).filter(
-      (finding) => finding.caseId === caseId,
-    );
+    return this.getFwaAnalysisFindingsByCaseId(caseId);
   }
 
   async createFwaFinding(data: InsertFwaAnalysisFinding): Promise<FwaAnalysisFinding> {
@@ -3241,8 +3239,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getFwaFindingsByCaseId(caseId: string): Promise<FwaAnalysisFinding[]> {
-    const results = await db.select().from(fwaAnalysisFindings).where(eq(fwaAnalysisFindings.caseId, caseId)).orderBy(desc(fwaAnalysisFindings.createdAt));
-    return results;
+    return this.getFwaAnalysisFindingsByCaseId(caseId);
   }
 
   async createFwaFinding(data: InsertFwaAnalysisFinding): Promise<FwaAnalysisFinding> {

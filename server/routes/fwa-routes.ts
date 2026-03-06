@@ -1115,7 +1115,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       if (!fwaCase) {
         return res.json([]);
       }
-      const findings = await storage.getFwaFindingsByCaseId(fwaCase.id);
+      const findings = await storage.getFwaAnalysisFindingsByCaseId(fwaCase.id);
       res.json(findings);
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/cases/:id/findings", "fetch FWA findings");
