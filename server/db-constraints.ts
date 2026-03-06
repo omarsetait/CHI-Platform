@@ -129,8 +129,30 @@ export async function createDatabaseConstraints(): Promise<void> {
       EXCEPTION WHEN duplicate_object THEN NULL; END $$;
       
       DO $$ BEGIN
-        ALTER TABLE claim_ingest_items 
+        ALTER TABLE claim_ingest_items
           ADD CONSTRAINT chk_claim_ingest_items_risk CHECK (risk_score IS NULL OR (risk_score >= 0 AND risk_score <= 100));
+      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+      -- Claims V2 amount constraints
+      DO $$ BEGIN
+        ALTER TABLE claims_v2
+          ADD CONSTRAINT chk_claims_v2_amount CHECK (amount::numeric >= 0);
+      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+      DO $$ BEGIN
+        ALTER TABLE claims_v2
+          ADD CONSTRAINT chk_claims_v2_approved_amount CHECK (approved_amount IS NULL OR approved_amount::numeric >= 0);
+      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+      -- Detection score constraints (non-negative)
+      DO $$ BEGIN
+        ALTER TABLE fwa_detection_results
+          ADD CONSTRAINT chk_detection_results_composite CHECK (composite_score::numeric >= 0);
+      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+      DO $$ BEGIN
+        ALTER TABLE fwa_provider_detection_results
+          ADD CONSTRAINT chk_provider_detection_composite CHECK (composite_score::numeric >= 0);
       EXCEPTION WHEN duplicate_object THEN NULL; END $$;
     `);
     
