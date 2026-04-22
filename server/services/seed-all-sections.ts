@@ -1177,16 +1177,9 @@ async function seedPreAuthFull() {
 // ---------------------------------------------------------------------------
 
 async function seedIntelligencePortal() {
-  const [provCount, scCount, drgCount] = await Promise.all([
+  const [provCount] = await Promise.all([
     db.select({ c: count() }).from(portalProviders),
-    db.select({ c: count() }).from(providerScorecards),
-    db.select({ c: count() }).from(providerDrgAssessments),
   ]);
-
-  if (Number(scCount[0]?.c || 0) >= 30) {
-    console.log("[SeedAll] Intelligence portal data already seeded");
-    return;
-  }
 
   // If no portal providers, seed a subset
   if (Number(provCount[0]?.c || 0) === 0) {
@@ -1200,68 +1193,64 @@ async function seedIntelligencePortal() {
     return;
   }
 
-  // Seed scorecards for last 6 months if not enough
-  if (Number(scCount[0]?.c || 0) < 30) {
-    console.log("[SeedAll] Seeding provider scorecards...");
-    const months = ["2025-09", "2025-10", "2025-11", "2025-12", "2026-01", "2026-02"];
-    const scorecards: (typeof providerScorecards.$inferInsert)[] = [];
-    for (const { code } of providers.slice(0, 52)) {
-      const hv = h(code);
-      const baseOverall = 55 + hv % 40;
-      for (let i = 0; i < months.length; i++) {
-        scorecards.push({
-          providerCode: code,
-          month: months[i],
-          overallScore: d(Math.min(98, baseOverall + i * 0.5)),
-          codingAccuracy: d(Math.min(98, 58 + hv % 35 + i * 0.4)),
-          rejectionRate: d(Math.max(2, 25 - hv % 18 - i * 0.3)),
-          sbsCompliance: d(Math.min(98, 50 + hv % 40 + i * 0.8)),
-          drgReadiness: d(Math.min(95, 30 + hv % 50 + i * 1.2)),
-          documentationQuality: d(Math.min(98, 55 + hv % 38 + i * 0.6)),
-          fwaRisk: d(5 + hv % 25),
-          peerRankPercentile: 20 + hv % 70,
-          trend: baseOverall > 75 ? "improving" : baseOverall > 60 ? "stable" : "declining",
-        });
-      }
-    }
-    await batchInsert(providerScorecards, scorecards);
-    console.log(`[SeedAll] Inserted ${scorecards.length} provider scorecards`);
-  }
-
-  // Seed DRG assessments
-  if (Number(drgCount[0]?.c || 0) < 50) {
-    console.log("[SeedAll] Seeding DRG assessments...");
-    const DRG_CRITERIA = [
-      { name: "Clinical Coder Certification", description: "All coders hold ACHI/ICD-10-AM certification", peerRate: "72" },
-      { name: "ICD-10-AM V12 Adoption", description: "Facility uses ICD-10-AM V12 for all coding", peerRate: "85" },
-      { name: "ACHI Procedure Coding", description: "Procedures coded using ACHI standards", peerRate: "78" },
-      { name: "Grouper Software Installed", description: "AR-DRG grouper software installed and tested", peerRate: "67" },
-      { name: "DRG-Based Costing Model", description: "Activity-based costing aligned with DRG weights", peerRate: "45" },
-      { name: "Clinical Documentation Standards", description: "Standardized clinical documentation templates in use", peerRate: "82" },
-      { name: "Unbundling Compliance", description: "Claims review for unbundled billing", peerRate: "38" },
-      { name: "Staff Training Program", description: "Ongoing DRG training for clinical staff", peerRate: "71" },
-    ];
-    const drg: (typeof providerDrgAssessments.$inferInsert)[] = [];
-    for (const { code } of providers.slice(0, 52)) {
-      const readiness = 30 + h(code) % 60;
-      const completeCount = Math.round((readiness / 100) * DRG_CRITERIA.length);
-      DRG_CRITERIA.forEach((c, i) => {
-        drg.push({
-          providerCode: code,
-          criteriaName: c.name,
-          criteriaDescription: c.description,
-          status: i < completeCount ? "complete" as const : i === completeCount ? "in_progress" as const : "not_started" as const,
-          gapDescription: i >= completeCount ? `${c.name} not yet finalized` : null,
-          recommendedAction: i >= completeCount ? `Complete ${c.name.toLowerCase()} and schedule verification audit` : null,
-          targetDate: i >= completeCount ? new Date(2026, 3 + i, 1) : null,
-          peerCompletionRate: c.peerRate,
-          sortOrder: i,
-        });
+  // Seed scorecards for last 6 months — onConflictDoNothing skips existing (providerCode, month) pairs
+  console.log("[SeedAll] Seeding provider scorecards...");
+  const months = ["2025-09", "2025-10", "2025-11", "2025-12", "2026-01", "2026-02"];
+  const scorecards: (typeof providerScorecards.$inferInsert)[] = [];
+  for (const { code } of providers.slice(0, 52)) {
+    const hv = h(code);
+    const baseOverall = 55 + hv % 40;
+    for (let i = 0; i < months.length; i++) {
+      scorecards.push({
+        providerCode: code,
+        month: months[i],
+        overallScore: d(Math.min(98, baseOverall + i * 0.5)),
+        codingAccuracy: d(Math.min(98, 58 + hv % 35 + i * 0.4)),
+        rejectionRate: d(Math.max(2, 25 - hv % 18 - i * 0.3)),
+        sbsCompliance: d(Math.min(98, 50 + hv % 40 + i * 0.8)),
+        drgReadiness: d(Math.min(95, 30 + hv % 50 + i * 1.2)),
+        documentationQuality: d(Math.min(98, 55 + hv % 38 + i * 0.6)),
+        fwaRisk: d(5 + hv % 25),
+        peerRankPercentile: 20 + hv % 70,
+        trend: baseOverall > 75 ? "improving" : baseOverall > 60 ? "stable" : "declining",
       });
     }
-    await batchInsert(providerDrgAssessments, drg);
-    console.log(`[SeedAll] Inserted ${drg.length} DRG assessment records`);
   }
+  await batchInsert(providerScorecards, scorecards);
+  console.log(`[SeedAll] Upserted ${scorecards.length} provider scorecards (duplicates skipped)`);
+
+  // Seed DRG assessments — onConflictDoNothing skips existing (providerCode, criteriaName) pairs
+  console.log("[SeedAll] Seeding DRG assessments...");
+  const DRG_CRITERIA = [
+    { name: "Clinical Coder Certification", description: "All coders hold ACHI/ICD-10-AM certification", peerRate: "72" },
+    { name: "ICD-10-AM V12 Adoption", description: "Facility uses ICD-10-AM V12 for all coding", peerRate: "85" },
+    { name: "ACHI Procedure Coding", description: "Procedures coded using ACHI standards", peerRate: "78" },
+    { name: "Grouper Software Installed", description: "AR-DRG grouper software installed and tested", peerRate: "67" },
+    { name: "DRG-Based Costing Model", description: "Activity-based costing aligned with DRG weights", peerRate: "45" },
+    { name: "Clinical Documentation Standards", description: "Standardized clinical documentation templates in use", peerRate: "82" },
+    { name: "Unbundling Compliance", description: "Claims review for unbundled billing", peerRate: "38" },
+    { name: "Staff Training Program", description: "Ongoing DRG training for clinical staff", peerRate: "71" },
+  ];
+  const drg: (typeof providerDrgAssessments.$inferInsert)[] = [];
+  for (const { code } of providers.slice(0, 52)) {
+    const readiness = 30 + h(code) % 60;
+    const completeCount = Math.round((readiness / 100) * DRG_CRITERIA.length);
+    DRG_CRITERIA.forEach((c, i) => {
+      drg.push({
+        providerCode: code,
+        criteriaName: c.name,
+        criteriaDescription: c.description,
+        status: i < completeCount ? "complete" as const : i === completeCount ? "in_progress" as const : "not_started" as const,
+        gapDescription: i >= completeCount ? `${c.name} not yet finalized` : null,
+        recommendedAction: i >= completeCount ? `Complete ${c.name.toLowerCase()} and schedule verification audit` : null,
+        targetDate: i >= completeCount ? new Date(2026, 3 + i, 1) : null,
+        peerCompletionRate: c.peerRate,
+        sortOrder: i,
+      });
+    });
+  }
+  await batchInsert(providerDrgAssessments, drg);
+  console.log(`[SeedAll] Upserted ${drg.length} DRG assessment records (duplicates skipped)`);
 
   // Seed rejection records
   const rejCount = (await db.select({ c: count() }).from(providerRejections))[0]?.c || 0;

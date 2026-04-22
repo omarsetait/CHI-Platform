@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, decimal, integer, timestamp, boolean, jsonb, pgEnum, serial, vector, index, date } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, decimal, integer, timestamp, boolean, jsonb, pgEnum, serial, vector, index, date, unique } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -5197,7 +5197,9 @@ export const providerScorecards = pgTable("provider_scorecards", {
   peerRankPercentile: integer("peer_rank_percentile"),
   trend: text("trend"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+}, (t) => ({
+  providerMonthUnique: unique("provider_scorecards_provider_month_unique").on(t.providerCode, t.month),
+}));
 
 export type ProviderScorecard = typeof providerScorecards.$inferSelect;
 export type InsertProviderScorecard = typeof providerScorecards.$inferInsert;
@@ -5235,7 +5237,9 @@ export const providerDrgAssessments = pgTable("provider_drg_assessments", {
   peerCompletionRate: decimal("peer_completion_rate", { precision: 5, scale: 2 }),
   sortOrder: integer("sort_order").default(0),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+}, (t) => ({
+  providerCriteriaUnique: unique("provider_drg_assessments_provider_criteria_unique").on(t.providerCode, t.criteriaName),
+}));
 
 export type ProviderDrgAssessment = typeof providerDrgAssessments.$inferSelect;
 export type InsertProviderDrgAssessment = typeof providerDrgAssessments.$inferInsert;
