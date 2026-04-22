@@ -134,6 +134,38 @@ app.use((req, res, next) => {
     console.log("[Seeder] Seeding disabled via DISABLE_SEEDER=true");
   }
 
+  // Platform-wide seed always runs in dev when any critical table is under-populated,
+  // independent of DISABLE_SEEDER (which only gates the heavier full legacy seeder).
+  if (process.env.NODE_ENV !== 'production') {
+    (async () => {
+      try {
+        const { db: dbCheck } = await import("./db");
+        const {
+          fwaHighRiskProviders: hrpTable,
+          enforcementCases: ecTable,
+          preAuthClaims: pacTable,
+        } = await import("@shared/schema");
+        const { count: countFn } = await import("drizzle-orm");
+        const [[hrp], [ec], [pac]] = await Promise.all([
+          dbCheck.select({ c: countFn() }).from(hrpTable),
+          dbCheck.select({ c: countFn() }).from(ecTable),
+          dbCheck.select({ c: countFn() }).from(pacTable),
+        ]);
+        const needsSeed =
+          Number(hrp?.c ?? 0) < 5 ||
+          Number(ec?.c ?? 0) < 5 ||
+          Number(pac?.c ?? 0) < 5;
+        if (needsSeed) {
+          console.log("[Seeder] One or more critical sections empty — running platform-wide seed...");
+          const { seedAllSections } = await import("./services/seed-all-sections");
+          await seedAllSections();
+        }
+      } catch (err) {
+        console.error("[Seeder] Error in platform-wide startup seed check:", err);
+      }
+    })();
+  }
+
   const server = await registerRoutes(app);
   knowledgeUploadQueueService.start();
 

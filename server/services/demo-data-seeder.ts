@@ -1315,6 +1315,24 @@ export async function seedDatabaseWithDemoData(): Promise<void> {
       console.error("[Seeder] Error seeding BRD data:", error);
     }
 
+    // Seed platform-wide demo data: High-Risk Entities, Enforcement, Pre-Auth, Portals
+    try {
+      const { db: dbInner } = await import("../db");
+      const { fwaHighRiskProviders: hrpTable } = await import("@shared/schema");
+      const { count: countFn } = await import("drizzle-orm");
+      const hrpCount = await dbInner.select({ c: countFn() }).from(hrpTable);
+      const needsSeedAll = Number(hrpCount[0]?.c || 0) < 5;
+      if (needsSeedAll) {
+        console.log("[Seeder] Running platform-wide seed (seed-all-sections)...");
+        const { seedAllSections } = await import("./seed-all-sections");
+        await seedAllSections();
+      } else {
+        console.log("[Seeder] Platform-wide seed already done, skipping");
+      }
+    } catch (error) {
+      console.error("[Seeder] Error running seed-all-sections:", error);
+    }
+
     console.log("[Seeder] All background seeding complete");
   } catch (error) {
     console.error("[Seeder] Critical error during background seeding:", error);

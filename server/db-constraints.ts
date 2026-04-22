@@ -181,11 +181,11 @@ export async function createDatabaseConstraints(): Promise<void> {
           ADD CONSTRAINT fk_patient_timeline_patient FOREIGN KEY (patient_id) REFERENCES members(id);
       EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
-      -- Detection results FK constraints
+      -- Drop legacy FK on fwa_detection_results.claim_id if it exists
+      -- (claim_id is a logical reference only; claims_v2 may be empty in demo/dev environments)
       DO $$ BEGIN
-        ALTER TABLE fwa_detection_results
-          ADD CONSTRAINT fk_detection_results_claim FOREIGN KEY (claim_id) REFERENCES claims_v2(id);
-      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+        ALTER TABLE fwa_detection_results DROP CONSTRAINT IF EXISTS fk_detection_results_claim;
+      EXCEPTION WHEN OTHERS THEN NULL; END $$;
 
       -- Chat FK constraints (with CASCADE delete)
       DO $$ BEGIN

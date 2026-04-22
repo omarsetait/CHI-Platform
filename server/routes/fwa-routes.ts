@@ -122,7 +122,7 @@ export function registerFwaRoutes(
   app.all("/api/admin/seed-database", async (req, res) => {
     try {
       // Strict token-based authentication - requires ADMIN_SEED_TOKEN env var
-      const authToken = req.headers["x-admin-token"] || req.query.token;
+      const authToken = req.headers["x-admin-token"];
       const expectedToken = process.env.ADMIN_SEED_TOKEN;
 
       if (!expectedToken || authToken !== expectedToken) {
@@ -160,10 +160,61 @@ export function registerFwaRoutes(
     }
   });
 
+  // Admin endpoint to seed all platform sections (idempotent)
+  app.post("/api/admin/seed-all", async (req, res) => {
+    try {
+      const authToken = req.headers["x-admin-token"];
+      const expectedToken = process.env.ADMIN_SEED_TOKEN;
+
+      if (!expectedToken || authToken !== expectedToken) {
+        return res.status(401).json({ error: "Unauthorized. ADMIN_SEED_TOKEN must be configured and x-admin-token header must match." });
+      }
+
+      console.log("[Admin] Platform-wide seed triggered via /api/admin/seed-all ...");
+
+      const { seedAllSections } = await import("../services/seed-all-sections");
+      await seedAllSections();
+
+      const {
+        fwaHighRiskProviders: hrpTable,
+        fwaHighRiskPatients: hrpatTable,
+        fwaHighRiskDoctors: hrdTable,
+        enforcementCases: ecTable,
+        preAuthClaims: paTable,
+        memberComplaints: mcTable,
+      } = await import("@shared/schema");
+      const { count } = await import("drizzle-orm");
+
+      const [hrp, hrpat, hrd, ec, pa, mc] = await Promise.all([
+        db.select({ c: count() }).from(hrpTable),
+        db.select({ c: count() }).from(hrpatTable),
+        db.select({ c: count() }).from(hrdTable),
+        db.select({ c: count() }).from(ecTable),
+        db.select({ c: count() }).from(paTable),
+        db.select({ c: count() }).from(mcTable),
+      ]);
+
+      res.json({
+        success: true,
+        message: "Platform-wide seed complete",
+        counts: {
+          highRiskProviders: Number(hrp[0]?.c || 0),
+          highRiskPatients: Number(hrpat[0]?.c || 0),
+          highRiskDoctors: Number(hrd[0]?.c || 0),
+          enforcementCases: Number(ec[0]?.c || 0),
+          preAuthClaims: Number(pa[0]?.c || 0),
+          memberComplaints: Number(mc[0]?.c || 0),
+        },
+      });
+    } catch (error) {
+      handleRouteError(res, error, "/api/admin/seed-all", "seed all sections");
+    }
+  });
+
   // Admin endpoint to verify database state (for debugging production)
   app.get("/api/admin/verify-database", async (req, res) => {
     try {
-      const authToken = req.headers["x-admin-token"] || req.query.token;
+      const authToken = req.headers["x-admin-token"];
       const expectedToken = process.env.ADMIN_SEED_TOKEN;
 
       if (!expectedToken || authToken !== expectedToken) {
@@ -215,7 +266,7 @@ export function registerFwaRoutes(
   // Admin endpoint to seed audit sessions data
   app.get("/api/admin/seed-audit-sessions", async (req, res) => {
     try {
-      const authToken = req.headers["x-admin-token"] || req.query.token;
+      const authToken = req.headers["x-admin-token"];
       const expectedToken = process.env.ADMIN_SEED_TOKEN;
 
       if (!expectedToken || authToken !== expectedToken) {
@@ -259,7 +310,7 @@ export function registerFwaRoutes(
   // Admin endpoint to populate rule violations in detection results
   app.get("/api/admin/populate-rule-violations", async (req, res) => {
     try {
-      const authToken = req.headers["x-admin-token"] || req.query.token;
+      const authToken = req.headers["x-admin-token"];
       const expectedToken = process.env.ADMIN_SEED_TOKEN;
 
       if (!expectedToken || authToken !== expectedToken) {
@@ -351,7 +402,7 @@ export function registerFwaRoutes(
   app.post("/api/fwa/rules/seed-enhanced", async (req, res) => {
     try {
       // Admin authorization required for database seeding
-      const authToken = req.headers["x-admin-token"] || req.query.token;
+      const authToken = req.headers["x-admin-token"];
       const expectedToken = process.env.ADMIN_SEED_TOKEN;
 
       if (!expectedToken || authToken !== expectedToken) {
@@ -5586,7 +5637,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
   app.post("/api/fwa/chi/circulars/:id/send", async (req, res) => {
     try {
       // Admin authorization required for sending mass emails
-      const authToken = req.headers["x-admin-token"] || req.query.token;
+      const authToken = req.headers["x-admin-token"];
       const expectedToken = process.env.ADMIN_SEED_TOKEN;
 
       if (!expectedToken || authToken !== expectedToken) {
@@ -5658,7 +5709,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
   app.post("/api/fwa/chi/test-email", async (req, res) => {
     try {
       // Admin authorization required
-      const authToken = req.headers["x-admin-token"] || req.query.token;
+      const authToken = req.headers["x-admin-token"];
       const expectedToken = process.env.ADMIN_SEED_TOKEN;
 
       if (!expectedToken || authToken !== expectedToken) {
