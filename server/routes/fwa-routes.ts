@@ -1455,90 +1455,99 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       const dateTo = (req.query.dateTo as string) || "";
       const detectionMethod = (req.query.detectionMethod as string) || "";
 
-      // Build WHERE conditions for filtering
+      // Build WHERE conditions — driven by authoritative fwa_high_risk_providers seed table
       const conditions: string[] = [];
       if (search) {
-        conditions.push(`(pdr.provider_id ILIKE '%${search.replace(/'/g, "''")}%' OR pd.name ILIKE '%${search.replace(/'/g, "''")}%')`);
+        conditions.push(`(hrp.provider_id ILIKE '%${search.replace(/'/g, "''")}%' OR hrp.provider_name ILIKE '%${search.replace(/'/g, "''")}%')`);
       }
       if (minScore > 0) {
-        conditions.push(`COALESCE(pdr.composite_score, 0) >= ${minScore}`);
+        conditions.push(`hrp.risk_score::numeric >= ${minScore}`);
       }
       if (maxScore < 100) {
-        conditions.push(`COALESCE(pdr.composite_score, 0) <= ${maxScore}`);
+        conditions.push(`hrp.risk_score::numeric <= ${maxScore}`);
       }
       if (dateFrom) {
-        conditions.push(`pdr.analyzed_at >= '${dateFrom.replace(/'/g, "''")}'::timestamp`);
+        conditions.push(`hrp.last_flagged_date >= '${dateFrom.replace(/'/g, "''")}'::timestamp`);
       }
       if (dateTo) {
-        conditions.push(`pdr.analyzed_at <= '${dateTo.replace(/'/g, "''")}'::timestamp + interval '1 day'`);
+        conditions.push(`hrp.last_flagged_date <= '${dateTo.replace(/'/g, "''")}'::timestamp + interval '1 day'`);
       }
       if (detectionMethod) {
         conditions.push(`pdr.primary_detection_method = '${detectionMethod.replace(/'/g, "''")}'`);
       }
-      // Risk tier filter applied after score calculation
       const riskTierConditions: Record<string, string> = {
-        critical: "COALESCE(pdr.composite_score, 0) >= 40",
-        high: "COALESCE(pdr.composite_score, 0) >= 30 AND COALESCE(pdr.composite_score, 0) < 40",
-        medium: "COALESCE(pdr.composite_score, 0) >= 20 AND COALESCE(pdr.composite_score, 0) < 30",
-        low: "COALESCE(pdr.composite_score, 0) >= 10 AND COALESCE(pdr.composite_score, 0) < 20",
-        minimal: "COALESCE(pdr.composite_score, 0) < 10",
+        critical: "hrp.risk_level = 'critical'",
+        high: "hrp.risk_level = 'high'",
+        medium: "hrp.risk_level = 'medium'",
+        low: "hrp.risk_level = 'low'",
+        minimal: "hrp.risk_level = 'minimal'",
       };
       if (riskTier && riskTierConditions[riskTier]) {
         conditions.push(riskTierConditions[riskTier]);
       }
       const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
-      // Map sortBy field to SQL column
+      // Map sortBy field to SQL column (all from base hrp table)
       const sortColumns: Record<string, string> = {
-        riskScore: "pdr.composite_score",
-        totalExposure: "total_exposure",
-        totalClaims: "total_claims",
-        providerId: "pdr.provider_id",
+        riskScore: "hrp.risk_score::numeric",
+        totalExposure: "hrp.total_exposure::numeric",
+        totalClaims: "hrp.total_claims",
+        providerId: "hrp.provider_id",
       };
-      const orderColumn = sortColumns[sortBy] || "pdr.composite_score";
+      const orderColumn = sortColumns[sortBy] || "hrp.risk_score::numeric";
 
-      // Count query for total
+      // Count query — base is fwa_high_risk_providers (authoritative seed table)
       const countResult = await db.execute(sql.raw(`
         SELECT COUNT(*) as total
-        FROM fwa_provider_detection_results pdr
-        LEFT JOIN provider_directory pd ON pd.id = pdr.provider_id
+        FROM fwa_high_risk_providers hrp
+        LEFT JOIN LATERAL (
+          SELECT primary_detection_method FROM fwa_provider_detection_results
+          WHERE provider_id = hrp.provider_id
+          ORDER BY analyzed_at DESC LIMIT 1
+        ) pdr ON TRUE
         ${whereClause}
       `));
       const total = parseInt((countResult.rows[0] as any)?.total) || 0;
 
-      // Main data query with pagination
+      // Main data query — fwa_high_risk_providers as authoritative base,
+      // enriched with latest detection engine scores via LATERAL JOIN (one row per entity)
       const providers = await db.execute(sql.raw(`
-        WITH claim_aggs AS (
-          SELECT
-            provider_id,
-            COUNT(*)::int as claim_count,
-            COUNT(DISTINCT member_id)::int as patient_count,
-            COALESCE(SUM(amount::numeric), 0) as total_exposure,
-            COALESCE(AVG(amount::numeric), 0) as avg_amount
-          FROM claims_v2
-          WHERE provider_id IS NOT NULL
-          GROUP BY provider_id
-        )
         SELECT
-          pdr.provider_id,
-          COALESCE(pdr.composite_score, 0) as avg_risk_score,
-          COALESCE(pdr.composite_score, 0) as max_risk_score,
-          pdr.risk_level,
+          hrp.provider_id,
+          hrp.provider_name as hrp_provider_name,
+          hrp.provider_type as hrp_provider_type,
+          hrp.specialty as hrp_specialty,
+          hrp.organization as hrp_organization,
+          hrp.risk_score::numeric as hrp_risk_score,
+          hrp.risk_level as hrp_risk_level,
+          hrp.total_claims as hrp_total_claims,
+          hrp.flagged_claims as hrp_flagged_claims,
+          hrp.denial_rate as hrp_denial_rate,
+          hrp.avg_claim_amount as hrp_avg_claim_amount,
+          hrp.total_exposure as hrp_total_exposure,
+          hrp.claims_per_month as hrp_claims_per_month,
+          hrp.cpm_trend as hrp_cpm_trend,
+          hrp.cpm_peer_average as hrp_cpm_peer_average,
+          hrp.fwa_case_count as hrp_fwa_case_count,
+          hrp.reasons as hrp_reasons,
+          hrp.last_flagged_date as hrp_last_flagged_date,
+          pdr.composite_score,
           pdr.rule_engine_score,
           pdr.statistical_score,
           pdr.unsupervised_score,
           pdr.rag_llm_score as rag_score,
           pdr.semantic_score,
-          pdr.analyzed_at as last_detection_date,
-          COALESCE((pdr.aggregated_metrics->>'totalClaims')::integer, ca.claim_count, fs.claim_count, 0) as total_claims,
-          COALESCE(ca.patient_count, fs.unique_patients, 0) as unique_patients,
-          COALESCE((pdr.aggregated_metrics->>'totalAmount')::numeric, ca.total_exposure, fs.total_amount, 0) as total_exposure,
-          pd.name as provider_name,
-          pd.specialty
-        FROM fwa_provider_detection_results pdr
-        LEFT JOIN claim_aggs ca ON ca.provider_id = pdr.provider_id
-        LEFT JOIN fwa_feature_store fs ON fs.entity_id = pdr.provider_id AND fs.entity_type = 'provider'
-        LEFT JOIN provider_directory pd ON pd.id = pdr.provider_id
+          pdr.analyzed_at as last_detection_date
+        FROM fwa_high_risk_providers hrp
+        LEFT JOIN LATERAL (
+          SELECT composite_score, rule_engine_score, statistical_score,
+                 unsupervised_score, rag_llm_score, semantic_score, analyzed_at,
+                 primary_detection_method,
+                 COALESCE((aggregated_metrics->>'uniquePatients')::integer, 0) as unique_patients
+          FROM fwa_provider_detection_results
+          WHERE provider_id = hrp.provider_id
+          ORDER BY analyzed_at DESC LIMIT 1
+        ) pdr ON TRUE
         ${whereClause}
         ORDER BY ${orderColumn} ${sortOrder} NULLS LAST
         LIMIT ${pageSize} OFFSET ${offset}
@@ -1576,49 +1585,61 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
 
       const formattedProviders = providers.rows.map((p: any, idx: number) => {
         const providerId = p.provider_id?.trim() || `PRV-${idx + 1}`;
-        const avgRiskScore = safeNum(p.avg_risk_score, 0);
-        const totalExposure = safeNum(p.total_exposure, 0);
-        const totalClaims = parseInt(p.total_claims) || 0;
-        const uniquePatients = parseInt(p.unique_patients) || 0;
-        const riskLevel = calculateRiskLevel(avgRiskScore);
-
+        // All core fields come directly from the authoritative hrp seed table
+        const avgRiskScore = safeNum(p.hrp_risk_score, 0);
+        const totalExposure = safeNum(p.hrp_total_exposure, 0);
+        const totalClaims = parseInt(p.hrp_total_claims) || 0;
+        const riskLevel = (p.hrp_risk_level || "low") as "critical" | "high" | "medium" | "low" | "minimal";
         const isHighRisk = riskLevel === 'high' || riskLevel === 'critical';
         const isCritical = riskLevel === 'critical';
 
-        const reasons: string[] = [];
-        if (isCritical) reasons.push("Critical risk level detected");
-        if (isHighRisk) reasons.push("Elevated risk patterns identified");
-        if (avgRiskScore >= 50) reasons.push(`Risk score: ${avgRiskScore.toFixed(1)}%`);
-        if (safeNum(p.statistical_score, 0) > 20) reasons.push(`Statistical deviation: ${safeNum(p.statistical_score, 0).toFixed(1)}`);
-        if (totalExposure > 500000) reasons.push(`High exposure: SAR ${totalExposure.toLocaleString()}`);
-        if (totalClaims > 30) reasons.push(`High volume: ${totalClaims} claims`);
-        if (reasons.length === 0) reasons.push("Routine monitoring - no significant concerns");
+        // Use seeded reasons; fall back to generated ones only if none exist
+        let reasons: string[] = [];
+        if (p.hrp_reasons && Array.isArray(p.hrp_reasons) && p.hrp_reasons.length > 0) {
+          reasons = p.hrp_reasons;
+        } else if (p.hrp_reasons && typeof p.hrp_reasons === 'string') {
+          try { reasons = JSON.parse(p.hrp_reasons); } catch { reasons = [p.hrp_reasons]; }
+        }
+        if (reasons.length === 0) {
+          if (isCritical) reasons.push("Critical risk level detected");
+          if (isHighRisk) reasons.push("Elevated risk patterns identified");
+          if (avgRiskScore >= 50) reasons.push(`Risk score: ${avgRiskScore.toFixed(1)}%`);
+          if (safeNum(p.statistical_score, 0) > 20) reasons.push(`Statistical deviation: ${safeNum(p.statistical_score, 0).toFixed(1)}`);
+          if (totalExposure > 500000) reasons.push(`High exposure: SAR ${totalExposure.toLocaleString()}`);
+          if (totalClaims > 30) reasons.push(`High volume: ${totalClaims} claims`);
+          if (reasons.length === 0) reasons.push("Routine monitoring - no significant concerns");
+        }
 
-        const providerName = p.provider_name || providerNames[providerId] ||
+        const providerName = p.hrp_provider_name || providerNames[providerId] ||
           (providerId.startsWith('PRV-GEN') ? `Saudi Healthcare Provider ${providerId.replace('PRV-GEN-', '')}` :
             `Provider ${providerId.substring(0, 8)}`);
+
+        const flaggedClaims = parseInt(p.hrp_flagged_claims) || (isHighRisk ? 1 : 0);
+        const avgClaimAmount = p.hrp_avg_claim_amount
+          ? safeNum(p.hrp_avg_claim_amount, 0)
+          : (totalClaims > 0 ? totalExposure / totalClaims : 0);
 
         return {
           id: `p${offset + idx + 1}`,
           providerId: providerId,
           providerName: providerName,
-          providerType: "Healthcare Facility",
-          specialty: p.specialty || "Multi-Specialty",
-          organization: "Saudi Healthcare Network",
+          providerType: p.hrp_provider_type || "Healthcare Facility",
+          specialty: p.hrp_specialty || "Multi-Specialty",
+          organization: p.hrp_organization || "Saudi Healthcare Network",
           riskScore: avgRiskScore.toFixed(2),
           riskLevel: riskLevel,
           totalClaims: totalClaims,
-          flaggedClaims: isHighRisk ? 1 : 0,
-          denialRate: "0.00",
-          avgClaimAmount: (totalClaims > 0 ? totalExposure / totalClaims : 0).toFixed(2),
+          flaggedClaims: flaggedClaims,
+          denialRate: p.hrp_denial_rate ? safeNum(p.hrp_denial_rate, 0).toFixed(2) : "0.00",
+          avgClaimAmount: avgClaimAmount.toFixed(2),
           totalExposure: totalExposure.toFixed(2),
-          claimsPerMonth: String(Math.round(totalClaims / 6)),
-          cpmTrend: avgRiskScore > 40 ? "+5.2" : "-2.1",
-          cpmPeerAverage: "35.00",
-          fwaCaseCount: isHighRisk ? 1 : 0,
-          uniquePatients: uniquePatients,
+          claimsPerMonth: p.hrp_claims_per_month ? String(safeNum(p.hrp_claims_per_month, 0).toFixed(2)) : String(Math.round(totalClaims / 6)),
+          cpmTrend: p.hrp_cpm_trend ? String(safeNum(p.hrp_cpm_trend, 0).toFixed(1)) : (avgRiskScore > 40 ? "+5.2" : "-2.1"),
+          cpmPeerAverage: p.hrp_cpm_peer_average ? safeNum(p.hrp_cpm_peer_average, 35).toFixed(2) : "35.00",
+          fwaCaseCount: parseInt(p.hrp_fwa_case_count) || (isHighRisk ? 1 : 0),
+          uniquePatients: parseInt(p.unique_patients) || 0,
           reasons: reasons,
-          lastFlaggedDate: p.last_detection_date || new Date(),
+          lastFlaggedDate: p.hrp_last_flagged_date || p.last_detection_date || new Date(),
           createdAt: new Date(),
           updatedAt: new Date()
         };
@@ -3330,127 +3351,93 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       const dateTo = (req.query.dateTo as string) || "";
       const detectionMethod = (req.query.detectionMethod as string) || "";
 
-      // Build HAVING/WHERE conditions for the CTE
-      const havingConditions: string[] = ["COUNT(*) >= 1"];
+      // Build WHERE conditions on the seeded fwa_high_risk_patients table
+      const whereConditions: string[] = [];
       if (search) {
-        havingConditions.push(`ds.patient_id ILIKE '%${search.replace(/'/g, "''")}%'`);
+        whereConditions.push(`(hrp.patient_id ILIKE '%${search.replace(/'/g, "''")}%' OR hrp.patient_name ILIKE '%${search.replace(/'/g, "''")}%')`);
       }
-      if (dateFrom) {
-        havingConditions.push(`MAX(ds.analyzed_at) >= '${dateFrom.replace(/'/g, "''")}'::timestamp`);
-      }
-      if (dateTo) {
-        havingConditions.push(`MAX(ds.analyzed_at) <= '${dateTo.replace(/'/g, "''")}'::timestamp + interval '1 day'`);
-      }
-
-      // Risk tier and score filters applied in outer query
-      const outerConditions: string[] = [];
       if (minScore > 0) {
-        outerConditions.push(`avg_risk_score >= ${minScore}`);
+        whereConditions.push(`hrp.risk_score::numeric >= ${minScore}`);
       }
       if (maxScore < 100) {
-        outerConditions.push(`avg_risk_score <= ${maxScore}`);
+        whereConditions.push(`hrp.risk_score::numeric <= ${maxScore}`);
       }
       const riskTierConditions: Record<string, string> = {
-        critical: "(avg_risk_score >= 40 OR critical_count >= 3)",
-        high: "(avg_risk_score >= 30 AND avg_risk_score < 40)",
-        medium: "(avg_risk_score >= 20 AND avg_risk_score < 30)",
-        low: "(avg_risk_score < 20)",
+        critical: "hrp.risk_level = 'critical'",
+        high: "hrp.risk_level = 'high'",
+        medium: "hrp.risk_level = 'medium'",
+        low: "hrp.risk_level = 'low'",
+        minimal: "hrp.risk_level = 'minimal'",
       };
       if (riskTier && riskTierConditions[riskTier]) {
-        outerConditions.push(riskTierConditions[riskTier]);
+        whereConditions.push(riskTierConditions[riskTier]);
       }
-      const outerWhereClause = outerConditions.length > 0 ? `WHERE ${outerConditions.join(" AND ")}` : "";
+      if (dateFrom) {
+        whereConditions.push(`hrp.last_claim_date >= '${dateFrom.replace(/'/g, "''")}'::timestamp`);
+      }
+      if (dateTo) {
+        whereConditions.push(`hrp.last_claim_date <= '${dateTo.replace(/'/g, "''")}'::timestamp + interval '1 day'`);
+      }
+      if (detectionMethod) {
+        whereConditions.push(`pdr.primary_detection_method = '${detectionMethod.replace(/'/g, "''")}'`);
+      }
+      const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(" AND ")}` : "";
 
       // Map sortBy field to SQL column
       const sortColumns: Record<string, string> = {
-        riskScore: "avg_risk_score",
-        totalAmount: "total_amount",
-        totalClaims: "total_claims",
-        patientId: "patient_id",
-        uniqueProviders: "unique_providers",
+        riskScore: "hrp.risk_score::numeric",
+        totalAmount: "hrp.total_amount::numeric",
+        totalClaims: "hrp.total_claims",
+        patientId: "hrp.patient_id",
+        patientName: "hrp.patient_name",
       };
-      const orderColumn = sortColumns[sortBy] || "avg_risk_score";
+      const orderColumn = sortColumns[sortBy] || "hrp.risk_score::numeric";
 
-      // Count query
+      // Count query — base is fwa_high_risk_patients (authoritative seed table)
       const countResult = await db.execute(sql.raw(`
-        WITH detection_stats AS (
-          SELECT
-            patient_id,
-            COUNT(*) as total_detections,
-            COUNT(DISTINCT claim_id) as total_claims,
-            COUNT(DISTINCT provider_id) as unique_providers,
-            COALESCE(AVG(CASE WHEN composite_score IS NOT NULL THEN composite_score::decimal ELSE NULL END), 0) as avg_risk_score,
-            SUM(CASE WHEN composite_risk_level = 'critical' THEN 1 ELSE 0 END) as critical_count
-          FROM fwa_detection_results
-          WHERE patient_id IS NOT NULL AND patient_id != '' ${search ? `AND patient_id ILIKE '%${search.replace(/'/g, "''")}%'` : ""}
-          GROUP BY patient_id
-          HAVING COUNT(*) >= 1
-        )
-        SELECT COUNT(*) as total FROM detection_stats ${outerWhereClause}
+        SELECT COUNT(*) as total
+        FROM fwa_high_risk_patients hrp
+        LEFT JOIN LATERAL (
+          SELECT primary_detection_method FROM fwa_patient_detection_results
+          WHERE patient_id = hrp.patient_id
+          ORDER BY analyzed_at DESC LIMIT 1
+        ) pdr ON TRUE
+        ${whereClause}
       `));
       const total = parseInt((countResult.rows[0] as any)?.total) || 0;
 
-      // Main data query with pagination
+      // Main data query — fwa_high_risk_patients as authoritative base (one row per entity),
+      // LATERAL JOIN ensures at most one detection result row per patient (no count inflation)
       const patients = await db.execute(sql.raw(`
-        WITH detection_stats AS (
-          SELECT
-            patient_id,
-            COUNT(*) as total_detections,
-            COUNT(DISTINCT claim_id) as total_claims,
-            COUNT(DISTINCT provider_id) as unique_providers,
-            COALESCE(AVG(CASE WHEN composite_score IS NOT NULL THEN composite_score::decimal ELSE NULL END), 0) as avg_risk_score,
-            COALESCE(MAX(CASE WHEN composite_score IS NOT NULL THEN composite_score::decimal ELSE NULL END), 0) as max_risk_score,
-            SUM(CASE WHEN composite_risk_level IN ('critical', 'high') THEN 1 ELSE 0 END) as high_risk_count,
-            SUM(CASE WHEN composite_risk_level = 'critical' THEN 1 ELSE 0 END) as critical_count,
-            MAX(analyzed_at) as last_detection_date
-          FROM fwa_detection_results
-          WHERE patient_id IS NOT NULL AND patient_id != '' ${search ? `AND patient_id ILIKE '%${search.replace(/'/g, "''")}%'` : ""}
-          GROUP BY patient_id
-          HAVING COUNT(*) >= 1
-        ),
-        claim_amounts AS (
-          SELECT
-            member_id as patient_id,
-            COALESCE(SUM(amount::decimal), 0) as total_amount,
-            COALESCE(AVG(amount::decimal), 0) as avg_claim_amount
-          FROM claims_v2
-          WHERE member_id IS NOT NULL AND amount IS NOT NULL
-          GROUP BY member_id
-        )
         SELECT
-          ds.patient_id,
-          ds.total_detections,
-          ds.total_claims,
-          ds.unique_providers,
-          ROUND(ds.avg_risk_score, 2) as avg_risk_score,
-          ROUND(ds.max_risk_score, 2) as max_risk_score,
-          ds.high_risk_count,
-          ds.critical_count,
-          ds.last_detection_date,
-          ROUND(COALESCE(ca.total_amount, p360.claims_amount, 0), 2) as total_amount,
-          CASE
-            WHEN ds.avg_risk_score >= 40 OR ds.critical_count >= 3 THEN 'critical'
-            WHEN ds.avg_risk_score >= 30 OR ds.high_risk_count >= 5 THEN 'high'
-            WHEN ds.avg_risk_score >= 20 OR ds.high_risk_count >= 2 THEN 'medium'
-            ELSE 'low'
-          END as risk_level,
-          CASE
-            WHEN ds.avg_risk_score >= 40 OR ds.critical_count >= 3 THEN 1
-            WHEN ds.avg_risk_score >= 30 OR ds.high_risk_count >= 5 THEN 2
-            WHEN ds.avg_risk_score >= 20 OR ds.high_risk_count >= 2 THEN 3
-            ELSE 4
-          END as risk_order
-        FROM detection_stats ds
-        LEFT JOIN claim_amounts ca ON ds.patient_id = ca.patient_id
-        LEFT JOIN (
-          SELECT patient_id, (claims_summary->>'totalAmount')::numeric as claims_amount
-          FROM patient_360
-        ) p360 ON ds.patient_id = p360.patient_id
-        ${outerWhereClause}
-        ORDER BY
-          risk_order ASC,
-          ${orderColumn} ${sortOrder},
-          ds.avg_risk_score DESC
+          hrp.patient_id,
+          hrp.patient_name,
+          hrp.member_id,
+          hrp.risk_score::numeric as risk_score,
+          hrp.risk_level,
+          hrp.total_claims,
+          hrp.flagged_claims,
+          hrp.total_amount::numeric as total_amount,
+          hrp.fwa_case_count,
+          hrp.primary_diagnosis,
+          hrp.reasons,
+          hrp.last_claim_date,
+          pdr.rule_engine_score,
+          pdr.statistical_score,
+          pdr.unsupervised_score,
+          pdr.rag_llm_score,
+          pdr.semantic_score,
+          pdr.analyzed_at as last_detection_date
+        FROM fwa_high_risk_patients hrp
+        LEFT JOIN LATERAL (
+          SELECT rule_engine_score, statistical_score, unsupervised_score,
+                 rag_llm_score, semantic_score, analyzed_at, primary_detection_method
+          FROM fwa_patient_detection_results
+          WHERE patient_id = hrp.patient_id
+          ORDER BY analyzed_at DESC LIMIT 1
+        ) pdr ON TRUE
+        ${whereClause}
+        ORDER BY ${orderColumn} ${sortOrder} NULLS LAST
         LIMIT ${pageSize} OFFSET ${offset}
       `));
 
@@ -3461,53 +3448,43 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         return Number.isFinite(num) ? num : fallback;
       };
 
-      // Saudi patient name mapping
-      const patientNames = [
-        'محمد أحمد الشمري (Mohammed Al Shammari)',
-        'فهد عبدالله القحطاني (Fahd Al Qahtani)',
-        'عبدالرحمن سعد الدوسري (Abdulrahman Al Dosari)',
-        'سلطان خالد العتيبي (Sultan Al Otaibi)',
-        'نورة محمد الغامدي (Noura Al Ghamdi)',
-        'سارة عبدالله الحربي (Sara Al Harbi)',
-        'أحمد فهد المطيري (Ahmed Al Mutairi)',
-        'خالد سعود الزهراني (Khaled Al Zahrani)',
-        'عايشة ناصر الشهري (Aisha Al Shehri)',
-        'منى صالح البلوي (Mona Al Balawi)'
-      ];
-
       const formattedPatients = patients.rows.map((p: any, idx: number) => {
         const patientId = p.patient_id?.trim() || `PAT-${idx + 1}`;
-        const avgRiskScore = safeNum(p.avg_risk_score, 0);
+        const riskScore = safeNum(p.risk_score, 0);
         const totalAmount = safeNum(p.total_amount, 0);
-        const highRiskCount = parseInt(p.high_risk_count) || 0;
-        const criticalCount = parseInt(p.critical_count) || 0;
         const totalClaims = parseInt(p.total_claims) || 0;
-        const uniqueProviders = parseInt(p.unique_providers) || 0;
+        const flaggedClaims = parseInt(p.flagged_claims) || 0;
+        const fwaCaseCount = parseInt(p.fwa_case_count) || 0;
 
-        const reasons: string[] = [];
-        if (uniqueProviders > 5) reasons.push("Doctor shopping pattern: Multiple providers visited");
-        else if (uniqueProviders > 3) reasons.push(`High provider diversity: ${uniqueProviders} different providers`);
-        if (criticalCount > 0) reasons.push(`${criticalCount} critical risk detections`);
-        if (highRiskCount > 0) reasons.push(`${highRiskCount} high-risk claims flagged`);
-        if (avgRiskScore >= 50) reasons.push(`Elevated average risk score: ${avgRiskScore.toFixed(1)}%`);
-        if (totalAmount > 100000) reasons.push(`High claim volume: SAR ${totalAmount.toLocaleString()}`);
-        if (reasons.length === 0) reasons.push("Routine monitoring - no significant concerns");
+        // Use seeded reasons if available; otherwise generate
+        let reasons: string[] = [];
+        if (p.reasons && Array.isArray(p.reasons) && p.reasons.length > 0) {
+          reasons = p.reasons;
+        } else if (p.reasons && typeof p.reasons === 'string') {
+          try { reasons = JSON.parse(p.reasons); } catch { reasons = [p.reasons]; }
+        }
+        if (reasons.length === 0) {
+          if (flaggedClaims > 0) reasons.push(`${flaggedClaims} flagged claims detected`);
+          if (riskScore >= 80) reasons.push(`High risk score: ${riskScore.toFixed(1)}%`);
+          if (totalAmount > 100000) reasons.push(`High claim volume: SAR ${totalAmount.toLocaleString()}`);
+          if (reasons.length === 0) reasons.push("Routine monitoring - no significant concerns");
+        }
 
         return {
           id: `pt${offset + idx + 1}`,
           patientId: patientId,
-          patientName: patientNames[idx % patientNames.length],
-          memberId: `MBR-${1000 + offset + idx}`,
-          riskScore: avgRiskScore.toFixed(2),
+          patientName: p.patient_name || `Patient ${patientId}`,
+          memberId: p.member_id || `MBR-${1000 + offset + idx}`,
+          riskScore: riskScore.toFixed(2),
           riskLevel: p.risk_level || "low",
           totalClaims: totalClaims,
-          flaggedClaims: highRiskCount,
+          flaggedClaims: flaggedClaims,
           totalAmount: totalAmount.toFixed(2),
-          fwaCaseCount: highRiskCount + criticalCount,
-          uniqueProviders: uniqueProviders,
-          primaryDiagnosis: "Various",
+          fwaCaseCount: fwaCaseCount,
+          uniqueProviders: 0,
+          primaryDiagnosis: p.primary_diagnosis || "Various",
           reasons: reasons,
-          lastClaimDate: p.last_detection_date || new Date(),
+          lastClaimDate: p.last_claim_date || p.last_detection_date || new Date(),
           createdAt: new Date(),
           updatedAt: new Date()
         };
@@ -3627,89 +3604,98 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       const dateTo = (req.query.dateTo as string) || "";
       const detectionMethod = (req.query.detectionMethod as string) || "";
 
-      // Build WHERE conditions
-      const conditions: string[] = [
-        "d.doctor_id NOT LIKE 'biopsy%'",
-        "d.doctor_id NOT LIKE 'needle%'",
-        "d.doctor_id NOT LIKE 'excision%'",
-        "d.doctor_id !~ '^[a-z]+ [a-z]+$'"
-      ];
+      // Build WHERE conditions on the seeded fwa_high_risk_doctors table
+      const conditions: string[] = [];
       if (search) {
-        conditions.push(`(d.doctor_id ILIKE '%${search.replace(/'/g, "''")}%' OR d.doctor_name ILIKE '%${search.replace(/'/g, "''")}%')`);
+        conditions.push(`(hrd.doctor_id ILIKE '%${search.replace(/'/g, "''")}%' OR hrd.doctor_name ILIKE '%${search.replace(/'/g, "''")}%')`);
       }
       if (specialty) {
-        conditions.push(`d.specialty ILIKE '%${specialty.replace(/'/g, "''")}%'`);
+        conditions.push(`hrd.specialty ILIKE '%${specialty.replace(/'/g, "''")}%'`);
       }
       if (minScore > 0) {
-        conditions.push(`COALESCE(d.risk_score, 0) >= ${minScore}`);
+        conditions.push(`hrd.risk_score::numeric >= ${minScore}`);
       }
       if (maxScore < 100) {
-        conditions.push(`COALESCE(d.risk_score, 0) <= ${maxScore}`);
+        conditions.push(`hrd.risk_score::numeric <= ${maxScore}`);
       }
       if (dateFrom) {
-        conditions.push(`ddr.analyzed_at >= '${dateFrom.replace(/'/g, "''")}'::timestamp`);
+        conditions.push(`hrd.last_flagged_date >= '${dateFrom.replace(/'/g, "''")}'::timestamp`);
       }
       if (dateTo) {
-        conditions.push(`ddr.analyzed_at <= '${dateTo.replace(/'/g, "''")}'::timestamp + interval '1 day'`);
+        conditions.push(`hrd.last_flagged_date <= '${dateTo.replace(/'/g, "''")}'::timestamp + interval '1 day'`);
       }
       if (detectionMethod) {
         conditions.push(`ddr.primary_detection_method = '${detectionMethod.replace(/'/g, "''")}'`);
       }
       const riskTierConditions: Record<string, string> = {
-        critical: "COALESCE(d.risk_score, 0) >= 40",
-        high: "COALESCE(d.risk_score, 0) >= 30 AND COALESCE(d.risk_score, 0) < 40",
-        medium: "COALESCE(d.risk_score, 0) >= 20 AND COALESCE(d.risk_score, 0) < 30",
-        low: "COALESCE(d.risk_score, 0) >= 10 AND COALESCE(d.risk_score, 0) < 20",
-        minimal: "COALESCE(d.risk_score, 0) < 10",
+        critical: "hrd.risk_level = 'critical'",
+        high: "hrd.risk_level = 'high'",
+        medium: "hrd.risk_level = 'medium'",
+        low: "hrd.risk_level = 'low'",
+        minimal: "hrd.risk_level = 'minimal'",
       };
       if (riskTier && riskTierConditions[riskTier]) {
         conditions.push(riskTierConditions[riskTier]);
       }
-      const whereClause = `WHERE ${conditions.join(" AND ")}`;
+      const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
       // Map sortBy field to SQL column
       const sortColumns: Record<string, string> = {
-        riskScore: "d.risk_score",
-        totalExposure: "exposure_amount",
-        totalClaims: "(d.claims_summary->>'totalClaims')::int",
-        doctorId: "d.doctor_id",
-        specialty: "d.specialty",
+        riskScore: "hrd.risk_score::numeric",
+        totalExposure: "hrd.total_exposure::numeric",
+        totalClaims: "hrd.total_claims",
+        doctorId: "hrd.doctor_id",
+        specialty: "hrd.specialty",
       };
-      const orderColumn = sortColumns[sortBy] || "d.risk_score";
+      const orderColumn = sortColumns[sortBy] || "hrd.risk_score::numeric";
 
-      // Count query
+      // Count query — base is fwa_high_risk_doctors (authoritative seed table)
       const countResult = await db.execute(sql.raw(`
         SELECT COUNT(*) as total
-        FROM doctor_360 d
+        FROM fwa_high_risk_doctors hrd
+        LEFT JOIN LATERAL (
+          SELECT primary_detection_method FROM fwa_doctor_detection_results
+          WHERE doctor_id = hrd.doctor_id
+          ORDER BY analyzed_at DESC LIMIT 1
+        ) ddr ON TRUE
         ${whereClause}
       `));
       const total = parseInt((countResult.rows[0] as any)?.total) || 0;
 
-      // Main data query with pagination
+      // Main data query — fwa_high_risk_doctors as authoritative base (one row per entity),
+      // LATERAL JOIN ensures at most one detection result row per doctor (no count inflation)
       const doctors = await db.execute(sql.raw(`
         SELECT
-          d.doctor_id,
-          d.doctor_name,
-          d.specialty,
-          d.license_number,
-          d.primary_facility_name,
-          COALESCE(d.risk_score, 0) as risk_score,
-          d.risk_level,
-          d.claims_summary,
-          d.last_analyzed_at,
-          COALESCE((d.claims_summary->>'totalAmount')::numeric, 0) as exposure_amount,
-          (COALESCE(d.risk_score, 0) * 0.6) +
-          (LEAST(COALESCE((d.claims_summary->>'totalAmount')::numeric, 0) / 50000, 40) * 0.4) as priority_score
-        FROM doctor_360 d
+          hrd.doctor_id,
+          hrd.doctor_name,
+          hrd.specialty,
+          hrd.license_number,
+          hrd.organization,
+          hrd.risk_score::numeric as risk_score,
+          hrd.risk_level,
+          hrd.total_claims,
+          hrd.flagged_claims,
+          hrd.avg_claim_amount::numeric as avg_claim_amount,
+          hrd.total_exposure::numeric as total_exposure,
+          hrd.fwa_case_count,
+          hrd.reasons,
+          hrd.last_flagged_date,
+          ddr.rule_engine_score,
+          ddr.statistical_score,
+          ddr.unsupervised_score,
+          ddr.rag_llm_score,
+          ddr.semantic_score,
+          ddr.analyzed_at as last_detection_date
+        FROM fwa_high_risk_doctors hrd
+        LEFT JOIN LATERAL (
+          SELECT rule_engine_score, statistical_score, unsupervised_score,
+                 rag_llm_score, semantic_score, analyzed_at, primary_detection_method
+          FROM fwa_doctor_detection_results
+          WHERE doctor_id = hrd.doctor_id
+          ORDER BY analyzed_at DESC LIMIT 1
+        ) ddr ON TRUE
         ${whereClause}
-        ORDER BY
-          CASE
-            WHEN COALESCE(d.risk_score, 0) >= 40 THEN 1
-            WHEN COALESCE(d.risk_score, 0) >= 30 THEN 2
-            WHEN COALESCE(d.risk_score, 0) >= 20 THEN 3
-            ELSE 4
-          END,
-          ${orderColumn} ${sortOrder} NULLS LAST
+        ORDER BY ${orderColumn} ${sortOrder} NULLS LAST
         LIMIT ${pageSize} OFFSET ${offset}
       `));
 
@@ -3720,41 +3706,28 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         return Number.isFinite(num) ? num : fallback;
       };
 
-      // Dynamic risk level calculation from score
-      const calculateRiskLevel = (score: number): "critical" | "high" | "medium" | "low" | "minimal" => {
-        if (score >= 40) return "critical";
-        if (score >= 30) return "high";
-        if (score >= 20) return "medium";
-        if (score >= 10) return "low";
-        return "minimal";
-      };
-
       const formattedDoctors = doctors.rows.map((d: any, idx: number) => {
         const doctorId = d.doctor_id?.trim() || `DOC-${idx + 1}`;
         const riskScore = safeNum(d.risk_score, 0);
-        const claimsSummary = typeof d.claims_summary === 'string'
-          ? JSON.parse(d.claims_summary)
-          : (d.claims_summary || {});
+        const totalClaims = parseInt(d.total_claims) || 0;
+        const flaggedClaims = parseInt(d.flagged_claims) || 0;
+        const totalExposure = safeNum(d.total_exposure, 0);
+        const avgClaimAmount = safeNum(d.avg_claim_amount, 0);
+        const fwaCaseCount = parseInt(d.fwa_case_count) || 0;
 
-        const totalClaims = parseInt(claimsSummary.totalClaims) || 0;
-        const totalExposure = safeNum(claimsSummary.totalAmount, 0);
-        const uniquePatients = parseInt(claimsSummary.uniquePatients) || 0;
-        const avgClaimAmount = safeNum(claimsSummary.avgAmount, 0);
-
-        const riskLevel = calculateRiskLevel(riskScore);
-
-        const isHighRisk = riskLevel === 'high' || riskLevel === 'critical';
-        const isCritical = riskLevel === 'critical';
-        const flaggedClaims = isCritical ? 2 : (isHighRisk ? 1 : 0);
-
-        const reasons: string[] = [];
-        if (isCritical) reasons.push("Critical risk level detected");
-        if (isHighRisk) reasons.push("Elevated risk patterns identified");
-        if (riskScore >= 30) reasons.push(`Risk score: ${riskScore.toFixed(1)}%`);
-        if (totalExposure > 100000) reasons.push(`High exposure: SAR ${totalExposure.toLocaleString()}`);
-        if (totalClaims > 50) reasons.push(`High volume: ${totalClaims} claims`);
-        if (uniquePatients > 30) reasons.push(`High patient volume: ${uniquePatients} unique patients`);
-        if (reasons.length === 0) reasons.push("Routine monitoring - no significant concerns");
+        // Use seeded reasons if available; otherwise generate
+        let reasons: string[] = [];
+        if (d.reasons && Array.isArray(d.reasons) && d.reasons.length > 0) {
+          reasons = d.reasons;
+        } else if (d.reasons && typeof d.reasons === 'string') {
+          try { reasons = JSON.parse(d.reasons); } catch { reasons = [d.reasons]; }
+        }
+        if (reasons.length === 0) {
+          if (flaggedClaims > 0) reasons.push(`${flaggedClaims} flagged claims detected`);
+          if (riskScore >= 80) reasons.push(`High risk score: ${riskScore.toFixed(1)}%`);
+          if (totalExposure > 100000) reasons.push(`High exposure: SAR ${totalExposure.toLocaleString()}`);
+          if (reasons.length === 0) reasons.push("Routine monitoring - no significant concerns");
+        }
 
         return {
           id: `d${offset + idx + 1}`,
@@ -3762,17 +3735,17 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           doctorName: d.doctor_name || `Dr. ${doctorId}`,
           specialty: d.specialty || "General Practice",
           licenseNumber: d.license_number || doctorId,
-          organization: "Saudi Healthcare Network",
+          organization: d.organization || "Saudi Healthcare Network",
           riskScore: riskScore.toFixed(2),
-          riskLevel: riskLevel,
+          riskLevel: d.risk_level || "low",
           totalClaims: totalClaims,
           flaggedClaims: flaggedClaims,
           avgClaimAmount: avgClaimAmount.toFixed(2),
           totalExposure: totalExposure.toFixed(2),
-          uniquePatients: uniquePatients,
-          fwaCaseCount: flaggedClaims,
+          uniquePatients: 0,
+          fwaCaseCount: fwaCaseCount,
           reasons: reasons,
-          lastFlaggedDate: d.last_analyzed_at || new Date(),
+          lastFlaggedDate: d.last_flagged_date || d.last_detection_date || new Date(),
           createdAt: new Date(),
           updatedAt: new Date()
         };
