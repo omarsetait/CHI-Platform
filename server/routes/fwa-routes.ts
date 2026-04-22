@@ -1651,6 +1651,46 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
     }
   });
 
+  // GET /api/fwa/high-risk/providers/:providerId - Get a single high-risk provider by ID
+  app.get("/api/fwa/high-risk/providers/:providerId", async (req, res) => {
+    try {
+      const { providerId } = req.params;
+      const { db } = await import("../db");
+      const { sql } = await import("drizzle-orm");
+
+      const result = await db.execute(sql`
+        SELECT *
+        FROM fwa_high_risk_providers
+        WHERE provider_id = ${providerId}
+        LIMIT 1
+      `);
+
+      if (!result.rows || result.rows.length === 0) {
+        return res.status(404).json({ error: "Provider not found" });
+      }
+
+      const row = result.rows[0] as any;
+      res.json({
+        providerId: row.provider_id,
+        providerName: row.provider_name,
+        specialty: row.specialty,
+        organization: row.organization,
+        providerType: row.provider_type,
+        riskScore: parseFloat(row.risk_score) || 0,
+        riskLevel: row.risk_level,
+        totalClaims: row.total_claims,
+        flaggedClaims: row.flagged_claims,
+        totalExposure: row.total_exposure,
+        reasons: row.reasons,
+        denialRate: row.denial_rate,
+        claimsPerMonth: row.claims_per_month,
+        avgClaimAmount: row.avg_claim_amount,
+      });
+    } catch (error) {
+      handleRouteError(res, error, "/api/fwa/high-risk/providers/:providerId", "fetch single high-risk provider");
+    }
+  });
+
   // GET /api/fwa/providers/:providerId/profile - Comprehensive provider drill-down with claims and findings
   app.get("/api/fwa/providers/:providerId/profile", async (req, res) => {
     try {
@@ -3496,6 +3536,41 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
     }
   });
 
+  // GET /api/fwa/high-risk/patients/:patientId - Get a single high-risk patient by ID
+  app.get("/api/fwa/high-risk/patients/:patientId", async (req, res) => {
+    try {
+      const { patientId } = req.params;
+      const { db } = await import("../db");
+      const { sql } = await import("drizzle-orm");
+
+      const result = await db.execute(sql`
+        SELECT p.*
+        FROM fwa_high_risk_patients p
+        WHERE p.patient_id = ${patientId}
+        LIMIT 1
+      `);
+
+      if (!result.rows || result.rows.length === 0) {
+        return res.status(404).json({ error: "Patient not found" });
+      }
+
+      const row = result.rows[0] as any;
+      res.json({
+        patientId: row.patient_id,
+        patientName: row.patient_name,
+        primaryDiagnosis: row.primary_diagnosis,
+        riskScore: parseFloat(row.risk_score) || 0,
+        riskLevel: row.risk_level,
+        totalClaims: row.total_claims,
+        flaggedClaims: row.flagged_claims,
+        totalAmount: row.total_amount,
+        reasons: row.reasons,
+      });
+    } catch (error) {
+      handleRouteError(res, error, "/api/fwa/high-risk/patients/:patientId", "fetch single high-risk patient");
+    }
+  });
+
   // FWA Behaviors CRUD Routes
   app.get("/api/fwa/behaviors", async (req, res) => {
     try {
@@ -3754,6 +3829,43 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       res.json({ data: formattedDoctors, total, page, pageSize });
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/high-risk-doctors", "fetch high-risk doctors");
+    }
+  });
+
+  // GET /api/fwa/high-risk/doctors/:doctorId - Get a single high-risk doctor by ID
+  app.get("/api/fwa/high-risk/doctors/:doctorId", async (req, res) => {
+    try {
+      const { doctorId } = req.params;
+      const { db } = await import("../db");
+      const { sql } = await import("drizzle-orm");
+
+      const result = await db.execute(sql`
+        SELECT d.*
+        FROM fwa_high_risk_doctors d
+        WHERE d.doctor_id = ${doctorId}
+        LIMIT 1
+      `);
+
+      if (!result.rows || result.rows.length === 0) {
+        return res.status(404).json({ error: "Doctor not found" });
+      }
+
+      const row = result.rows[0] as any;
+      res.json({
+        doctorId: row.doctor_id,
+        doctorName: row.doctor_name,
+        specialty: row.specialty,
+        organization: row.organization,
+        riskScore: parseFloat(row.risk_score) || 0,
+        riskLevel: row.risk_level,
+        totalClaims: row.total_claims,
+        flaggedClaims: row.flagged_claims,
+        totalExposure: row.total_exposure,
+        avgClaimAmount: row.avg_claim_amount,
+        reasons: row.reasons,
+      });
+    } catch (error) {
+      handleRouteError(res, error, "/api/fwa/high-risk/doctors/:doctorId", "fetch single high-risk doctor");
     }
   });
 
