@@ -8,9 +8,19 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   ArrowLeft, Building2, User, Stethoscope, AlertTriangle,
   DollarSign, Activity, ShieldCheck, BarChart3, Cpu, Brain, FileSearch,
-  ListChecks, Syringe, FlaskConical,
+  ListChecks, Syringe, FlaskConical, TrendingUp,
 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  ReferenceLine,
+} from "recharts";
 
 function getRiskColor(score: number) {
   if (score >= 80) return "text-red-500";
@@ -92,6 +102,125 @@ const ENGINE_CONFIG: Array<{ key: EngineScoreKey; label: string; icon: ElementTy
   { key: "rag_llm_score", label: "RAG / LLM", icon: Brain, color: "#f59e0b", weight: "15%" },
   { key: "semantic_score", label: "Semantic", icon: FileSearch, color: "#06b6d4", weight: "15%" },
 ];
+
+interface TimelineRow {
+  batch_date: string | null;
+  avg_risk_score: string | null;
+}
+
+function ScoreTrendChart({ timeline, isLoading }: { timeline: TimelineRow[] | null | undefined; isLoading: boolean }) {
+  if (isLoading) {
+    return (
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-medium flex items-center gap-2">
+            <TrendingUp className="h-4 w-4 text-blue-500" />
+            Detection Score Trend
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <Skeleton className="h-48 w-full" />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const sorted = (timeline ?? [])
+    .filter((r) => r.batch_date && r.avg_risk_score !== null)
+    .sort((a, b) => new Date(a.batch_date!).getTime() - new Date(b.batch_date!).getTime());
+
+  if (sorted.length === 0) {
+    return (
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-medium flex items-center gap-2">
+            <TrendingUp className="h-4 w-4 text-blue-500" />
+            Detection Score Trend
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-muted-foreground">No historical score data available for this entity.</p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const dates = sorted.map((r) => new Date(r.batch_date!));
+  const spansMultipleYears = dates.length > 1 && dates[0].getFullYear() !== dates[dates.length - 1].getFullYear();
+  const dateFormatOptions: Intl.DateTimeFormatOptions = spansMultipleYears
+    ? { month: "short", day: "numeric", year: "2-digit" }
+    : { month: "short", day: "numeric" };
+
+  const chartData = sorted.map((r, i) => {
+    const raw = parseFloat(r.avg_risk_score ?? "");
+    return {
+      date: dates[i].toLocaleDateString("en-US", dateFormatOptions),
+      score: Number.isFinite(raw) ? raw : null,
+    };
+  }).filter((d) => d.score !== null) as Array<{ date: string; score: number }>;
+
+  const latestScore = chartData[chartData.length - 1]?.score ?? 0;
+  const firstScore = chartData[0]?.score ?? 0;
+  const delta = latestScore - firstScore;
+  const deltaLabel = delta > 0 ? `+${delta.toFixed(1)}` : delta.toFixed(1);
+  const deltaColor = delta > 0 ? "text-red-500" : delta < 0 ? "text-green-500" : "text-muted-foreground";
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-sm font-medium flex items-center gap-2">
+            <TrendingUp className="h-4 w-4 text-blue-500" />
+            Detection Score Trend
+          </CardTitle>
+          <div className="flex items-center gap-3 text-sm">
+            <span className="text-muted-foreground">{chartData.length} data points</span>
+            <span className={`font-semibold ${deltaColor}`} data-testid="text-score-trend-delta">
+              {deltaLabel} overall
+            </span>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <div className="h-48" data-testid="chart-score-trend">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+              <XAxis
+                dataKey="date"
+                tick={{ fontSize: 11 }}
+                tickLine={false}
+                axisLine={false}
+              />
+              <YAxis
+                domain={[0, 100]}
+                tick={{ fontSize: 11 }}
+                tickLine={false}
+                axisLine={false}
+                width={32}
+              />
+              <Tooltip
+                contentStyle={{ fontSize: 12, borderRadius: 6 }}
+                formatter={(value: number) => [value.toFixed(1), "Composite Score"]}
+              />
+              <ReferenceLine y={80} stroke="#ef4444" strokeDasharray="4 2" strokeOpacity={0.5} label={{ value: "Critical", position: "insideTopRight", fontSize: 10, fill: "#ef4444" }} />
+              <ReferenceLine y={60} stroke="#f97316" strokeDasharray="4 2" strokeOpacity={0.5} label={{ value: "High", position: "insideTopRight", fontSize: 10, fill: "#f97316" }} />
+              <Line
+                type="monotone"
+                dataKey="score"
+                stroke="#3b82f6"
+                strokeWidth={2}
+                dot={{ r: 3, fill: "#3b82f6" }}
+                activeDot={{ r: 5 }}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+        <p className="text-xs text-muted-foreground mt-2">Composite detection score per batch date (0–100)</p>
+      </CardContent>
+    </Card>
+  );
+}
 
 function EngineBreakdownCard({ detection, isLoading }: { detection: DetectionResult | null | undefined; isLoading: boolean }) {
   if (isLoading) {
@@ -459,6 +588,12 @@ export default function FWAEntityProfile() {
     patient: `/api/fwa/entity-detection/patient/${entityId}`,
   };
 
+  const timelineEndpointMap: Record<string, string> = {
+    provider: `/api/fwa/timeline/provider/${entityId}`,
+    doctor: `/api/fwa/timeline/doctor/${entityId}`,
+    patient: `/api/fwa/timeline/patient/${entityId}`,
+  };
+
   const { data: entity, isLoading, isError } = useQuery<Record<string, unknown>>({
     queryKey: ["entity-profile", entityType, entityId],
     queryFn: async () => {
@@ -474,6 +609,16 @@ export default function FWAEntityProfile() {
       const res = await fetch(detectionEndpointMap[entityType]);
       if (!res.ok) return null;
       return res.json() as Promise<DetectionResult>;
+    },
+    enabled: !!entityId,
+  });
+
+  const { data: timeline, isLoading: isTimelineLoading } = useQuery<TimelineRow[]>({
+    queryKey: ["entity-timeline", entityType, entityId],
+    queryFn: async (): Promise<TimelineRow[]> => {
+      const res = await fetch(timelineEndpointMap[entityType]);
+      if (!res.ok) return [];
+      return res.json() as Promise<TimelineRow[]>;
     },
     enabled: !!entityId,
   });
@@ -605,6 +750,8 @@ export default function FWAEntityProfile() {
       {entityType === "patient" && (
         <TopDiagnosesCard detection={detection} isLoading={isDetectionLoading} />
       )}
+
+      <ScoreTrendChart timeline={timeline} isLoading={isTimelineLoading} />
 
       <Card>
         <CardHeader>
