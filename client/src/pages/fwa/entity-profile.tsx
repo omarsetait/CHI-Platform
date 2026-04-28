@@ -8,6 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   ArrowLeft, Building2, User, Stethoscope, AlertTriangle,
   DollarSign, Activity, ShieldCheck, BarChart3, Cpu, Brain, FileSearch,
+  ListChecks, Syringe, FlaskConical,
 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 
@@ -31,7 +32,46 @@ function getRiskBadgeVariant(score: number): "destructive" | "default" | "second
   return "secondary";
 }
 
+function getSeverityVariant(severity: string): "destructive" | "default" | "secondary" | "outline" {
+  const s = severity?.toLowerCase();
+  if (s === "high" || s === "critical") return "destructive";
+  if (s === "medium") return "default";
+  return "secondary";
+}
+
 type EngineScoreKey = "rule_engine_score" | "statistical_score" | "unsupervised_score" | "rag_llm_score" | "semantic_score";
+
+interface MatchedRule {
+  ruleId?: string;
+  ruleCode?: string;
+  ruleName: string;
+  category?: string;
+  severity: string;
+  confidence?: number;
+  description?: string;
+  humanReadableExplanation?: string;
+}
+
+interface ProcedureCode {
+  code: string;
+  count: number;
+  amount?: number;
+}
+
+interface DiagnosisCode {
+  code: string;
+  count: number;
+}
+
+interface RuleEngineFindings {
+  matchedRules?: MatchedRule[];
+  violationCount?: number;
+}
+
+interface AggregatedMetrics {
+  topProcedureCodes?: ProcedureCode[];
+  topDiagnosisCodes?: DiagnosisCode[];
+}
 
 interface DetectionResult {
   composite_score: string;
@@ -41,6 +81,8 @@ interface DetectionResult {
   unsupervised_score?: string;
   rag_llm_score?: string;
   semantic_score?: string;
+  rule_engine_findings?: RuleEngineFindings | null;
+  aggregated_metrics?: AggregatedMetrics | null;
 }
 
 const ENGINE_CONFIG: Array<{ key: EngineScoreKey; label: string; icon: ElementType; color: string; weight: string }> = [
@@ -144,6 +186,256 @@ function EngineBreakdownCard({ detection, isLoading }: { detection: DetectionRes
   );
 }
 
+function TopFindingsCard({ detection, isLoading }: { detection: DetectionResult | null | undefined; isLoading: boolean }) {
+  if (isLoading) {
+    return (
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-medium flex items-center gap-2">
+            <ListChecks className="h-4 w-4 text-red-500" />
+            Top Findings
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {[1, 2, 3].map((i) => (
+            <Skeleton key={i} className="h-16 w-full" />
+          ))}
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const findings = detection?.rule_engine_findings;
+  const rules = findings?.matchedRules ?? [];
+
+  if (!detection || rules.length === 0) {
+    return (
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-medium flex items-center gap-2">
+            <ListChecks className="h-4 w-4 text-red-500" />
+            Top Findings
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-muted-foreground">No rule violations detected.</p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const severityOrder: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+  const sorted = [...rules].sort(
+    (a, b) => (severityOrder[a.severity?.toLowerCase()] ?? 9) - (severityOrder[b.severity?.toLowerCase()] ?? 9)
+  );
+  const topRules = sorted.slice(0, 5);
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm font-medium flex items-center gap-2">
+          <ListChecks className="h-4 w-4 text-red-500" />
+          Top Findings
+          {findings?.violationCount != null && (
+            <Badge variant="outline" className="ml-auto text-[10px]">
+              {findings.violationCount} total violation{findings.violationCount !== 1 ? "s" : ""}
+            </Badge>
+          )}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {topRules.map((rule, idx) => {
+          const identifier = rule.ruleId ?? rule.ruleCode;
+          const explanation = rule.humanReadableExplanation ?? rule.description;
+          const confidencePct = rule.confidence != null
+            ? Math.min(Math.round(rule.confidence <= 1 ? rule.confidence * 100 : rule.confidence), 100)
+            : null;
+          return (
+            <div
+              key={identifier ?? idx}
+              className="rounded-md border p-3 space-y-1"
+              data-testid={`finding-rule-${identifier ?? idx}`}
+            >
+              <div className="flex items-center gap-2 flex-wrap">
+                <Badge variant={getSeverityVariant(rule.severity)} className="text-[10px] uppercase tracking-wide">
+                  {rule.severity}
+                </Badge>
+                {rule.category && (
+                  <Badge variant="outline" className="text-[10px]">
+                    {rule.category}
+                  </Badge>
+                )}
+                {identifier && (
+                  <span className="text-xs text-muted-foreground font-mono ml-auto">{identifier}</span>
+                )}
+              </div>
+              <p className="text-sm font-semibold leading-snug">{rule.ruleName}</p>
+              {explanation && (
+                <p className="text-xs text-muted-foreground leading-relaxed">{explanation}</p>
+              )}
+              {confidencePct != null && (
+                <div className="flex items-center gap-2 pt-1">
+                  <span className="text-[10px] text-muted-foreground">Confidence</span>
+                  <div className="flex-1 h-1.5 rounded-full bg-gray-200 dark:bg-gray-700 overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-blue-500"
+                      style={{ width: `${confidencePct}%` }}
+                    />
+                  </div>
+                  <span className="text-[10px] font-mono text-muted-foreground">
+                    {confidencePct}%
+                  </span>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </CardContent>
+    </Card>
+  );
+}
+
+function TopProceduresCard({ detection, isLoading }: { detection: DetectionResult | null | undefined; isLoading: boolean }) {
+  if (isLoading) {
+    return (
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-medium flex items-center gap-2">
+            <Syringe className="h-4 w-4 text-blue-500" />
+            Top Procedures
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {[1, 2, 3, 4, 5].map((i) => (
+            <Skeleton key={i} className="h-5 w-full" />
+          ))}
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const procedures = detection?.aggregated_metrics?.topProcedureCodes ?? [];
+
+  if (!detection || procedures.length === 0) {
+    return (
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-medium flex items-center gap-2">
+            <Syringe className="h-4 w-4 text-blue-500" />
+            Top Procedures
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-muted-foreground">No procedure data available.</p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const maxCount = Math.max(...procedures.map((p) => p.count), 1);
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm font-medium flex items-center gap-2">
+          <Syringe className="h-4 w-4 text-blue-500" />
+          Top Procedures
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {procedures.slice(0, 8).map((proc) => (
+          <div key={proc.code} className="space-y-0.5" data-testid={`procedure-bar-${proc.code}`}>
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-mono font-medium">{proc.code}</span>
+              <div className="flex items-center gap-2 text-muted-foreground">
+                <span>{proc.count.toLocaleString()} claims</span>
+                {proc.amount != null && (
+                  <span className="text-green-600 dark:text-green-400">
+                    {proc.amount.toLocaleString("en-US", { style: "currency", currency: "SAR", maximumFractionDigits: 0 })}
+                  </span>
+                )}
+              </div>
+            </div>
+            <div className="h-2 w-full rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
+              <div
+                className="h-full rounded-full bg-blue-500 transition-all duration-500"
+                style={{ width: `${(proc.count / maxCount) * 100}%` }}
+              />
+            </div>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  );
+}
+
+function TopDiagnosesCard({ detection, isLoading }: { detection: DetectionResult | null | undefined; isLoading: boolean }) {
+  if (isLoading) {
+    return (
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-medium flex items-center gap-2">
+            <FlaskConical className="h-4 w-4 text-purple-500" />
+            Top Diagnoses
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {[1, 2, 3, 4, 5].map((i) => (
+            <Skeleton key={i} className="h-5 w-full" />
+          ))}
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const diagnoses = detection?.aggregated_metrics?.topDiagnosisCodes ?? [];
+
+  if (!detection || diagnoses.length === 0) {
+    return (
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-medium flex items-center gap-2">
+            <FlaskConical className="h-4 w-4 text-purple-500" />
+            Top Diagnoses
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-muted-foreground">No diagnosis data available.</p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const maxCount = Math.max(...diagnoses.map((d) => d.count), 1);
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm font-medium flex items-center gap-2">
+          <FlaskConical className="h-4 w-4 text-purple-500" />
+          Top Diagnoses
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {diagnoses.slice(0, 8).map((diag) => (
+          <div key={diag.code} className="space-y-0.5" data-testid={`diagnosis-bar-${diag.code}`}>
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-mono font-medium">{diag.code}</span>
+              <span className="text-muted-foreground">{diag.count.toLocaleString()} claims</span>
+            </div>
+            <div className="h-2 w-full rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
+              <div
+                className="h-full rounded-full bg-purple-500 transition-all duration-500"
+                style={{ width: `${(diag.count / maxCount) * 100}%` }}
+              />
+            </div>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function FWAEntityProfile() {
   const params = useParams<{ entityId: string }>();
   const entityId = params.entityId;
@@ -233,6 +525,8 @@ export default function FWAEntityProfile() {
   const totalClaims = Number(entity.totalClaims ?? entity.total_claims ?? 0);
   const totalAmount = Number(entity.totalAmount ?? entity.total_amount ?? entity.totalExposure ?? entity.total_exposure ?? 0);
 
+  const isProviderOrDoctor = entityType === "provider" || entityType === "doctor";
+
   return (
     <div className="p-6 space-y-6">
       <div className="flex items-center gap-4">
@@ -300,6 +594,17 @@ export default function FWAEntityProfile() {
       </div>
 
       <EngineBreakdownCard detection={detection} isLoading={isDetectionLoading} />
+
+      {isProviderOrDoctor && (
+        <>
+          <TopFindingsCard detection={detection} isLoading={isDetectionLoading} />
+          <TopProceduresCard detection={detection} isLoading={isDetectionLoading} />
+        </>
+      )}
+
+      {entityType === "patient" && (
+        <TopDiagnosesCard detection={detection} isLoading={isDetectionLoading} />
+      )}
 
       <Card>
         <CardHeader>
