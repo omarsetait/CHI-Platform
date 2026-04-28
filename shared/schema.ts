@@ -38,6 +38,19 @@ export const insertUserSchema = createInsertSchema(users).pick({
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
 
+// Session table for connect-pg-simple. Declared here so drizzle-kit push --force
+// (run by scripts/post-merge.sh after every task merge) recognizes it as a
+// known table and does NOT drop it. Shape MUST match what connect-pg-simple
+// expects and the raw-SQL fallback in server/db-indexes.ts. Not used by
+// application code, so no Zod insert/select types are exported.
+export const userSessions = pgTable("user_sessions", {
+  sid: varchar("sid").primaryKey().notNull(),
+  sess: jsonb("sess").notNull(),
+  expire: timestamp("expire", { precision: 6 }).notNull(),
+}, (table) => [
+  index("IDX_user_sessions_expire").on(table.expire),
+]);
+
 // Audit log for HIPAA compliance
 export const auditLogs = pgTable("audit_logs", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
