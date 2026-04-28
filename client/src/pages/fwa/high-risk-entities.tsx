@@ -6,17 +6,30 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Building2, User, UserCog, AlertTriangle, DollarSign, TrendingUp,
+  TrendingDown, Minus,
   ExternalLink, FileText, Network, Search, ChevronLeft, ChevronRight,
   ArrowUpDown, ArrowUp, ArrowDown, ShieldCheck, BarChart3, Brain,
   Cpu, FileSearch, Activity, MapPin, Users, Stethoscope, Download,
   Loader2, CalendarIcon, SlidersHorizontal, X,
 } from "lucide-react";
+import {
+  Tooltip as UITooltip,
+  TooltipContent as UITooltipContent,
+  TooltipTrigger as UITooltipTrigger,
+} from "@/components/ui/tooltip";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import { Slider } from "@/components/ui/slider";
 import { format } from "date-fns";
 import { useQuery } from "@tanstack/react-query";
-import type { FwaHighRiskProvider, FwaHighRiskPatient, FwaHighRiskDoctor } from "@shared/schema";
+import type {
+  FwaHighRiskProvider,
+  FwaHighRiskPatient,
+  FwaHighRiskDoctor,
+  FwaHighRiskProviderWithTrend,
+  FwaHighRiskPatientWithTrend,
+  FwaHighRiskDoctorWithTrend,
+} from "@shared/schema";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Link } from "wouter";
@@ -86,6 +99,80 @@ const ENGINE_CONFIG = [
   { key: "rag_llm_score", label: "RAG/LLM", icon: Brain, color: "#f59e0b" },
   { key: "semantic_score", label: "Semantic", icon: FileSearch, color: "#06b6d4" },
 ];
+
+type TrendDirection = "up" | "down" | "stable" | null | undefined;
+
+/**
+ * Risk-score trend indicator for the high-risk entity tables.
+ * Shows an up/down/stable icon derived from the latest entry in the entity's
+ * timeline (with provider cpm_trend as a fallback). Hovering reveals the most
+ * recent score change value.
+ */
+function TrendIndicator({
+  direction,
+  scoreChange,
+  source,
+  testId,
+}: {
+  direction: TrendDirection;
+  scoreChange: number | null | undefined;
+  source?: "timeline" | "fallback" | "none";
+  testId?: string;
+}) {
+  const hasChange = scoreChange !== null && scoreChange !== undefined && Number.isFinite(scoreChange);
+  const formattedChange = hasChange
+    ? `${(scoreChange as number) > 0 ? "+" : ""}${(scoreChange as number).toFixed(1)}`
+    : null;
+
+  let icon: React.ReactNode;
+  let tooltipText: string;
+  let label: string;
+
+  if (direction === "up") {
+    icon = <TrendingUp className="h-4 w-4 text-red-600 dark:text-red-500" aria-hidden="true" />;
+    label = "Risk increasing";
+    tooltipText = formattedChange
+      ? `Risk increasing — recent score change: ${formattedChange}`
+      : "Risk increasing";
+  } else if (direction === "down") {
+    icon = <TrendingDown className="h-4 w-4 text-green-600 dark:text-green-500" aria-hidden="true" />;
+    label = "Risk decreasing";
+    tooltipText = formattedChange
+      ? `Risk decreasing — recent score change: ${formattedChange}`
+      : "Risk decreasing";
+  } else if (direction === "stable") {
+    icon = <Minus className="h-4 w-4 text-muted-foreground" aria-hidden="true" />;
+    label = "Risk stable";
+    tooltipText = formattedChange
+      ? `Risk stable — recent score change: ${formattedChange}`
+      : "Risk stable";
+  } else {
+    icon = <Minus className="h-4 w-4 text-muted-foreground/40" aria-hidden="true" />;
+    label = "No trend data";
+    tooltipText = "No recent trend data available";
+  }
+
+  if (source === "fallback" && direction) {
+    tooltipText += " (based on claims-per-month change)";
+  }
+
+  return (
+    <UITooltip>
+      <UITooltipTrigger asChild>
+        <span
+          className="inline-flex items-center justify-center cursor-default"
+          aria-label={label}
+          data-testid={testId}
+        >
+          {icon}
+        </span>
+      </UITooltipTrigger>
+      <UITooltipContent side="top" className="text-xs">
+        {tooltipText}
+      </UITooltipContent>
+    </UITooltip>
+  );
+}
 
 /** Risk Score Gauge - a linear gauge with color coding */
 function RiskScoreGauge({ score }: { score: number }) {
@@ -1012,7 +1099,7 @@ function ProvidersTab() {
     ...(detectionMethod !== "all" && { detectionMethod }),
   });
 
-  const { data: response, isLoading } = useQuery<PaginatedResponse<FwaHighRiskProvider>>({
+  const { data: response, isLoading } = useQuery<PaginatedResponse<FwaHighRiskProviderWithTrend>>({
     queryKey: ["/api/fwa/high-risk-providers", page, pageSize, sortBy, sortOrder, search, riskTierFilter, dateFrom?.toISOString(), dateTo?.toISOString(), scoreRange[0], scoreRange[1], detectionMethod],
     queryFn: async () => {
       const res = await fetch(`/api/fwa/high-risk-providers?${queryParams}`);
@@ -1128,6 +1215,7 @@ function ProvidersTab() {
                 <SortableHeader label="Provider ID" field="providerId" currentSort={sortBy} currentOrder={sortOrder} onSort={handleSort} />
                 <TableHead>Risk Level</TableHead>
                 <SortableHeader label="Risk Score" field="riskScore" currentSort={sortBy} currentOrder={sortOrder} onSort={handleSort} />
+                <TableHead className="text-center w-20">Trend</TableHead>
                 <SortableHeader label="Exposure" field="totalExposure" currentSort={sortBy} currentOrder={sortOrder} onSort={handleSort} className="text-right" />
                 <TableHead>FWA Reasons</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
@@ -1156,6 +1244,14 @@ function ProvidersTab() {
                       <span className="text-sm">{parseFloat(provider.riskScore || "0").toFixed(1)}%</span>
                     </div>
                   </TableCell>
+                  <TableCell className="text-center">
+                    <TrendIndicator
+                      direction={provider.trendDirection}
+                      scoreChange={provider.riskScoreChange}
+                      source={provider.trendSource}
+                      testId={`trend-provider-${provider.id}`}
+                    />
+                  </TableCell>
                   <TableCell className="text-right font-medium">{formatCurrency(provider.totalExposure)}</TableCell>
                   <TableCell>
                     {provider.reasons && provider.reasons.length > 0 ? (
@@ -1178,7 +1274,7 @@ function ProvidersTab() {
               ))}
               {filtered.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center text-muted-foreground py-8">No providers found</TableCell>
+                  <TableCell colSpan={7} className="text-center text-muted-foreground py-8">No providers found</TableCell>
                 </TableRow>
               )}
             </TableBody>
@@ -1226,7 +1322,7 @@ function PatientsTab() {
     ...(detectionMethod !== "all" && { detectionMethod }),
   });
 
-  const { data: response, isLoading } = useQuery<PaginatedResponse<FwaHighRiskPatient>>({
+  const { data: response, isLoading } = useQuery<PaginatedResponse<FwaHighRiskPatientWithTrend>>({
     queryKey: ["/api/fwa/high-risk-patients", page, pageSize, sortBy, sortOrder, search, riskTierFilter, dateFrom?.toISOString(), dateTo?.toISOString(), scoreRange[0], scoreRange[1], detectionMethod],
     queryFn: async () => {
       const res = await fetch(`/api/fwa/high-risk-patients?${queryParams}`);
@@ -1334,6 +1430,7 @@ function PatientsTab() {
                 <SortableHeader label="Patient ID" field="patientId" currentSort={sortBy} currentOrder={sortOrder} onSort={handleSort} />
                 <TableHead>Risk Level</TableHead>
                 <SortableHeader label="Risk Score" field="riskScore" currentSort={sortBy} currentOrder={sortOrder} onSort={handleSort} />
+                <TableHead className="text-center w-20">Trend</TableHead>
                 <TableHead>Primary Reason</TableHead>
                 <SortableHeader label="Providers" field="uniqueProviders" currentSort={sortBy} currentOrder={sortOrder} onSort={handleSort} className="text-right" />
                 <SortableHeader label="Total Claims" field="totalAmount" currentSort={sortBy} currentOrder={sortOrder} onSort={handleSort} className="text-right" />
@@ -1352,6 +1449,14 @@ function PatientsTab() {
                       <Progress value={Math.min(parseFloat(patient.riskScore || "0"), 100)} className="w-16 h-2" />
                       <span className="text-sm">{parseFloat(patient.riskScore || "0").toFixed(1)}%</span>
                     </div>
+                  </TableCell>
+                  <TableCell className="text-center">
+                    <TrendIndicator
+                      direction={patient.trendDirection}
+                      scoreChange={patient.riskScoreChange}
+                      source={patient.trendSource}
+                      testId={`trend-patient-${patient.id}`}
+                    />
                   </TableCell>
                   <TableCell><span className="text-sm">{patient.reasons?.[0] || "-"}</span></TableCell>
                   <TableCell className="text-right">
@@ -1374,7 +1479,7 @@ function PatientsTab() {
               ))}
               {filtered.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center text-muted-foreground py-8">No patients found</TableCell>
+                  <TableCell colSpan={8} className="text-center text-muted-foreground py-8">No patients found</TableCell>
                 </TableRow>
               )}
             </TableBody>
@@ -1423,7 +1528,7 @@ function DoctorsTab() {
     ...(detectionMethod !== "all" && { detectionMethod }),
   });
 
-  const { data: response, isLoading } = useQuery<PaginatedResponse<FwaHighRiskDoctor>>({
+  const { data: response, isLoading } = useQuery<PaginatedResponse<FwaHighRiskDoctorWithTrend>>({
     queryKey: ["/api/fwa/high-risk-doctors", page, pageSize, sortBy, sortOrder, search, riskTierFilter, specialtyFilter, dateFrom?.toISOString(), dateTo?.toISOString(), scoreRange[0], scoreRange[1], detectionMethod],
     queryFn: async () => {
       const res = await fetch(`/api/fwa/high-risk-doctors?${queryParams}`);
@@ -1536,6 +1641,7 @@ function DoctorsTab() {
                 <SortableHeader label="Specialty" field="specialty" currentSort={sortBy} currentOrder={sortOrder} onSort={handleSort} />
                 <TableHead>Risk Level</TableHead>
                 <SortableHeader label="Risk Score" field="riskScore" currentSort={sortBy} currentOrder={sortOrder} onSort={handleSort} />
+                <TableHead className="text-center w-20">Trend</TableHead>
                 <SortableHeader label="Exposure" field="totalExposure" currentSort={sortBy} currentOrder={sortOrder} onSort={handleSort} className="text-right" />
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
@@ -1554,6 +1660,14 @@ function DoctorsTab() {
                       <span className="text-sm">{parseFloat(doctor.riskScore || "0").toFixed(1)}%</span>
                     </div>
                   </TableCell>
+                  <TableCell className="text-center">
+                    <TrendIndicator
+                      direction={doctor.trendDirection}
+                      scoreChange={doctor.riskScoreChange}
+                      source={doctor.trendSource}
+                      testId={`trend-doctor-${doctor.id}`}
+                    />
+                  </TableCell>
                   <TableCell className="text-right font-medium">{formatCurrency(doctor.totalExposure)}</TableCell>
                   <TableCell className="text-right">
                     <Button
@@ -1569,7 +1683,7 @@ function DoctorsTab() {
               ))}
               {filtered.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center text-muted-foreground py-8">No doctors found</TableCell>
+                  <TableCell colSpan={7} className="text-center text-muted-foreground py-8">No doctors found</TableCell>
                 </TableRow>
               )}
             </TableBody>

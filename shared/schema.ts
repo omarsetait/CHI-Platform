@@ -1182,6 +1182,15 @@ export const insertFwaHighRiskProviderSchema = createInsertSchema(fwaHighRiskPro
 export type InsertFwaHighRiskProvider = z.infer<typeof insertFwaHighRiskProviderSchema>;
 export type FwaHighRiskProvider = typeof fwaHighRiskProviders.$inferSelect;
 
+export type FwaRiskTrendDirection = "up" | "down" | "stable";
+export type FwaRiskTrendSource = "timeline" | "fallback" | "none";
+export interface FwaRiskTrendFields {
+  trendDirection: FwaRiskTrendDirection | null;
+  riskScoreChange: number | null;
+  trendSource: FwaRiskTrendSource;
+}
+export type FwaHighRiskProviderWithTrend = FwaHighRiskProvider & FwaRiskTrendFields;
+
 // FWA High-Risk Patients
 export const fwaHighRiskPatients = pgTable("fwa_high_risk_patients", {
   id: text("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -1208,6 +1217,7 @@ export const insertFwaHighRiskPatientSchema = createInsertSchema(fwaHighRiskPati
 });
 export type InsertFwaHighRiskPatient = z.infer<typeof insertFwaHighRiskPatientSchema>;
 export type FwaHighRiskPatient = typeof fwaHighRiskPatients.$inferSelect;
+export type FwaHighRiskPatientWithTrend = FwaHighRiskPatient & FwaRiskTrendFields;
 
 // FWA High-Risk Doctors
 export const fwaHighRiskDoctors = pgTable("fwa_high_risk_doctors", {
@@ -1237,6 +1247,7 @@ export const insertFwaHighRiskDoctorSchema = createInsertSchema(fwaHighRiskDocto
 });
 export type InsertFwaHighRiskDoctor = z.infer<typeof insertFwaHighRiskDoctorSchema>;
 export type FwaHighRiskDoctor = typeof fwaHighRiskDoctors.$inferSelect;
+export type FwaHighRiskDoctorWithTrend = FwaHighRiskDoctor & FwaRiskTrendFields;
 
 // FWA Work Queue Claims
 export const fwaWorkQueueClaims = pgTable("fwa_work_queue_claims", {

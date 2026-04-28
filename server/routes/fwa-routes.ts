@@ -112,6 +112,52 @@ function getOpenAI(): OpenAI {
   return _openai;
 }
 
+/**
+ * Normalize a trend signal coming from the timeline tables (or a fallback signed
+ * change value) into the {direction, scoreChange, source} shape the high-risk
+ * entity list endpoints return. Direction is normalized to "up" | "down" |
+ * "stable" so the frontend can render a single set of icons consistently.
+ *
+ * - timelineDirection: raw value from fwa_*_timeline.trend_direction
+ *   ("increasing" | "stable" | "decreasing" | "up" | "down" | null)
+ * - timelineChange: raw value from fwa_*_timeline.risk_score_change (decimal as string|number|null)
+ * - fallbackChange: signed numeric change (e.g., provider cpm_trend) used when
+ *   no timeline row exists yet
+ */
+function deriveRiskTrend(
+  timelineDirection: string | null | undefined,
+  timelineChange: string | number | null | undefined,
+  fallbackChange: number | null | undefined,
+): { direction: "up" | "down" | "stable" | null; scoreChange: number | null; source: "timeline" | "fallback" | "none" } {
+  const parseNum = (v: string | number | null | undefined): number | null => {
+    if (v === null || v === undefined) return null;
+    const n = typeof v === "number" ? v : parseFloat(String(v));
+    return Number.isFinite(n) ? n : null;
+  };
+
+  if (timelineDirection) {
+    const dir = timelineDirection.toLowerCase();
+    let normalized: "up" | "down" | "stable" | null = null;
+    if (dir === "increasing" || dir === "up" || dir === "increasing_risk") normalized = "up";
+    else if (dir === "decreasing" || dir === "down" || dir === "decreasing_risk") normalized = "down";
+    else if (dir === "stable") normalized = "stable";
+    if (normalized) {
+      return { direction: normalized, scoreChange: parseNum(timelineChange), source: "timeline" };
+    }
+  }
+
+  const fb = parseNum(fallbackChange);
+  if (fb !== null) {
+    let direction: "up" | "down" | "stable";
+    if (fb > 0.5) direction = "up";
+    else if (fb < -0.5) direction = "down";
+    else direction = "stable";
+    return { direction, scoreChange: fb, source: "fallback" };
+  }
+
+  return { direction: null, scoreChange: null, source: "none" };
+}
+
 export function registerFwaRoutes(
   app: Express,
   storage: IStorage,
@@ -1537,7 +1583,9 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           pdr.unsupervised_score,
           pdr.rag_llm_score as rag_score,
           pdr.semantic_score,
-          pdr.analyzed_at as last_detection_date
+          pdr.analyzed_at as last_detection_date,
+          ptl.trend_direction as timeline_trend_direction,
+          ptl.risk_score_change as timeline_risk_score_change
         FROM fwa_high_risk_providers hrp
         LEFT JOIN LATERAL (
           SELECT composite_score, rule_engine_score, statistical_score,
@@ -1548,6 +1596,13 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           WHERE provider_id = hrp.provider_id
           ORDER BY analyzed_at DESC LIMIT 1
         ) pdr ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT trend_direction, risk_score_change
+          FROM fwa_provider_timeline
+          WHERE provider_id = hrp.provider_id
+          ORDER BY batch_date DESC NULLS LAST, created_at DESC NULLS LAST
+          LIMIT 1
+        ) ptl ON TRUE
         ${whereClause}
         ORDER BY ${orderColumn} ${sortOrder} NULLS LAST
         LIMIT ${pageSize} OFFSET ${offset}
@@ -1619,6 +1674,12 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           ? safeNum(p.hrp_avg_claim_amount, 0)
           : (totalClaims > 0 ? totalExposure / totalClaims : 0);
 
+        // Risk trend — prefer authoritative timeline, then fall back to cpm_trend
+        const cpmTrendNum = p.hrp_cpm_trend !== null && p.hrp_cpm_trend !== undefined
+          ? safeNum(p.hrp_cpm_trend, 0)
+          : null;
+        const trend = deriveRiskTrend(p.timeline_trend_direction, p.timeline_risk_score_change, cpmTrendNum);
+
         return {
           id: `p${offset + idx + 1}`,
           providerId: providerId,
@@ -1640,6 +1701,9 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           uniquePatients: parseInt(p.unique_patients) || 0,
           reasons: reasons,
           lastFlaggedDate: p.hrp_last_flagged_date || p.last_detection_date || new Date(),
+          trendDirection: trend.direction,
+          riskScoreChange: trend.scoreChange,
+          trendSource: trend.source,
           createdAt: new Date(),
           updatedAt: new Date()
         };
@@ -3467,7 +3531,9 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           pdr.unsupervised_score,
           pdr.rag_llm_score,
           pdr.semantic_score,
-          pdr.analyzed_at as last_detection_date
+          pdr.analyzed_at as last_detection_date,
+          ptl.trend_direction as timeline_trend_direction,
+          ptl.risk_score_change as timeline_risk_score_change
         FROM fwa_high_risk_patients hrp
         LEFT JOIN LATERAL (
           SELECT rule_engine_score, statistical_score, unsupervised_score,
@@ -3476,6 +3542,13 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           WHERE patient_id = hrp.patient_id
           ORDER BY analyzed_at DESC LIMIT 1
         ) pdr ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT trend_direction, risk_score_change
+          FROM fwa_patient_timeline
+          WHERE patient_id = hrp.patient_id
+          ORDER BY batch_date DESC NULLS LAST, created_at DESC NULLS LAST
+          LIMIT 1
+        ) ptl ON TRUE
         ${whereClause}
         ORDER BY ${orderColumn} ${sortOrder} NULLS LAST
         LIMIT ${pageSize} OFFSET ${offset}
@@ -3510,6 +3583,8 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           if (reasons.length === 0) reasons.push("Routine monitoring - no significant concerns");
         }
 
+        const trend = deriveRiskTrend(p.timeline_trend_direction, p.timeline_risk_score_change, null);
+
         return {
           id: `pt${offset + idx + 1}`,
           patientId: patientId,
@@ -3525,6 +3600,9 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           primaryDiagnosis: p.primary_diagnosis || "Various",
           reasons: reasons,
           lastClaimDate: p.last_claim_date || p.last_detection_date || new Date(),
+          trendDirection: trend.direction,
+          riskScoreChange: trend.scoreChange,
+          trendSource: trend.source,
           createdAt: new Date(),
           updatedAt: new Date()
         };
@@ -3760,7 +3838,9 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           ddr.unsupervised_score,
           ddr.rag_llm_score,
           ddr.semantic_score,
-          ddr.analyzed_at as last_detection_date
+          ddr.analyzed_at as last_detection_date,
+          dtl.trend_direction as timeline_trend_direction,
+          dtl.risk_score_change as timeline_risk_score_change
         FROM fwa_high_risk_doctors hrd
         LEFT JOIN LATERAL (
           SELECT rule_engine_score, statistical_score, unsupervised_score,
@@ -3769,6 +3849,13 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           WHERE doctor_id = hrd.doctor_id
           ORDER BY analyzed_at DESC LIMIT 1
         ) ddr ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT trend_direction, risk_score_change
+          FROM fwa_doctor_timeline
+          WHERE doctor_id = hrd.doctor_id
+          ORDER BY batch_date DESC NULLS LAST, created_at DESC NULLS LAST
+          LIMIT 1
+        ) dtl ON TRUE
         ${whereClause}
         ORDER BY ${orderColumn} ${sortOrder} NULLS LAST
         LIMIT ${pageSize} OFFSET ${offset}
@@ -3804,6 +3891,8 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           if (reasons.length === 0) reasons.push("Routine monitoring - no significant concerns");
         }
 
+        const trend = deriveRiskTrend(d.timeline_trend_direction, d.timeline_risk_score_change, null);
+
         return {
           id: `d${offset + idx + 1}`,
           doctorId: doctorId,
@@ -3821,6 +3910,9 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           fwaCaseCount: fwaCaseCount,
           reasons: reasons,
           lastFlaggedDate: d.last_flagged_date || d.last_detection_date || new Date(),
+          trendDirection: trend.direction,
+          riskScoreChange: trend.scoreChange,
+          trendSource: trend.source,
           createdAt: new Date(),
           updatedAt: new Date()
         };
