@@ -4750,7 +4750,8 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
             sourcesTried.push({ source: "google_news_rss", query, status: "ok", count: items.length, httpCode: 200 });
             results.push(...items);
           } else {
-            console.log(`[Online Listening] Google News RSS "${query}" HTTP ${rssResponse.status}`);
+            const errBody = await rssResponse.text().catch(() => "");
+            console.log(`[Online Listening] Google News RSS "${query}" HTTP ${rssResponse.status}: ${errBody.substring(0, 200)}`);
             sourcesTried.push({ source: "google_news_rss", query, status: "error", count: 0, httpCode: rssResponse.status });
           }
         } catch (e: any) {
