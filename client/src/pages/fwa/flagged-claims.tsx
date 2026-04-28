@@ -1,5 +1,7 @@
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useLocation, useSearch } from "wouter";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -39,6 +41,7 @@ import {
   MapPin,
   Stethoscope,
   Calendar,
+  X,
 } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 
@@ -97,6 +100,23 @@ const CATEGORY_LABELS: Record<string, string> = {
   dental_phantom_billing: "Phantom Billing",
   obgyn_upcoding: "OB/GYN Upcoding",
   duplicate_cross_insurer: "Duplicate Cross-Insurer",
+};
+
+// ─── Region labels matching Saudi heatmap region codes ───
+const REGION_LABELS: Record<string, string> = {
+  RIY: "Riyadh",
+  MAK: "Makkah",
+  EST: "Eastern Province",
+  MDN: "Madinah",
+  ASR: "Asir",
+  QSM: "Qassim",
+  TBK: "Tabuk",
+  HAL: "Hail",
+  JZN: "Jazan",
+  NJR: "Najran",
+  BAH: "Al Baha",
+  JOF: "Al Jouf",
+  NBR: "Northern Borders",
 };
 
 // ─── Status labels matching DB status values ───
@@ -202,6 +222,14 @@ function formatDate(dateStr: string | null): string {
 }
 
 export default function FlaggedClaimsPage() {
+  const [, navigate] = useLocation();
+  const searchString = useSearch();
+  const regionFilter = useMemo(() => {
+    const params = new URLSearchParams(searchString);
+    const code = (params.get("region") || "").toUpperCase();
+    return code && REGION_LABELS[code] ? code : "";
+  }, [searchString]);
+
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -214,6 +242,10 @@ export default function FlaggedClaimsPage() {
 
   const claims = data?.claims ?? [];
   const summary = data?.summary;
+
+  const clearRegionFilter = () => {
+    navigate("/fwa/flagged-claims");
+  };
 
   const filtered = useMemo(() => {
     return claims.filter((claim) => {
@@ -231,9 +263,13 @@ export default function FlaggedClaimsPage() {
       const matchesStatus =
         statusFilter === "all" || claim.status === statusFilter;
 
-      return matchesSearch && matchesCategory && matchesStatus;
+      const matchesRegion =
+        !regionFilter ||
+        (claim.providerRegion || "").toUpperCase() === regionFilter;
+
+      return matchesSearch && matchesCategory && matchesStatus && matchesRegion;
     });
-  }, [claims, search, categoryFilter, statusFilter]);
+  }, [claims, search, categoryFilter, statusFilter, regionFilter]);
 
   const handleClaimClick = (claim: FlaggedClaim) => {
     setSelectedClaim(claim);
@@ -277,6 +313,35 @@ export default function FlaggedClaimsPage() {
           </span>
         </p>
       </div>
+
+      {/* Region drill-down banner (set when arriving from the Saudi heatmap) */}
+      {regionFilter && (
+        <div
+          className="flex items-center justify-between gap-3 rounded-md border border-blue-200 bg-blue-50 px-4 py-2.5 text-sm dark:border-blue-900/40 dark:bg-blue-950/30"
+          data-testid="banner-region-filter"
+        >
+          <div className="flex items-center gap-2 text-blue-900 dark:text-blue-200">
+            <MapPin className="h-4 w-4" />
+            <span>
+              Showing claims in{" "}
+              <span className="font-semibold" data-testid="text-region-filter-label">
+                {REGION_LABELS[regionFilter]}
+              </span>{" "}
+              <span className="text-blue-700/70 dark:text-blue-300/70">({regionFilter})</span>
+            </span>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={clearRegionFilter}
+            className="h-7 px-2 text-blue-900 hover:bg-blue-100 dark:text-blue-200 dark:hover:bg-blue-900/40"
+            data-testid="button-clear-region-filter"
+          >
+            <X className="h-3.5 w-3.5 mr-1" />
+            Clear
+          </Button>
+        </div>
+      )}
 
       {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">

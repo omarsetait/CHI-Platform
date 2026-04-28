@@ -31,7 +31,7 @@ import {
 import { MetricCard } from "@/components/metric-card";
 import { formatCurrency } from "@/lib/format";
 import { METRIC_GRID } from "@/lib/grid";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import { motion } from "framer-motion";
 import { SaudiHeatmap, type RegionData } from "@/components/fwa/saudi-heatmap";
 
@@ -265,6 +265,8 @@ function ActivitySkeleton() {
 // ---------------------------------------------------------------------------
 
 export default function OperationsCenter() {
+  const [, navigate] = useLocation();
+
   const { data: summary, isLoading, refetch } = useQuery<OperationsSummary>({
     queryKey: ["/api/fwa/operations-summary"],
     refetchInterval: 30000,
@@ -353,7 +355,15 @@ export default function OperationsCenter() {
               {isHeatmapLoading ? (
                 <Skeleton className="w-full h-[420px] rounded-lg" />
               ) : (
-                <SaudiHeatmap data={heatmapData ?? []} className="max-h-[420px]" />
+                <SaudiHeatmap
+                  data={heatmapData ?? []}
+                  className="max-h-[420px]"
+                  onRegionClick={(regionCode) =>
+                    navigate(
+                      `/fwa/flagged-claims?region=${encodeURIComponent(regionCode)}`,
+                    )
+                  }
+                />
               )}
             </CardContent>
           </Card>

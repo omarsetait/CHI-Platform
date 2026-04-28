@@ -9829,12 +9829,23 @@ Respond with JSON:
   // ── Flagged Claims (DB-backed Saudi healthcare claims) ──
   app.get("/api/fwa/flagged-claims", async (_req, res) => {
     try {
-      const flaggedClaims = await db
-        .select()
+      // Join providers so each claim carries the region code (e.g. "RIY"),
+      // which the dashboard uses to drill down from the Saudi heatmap.
+      const rows = await db
+        .select({
+          claim: claims,
+          providerRegion: providers.region,
+        })
         .from(claims)
+        .leftJoin(providers, eq(claims.providerId, providers.id))
         .where(eq(claims.flagged, true))
         .orderBy(desc(claims.registrationDate))
         .limit(100);
+
+      const flaggedClaims = rows.map((r) => ({
+        ...r.claim,
+        providerRegion: r.providerRegion ?? null,
+      }));
 
       const summary = {
         totalFlagged: flaggedClaims.length,
