@@ -1,0 +1,36 @@
+Fix Online Listening news refresh
+What & Why
+Pressing "تحديث الأخبار" on the Online Listening page returns "Found and analyzed 0 articles from 0 results" almost every time, even though NewsAPI is reachable and the configured sources have keywords. The pipeline is effectively dead because (a) NewsAPI has no Arabic/Saudi coverage so the Arabic queries return 0 totalResults, (b) the relevance filter throws away every English article that does come back, (c) the keywords the user configures in "إعدادات المصادر" are ignored — the backend uses a hardcoded list — and (d) the success toast reads fields the backend never returns, so the numbers shown are always 0/0 regardless of what really happened. The result is that the button looks instantly broken and the user has no way to tell why nothing was fetched.
+
+Fix the pipeline so refresh either returns real Saudi healthcare mentions or, when it genuinely can't, tells the user clearly why.
+
+Done looks like
+Pressing "تحديث الأخبار" with the default source configuration returns a non-empty set of Saudi healthcare news mentions on a typical day, and they appear in the "Recent Mentions" list without a manual page reload.
+Keywords and provider names entered in "إعدادات المصادر" actually drive the news search (changing them changes the results).
+The completion toast shows truthful numbers — how many articles were fetched from upstream, how many passed filtering, and how many were newly saved (vs. duplicates).
+When the upstream sources genuinely return nothing relevant, the toast says so in plain language and suggests the "تحليل إكس / Analyze X" button as an alternative, instead of the misleading "Found and analyzed 0 articles from 0 results".
+If NEWS_API_KEY is missing or rate-limited, the user sees a clear, specific error toast rather than a silent empty result.
+Out of scope
+Redesigning the Online Listening page layout or the mention card UI.
+Changes to the Twitter/X (Grok) flow — only the news refresh path is in scope.
+Building a long-term news ingestion scheduler / background job. This task is about making the manual refresh button work reliably.
+Adding paid news data providers that require new billing.
+Steps
+Honor the keywords/providers the client sends. The backend currently parses keywords and providers out of the request body and then ignores them in favor of a hardcoded Arabic query list. Use the client-supplied keywords (and any provider names) to build the actual search queries, falling back to a sensible default list only when the client sends nothing.
+
+Broaden coverage beyond NewsAPI's Arabic gap. Keep the existing NewsAPI calls but add at least one fallback that actually covers Saudi healthcare press in Arabic — e.g. Google News RSS queries (https://news.google.com/rss/search?q=...&hl=ar&gl=SA&ceid=SA:ar) for each configured keyword, optionally scoped by site: to the domains already mapped in sourceDomainMap. Parse the RSS feed, normalize each item into the same article shape the rest of the pipeline already uses (title, description, url, publishedAt, source name), and merge them into the results array before dedup.
+
+Loosen the relevance filter so good articles aren't dropped. Today an article must match a Saudi-related regex AND a health-related regex in title+description, which kills almost every English NewsAPI result. Treat articles that came back from a query the user explicitly asked for (or from a Saudi-domain RSS feed) as already relevant, and only apply the strict double-regex filter to broad fallback queries. Keep the dedup-by-URL behavior.
+
+Return honest counts and surface them in the toast. Make the endpoint always return { mentions, totalFetched, totalRelevant, saved, duplicates, message, sourcesTried }, including on the empty branch. Update the frontend success toast to read those fields (e.g. "Fetched X articles, saved Y new mentions (Z duplicates)") and, when saved === 0, show a distinct, informative toast explaining that no new Saudi healthcare articles were found in the upstream sources tried and pointing at the "تحليل إكس / Analyze X" button as an alternative.
+
+Differentiate hard failures from empty results. If NEWS_API_KEY is missing, rate-limited (HTTP 426/429), or invalid (HTTP 401), surface a specific error toast naming the cause instead of letting the request silently degrade to "0 articles". Log the upstream HTTP status and body for each source attempt so future debugging doesn't require re-instrumenting the route.
+
+Verify end-to-end. Press "تحديث الأخبار" with the default configuration and confirm new mentions appear in the list and the toast numbers match what the server logs report. Then change the keywords in "إعدادات المصادر" (e.g. add بوبا العربية) and confirm the next refresh actually searches for that keyword and returns related items.
+
+Relevant files
+client/src/pages/fwa/online-listening.tsx:130-235
+client/src/pages/fwa/online-listening.tsx:315-360
+server/routes/fwa-routes.ts:3646-3885
+server/storage.ts
+shared/schema.ts
