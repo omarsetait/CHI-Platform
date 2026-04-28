@@ -234,6 +234,32 @@ export default function FlaggedClaimsPage() {
     return code && REGION_LABELS[code] ? code : "";
   }, [searchString]);
 
+  // Date-window drill-through (set when arriving from the heatmap with a
+  // selected range). Both the API request and the UI banner honor it.
+  const dateWindow = useMemo(() => {
+    const params = new URLSearchParams(searchString);
+    const fromRaw = params.get("from");
+    const toRaw = params.get("to");
+    const fromDate = fromRaw ? new Date(fromRaw) : null;
+    const toDate = toRaw ? new Date(toRaw) : null;
+    return {
+      from: fromDate && !isNaN(fromDate.getTime()) ? fromRaw : null,
+      to: toDate && !isNaN(toDate.getTime()) ? toRaw : null,
+      fromDate: fromDate && !isNaN(fromDate.getTime()) ? fromDate : null,
+      toDate: toDate && !isNaN(toDate.getTime()) ? toDate : null,
+    };
+  }, [searchString]);
+
+  const dateWindowLabel = useMemo(() => {
+    if (!dateWindow.fromDate || !dateWindow.toDate) return "";
+    const ms = dateWindow.toDate.getTime() - dateWindow.fromDate.getTime();
+    const days = Math.round(ms / (24 * 60 * 60 * 1000));
+    if (days === 7) return "Last 7 days";
+    if (days === 30) return "Last 30 days";
+    if (days === 90) return "Last 90 days";
+    return `${dateWindow.fromDate.toLocaleDateString()} – ${dateWindow.toDate.toLocaleDateString()}`;
+  }, [dateWindow]);
+
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -241,24 +267,30 @@ export default function FlaggedClaimsPage() {
   const [sheetOpen, setSheetOpen] = useState(false);
 
   // Read entity-filter URL params via wouter (e.g. ?provider=PRV-CS1-001)
-  const searchString = useSearch();
   const [, setLocation] = useLocation();
-  const params = useMemo(() => new URLSearchParams(searchString), [searchString]);
-  const providerFilter = params.get("provider") || "";
-  const patientFilter = params.get("patient") || "";
-  const doctorFilter = params.get("doctor") || "";
+  const entityParams = useMemo(() => new URLSearchParams(searchString), [searchString]);
+  const providerFilter = entityParams.get("provider") || "";
+  const patientFilter = entityParams.get("patient") || "";
+  const doctorFilter = entityParams.get("doctor") || "";
 
   const queryString = useMemo(() => {
     const sp = new URLSearchParams();
     if (providerFilter) sp.set("provider", providerFilter);
     if (patientFilter) sp.set("patient", patientFilter);
     if (doctorFilter) sp.set("doctor", doctorFilter);
+    if (dateWindow.from) sp.set("from", dateWindow.from);
+    if (dateWindow.to) sp.set("to", dateWindow.to);
     const s = sp.toString();
     return s ? `?${s}` : "";
-  }, [providerFilter, patientFilter, doctorFilter]);
+  }, [providerFilter, patientFilter, doctorFilter, dateWindow.from, dateWindow.to]);
 
   const { data, isLoading } = useQuery<FlaggedClaimsResponse>({
-    queryKey: ["/api/fwa/flagged-claims", { provider: providerFilter, patient: patientFilter, doctor: doctorFilter }],
+    queryKey: [
+      "/api/fwa/flagged-claims",
+      { provider: providerFilter, patient: patientFilter, doctor: doctorFilter },
+      dateWindow.from,
+      dateWindow.to,
+    ],
     queryFn: async () => {
       const res = await fetch(`/api/fwa/flagged-claims${queryString}`, { credentials: "include" });
       if (!res.ok) throw new Error(`Failed: ${res.status}`);
@@ -266,8 +298,18 @@ export default function FlaggedClaimsPage() {
     },
   });
 
+  // Helper to navigate while preserving the rest of the URL filter set so
+  // dropping one banner (region/date/entity) doesn't accidentally drop the
+  // others.
+  const navigatePreservingExcept = (keysToDrop: string[]) => {
+    const next = new URLSearchParams(searchString);
+    for (const k of keysToDrop) next.delete(k);
+    const qs = next.toString();
+    navigate(`/fwa/flagged-claims${qs ? `?${qs}` : ""}`);
+  };
+
   const clearEntityFilter = () => {
-    setLocation("/fwa/flagged-claims");
+    navigatePreservingExcept(["provider", "patient", "doctor"]);
   };
 
   const entityFilterLabel = providerFilter
@@ -282,7 +324,11 @@ export default function FlaggedClaimsPage() {
   const summary = data?.summary;
 
   const clearRegionFilter = () => {
-    navigate("/fwa/flagged-claims");
+    navigatePreservingExcept(["region"]);
+  };
+
+  const clearDateFilter = () => {
+    navigatePreservingExcept(["from", "to"]);
   };
 
   const filtered = useMemo(() => {
@@ -448,6 +494,34 @@ export default function FlaggedClaimsPage() {
               <X className="h-3 w-3" />
             </Button>
           </Badge>
+        </div>
+      )}
+
+      {/* Date-window banner (set when arriving from the Saudi heatmap range) */}
+      {dateWindowLabel && (
+        <div
+          className="flex items-center justify-between gap-3 rounded-md border border-violet-200 bg-violet-50 px-4 py-2.5 text-sm dark:border-violet-900/40 dark:bg-violet-950/30"
+          data-testid="banner-date-filter"
+        >
+          <div className="flex items-center gap-2 text-violet-900 dark:text-violet-200">
+            <Calendar className="h-4 w-4" />
+            <span>
+              Showing claims from{" "}
+              <span className="font-semibold" data-testid="text-date-filter-label">
+                {dateWindowLabel}
+              </span>
+            </span>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={clearDateFilter}
+            className="h-7 px-2 text-violet-900 hover:bg-violet-100 dark:text-violet-200 dark:hover:bg-violet-900/40"
+            data-testid="button-clear-date-filter"
+          >
+            <X className="h-3.5 w-3.5 mr-1" />
+            Clear
+          </Button>
         </div>
       )}
 

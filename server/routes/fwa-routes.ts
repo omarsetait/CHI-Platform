@@ -2,7 +2,7 @@ import type { Express } from "express";
 import type { IStorage } from "../storage";
 import OpenAI from "openai";
 import { z } from "zod";
-import { eq, desc, sql } from "drizzle-orm";
+import { eq, desc, sql, and, gte, lte } from "drizzle-orm";
 import { withRetry } from "../utils/openai-utils";
 import { sanitizeForAI } from "../utils/input-sanitizer";
 import { auditDataAccess } from "../middleware/audit";
@@ -9828,17 +9828,26 @@ Respond with JSON:
 
   // ── Flagged Claims (DB-backed Saudi healthcare claims) ──
   // Optional entity filters: ?provider=PRV-XX&patient=(PAT-XX|MBR-XX)&doctor=DOC-XX
+  // Optional date window:    ?from=ISO&to=ISO  (carried from the Saudi heatmap)
   // Note: claims.memberId stores MBR-* IDs. When the UI sends a PAT-* ID we
   // resolve it to its memberId via fwa_high_risk_patients before filtering.
   // Doctor DOC-* IDs map directly to claims.practitionerId.
   app.get("/api/fwa/flagged-claims", async (req, res) => {
     try {
-      const { and } = await import("drizzle-orm");
       const { fwaHighRiskPatients } = await import("@shared/schema");
 
       const provider = typeof req.query.provider === "string" ? req.query.provider.trim() : "";
       const patientRaw = typeof req.query.patient === "string" ? req.query.patient.trim() : "";
       const doctor = typeof req.query.doctor === "string" ? req.query.doctor.trim() : "";
+
+      // Optional date-window filter (ISO strings) so the table stays in sync
+      // with the same window selected on the Saudi heatmap.
+      const fromParam = typeof req.query.from === "string" ? req.query.from : null;
+      const toParam = typeof req.query.to === "string" ? req.query.to : null;
+      const fromDate = fromParam ? new Date(fromParam) : null;
+      const toDate = toParam ? new Date(toParam) : null;
+      const fromValid = fromDate && !isNaN(fromDate.getTime()) ? fromDate : null;
+      const toValid = toDate && !isNaN(toDate.getTime()) ? toDate : null;
 
       // Resolve PAT-* → MBR-* via the high-risk patients table.
       let patientMemberId = "";
@@ -9875,6 +9884,8 @@ Respond with JSON:
       if (provider) conditions.push(eq(claims.providerId, provider));
       if (patientMemberId) conditions.push(eq(claims.memberId, patientMemberId));
       if (doctor) conditions.push(eq(claims.practitionerId, doctor));
+      if (fromValid) conditions.push(gte(claims.registrationDate, fromValid));
+      if (toValid) conditions.push(lte(claims.registrationDate, toValid));
 
       // Join providers so each claim carries the region code (e.g. "RIY"),
       // which the dashboard uses to drill down from the Saudi heatmap.
@@ -10136,7 +10147,7 @@ Respond with JSON:
   // ---------------------------------------------------------------------------
   // GET /api/fwa/heatmap — Regional FWA risk data for the Saudi Arabia heatmap
   // ---------------------------------------------------------------------------
-  app.get("/api/fwa/heatmap", async (_req, res) => {
+  app.get("/api/fwa/heatmap", async (req, res) => {
     try {
       const REGION_CODE_MAP: Record<string, string> = {
         "Riyadh": "RIY",
@@ -10153,6 +10164,16 @@ Respond with JSON:
         "Al Jouf": "JOF",
         "Northern Borders": "NBR",
       };
+
+      // Optional date-window filter (ISO strings) so investigators can ask
+      // "what changed in the last 7/30/90 days?" instead of seeing the
+      // all-time aggregate.
+      const fromParam = typeof req.query.from === "string" ? req.query.from : null;
+      const toParam = typeof req.query.to === "string" ? req.query.to : null;
+      const fromDate = fromParam ? new Date(fromParam) : null;
+      const toDate = toParam ? new Date(toParam) : null;
+      const fromValid = fromDate && !isNaN(fromDate.getTime()) ? fromDate : null;
+      const toValid = toDate && !isNaN(toDate.getTime()) ? toDate : null;
 
       // Use provider detection results (populated by auto-seeder) instead of
       // fwaHighRiskProviders (only populated by manual seed script).
@@ -10175,14 +10196,27 @@ Respond with JSON:
         CODE_TO_NAME[code] = name;
       }
 
-      // Get detection results with risk levels
-      const detections = await db
+      // Get detection results with risk levels — optionally restricted to the
+      // requested date window using analyzedAt.
+      const dateConditions = [];
+      if (fromValid) {
+        dateConditions.push(gte(fwaProviderDetectionResults.analyzedAt, fromValid));
+      }
+      if (toValid) {
+        dateConditions.push(lte(fwaProviderDetectionResults.analyzedAt, toValid));
+      }
+      const detectionQuery = db
         .select({
           providerId: fwaProviderDetectionResults.providerId,
           riskLevel: fwaProviderDetectionResults.riskLevel,
           compositeScore: fwaProviderDetectionResults.compositeScore,
         })
         .from(fwaProviderDetectionResults);
+      const detections = dateConditions.length > 0
+        ? await detectionQuery.where(
+            dateConditions.length === 1 ? dateConditions[0] : and(...dateConditions),
+          )
+        : await detectionQuery;
 
       // Distribute detections across regions deterministically
       const regionNames = regionDist
