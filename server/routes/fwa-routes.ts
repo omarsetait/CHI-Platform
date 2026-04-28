@@ -8405,7 +8405,12 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       const claimsResult = await db.select().from(claims).limit(100);
 
       if (claimsResult.length === 0) {
-        return res.status(404).json({ error: "No claims found in database" });
+        const synthetic = buildSyntheticSampleClaim();
+        return res.json({
+          ...synthetic,
+          claimServices: generateMockServices(synthetic),
+          isSyntheticSample: true,
+        });
       }
 
       const randomClaim = claimsResult[Math.floor(Math.random() * claimsResult.length)];
@@ -8416,7 +8421,8 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
 
       res.json({
         ...randomClaim,
-        claimServices: servicesResult.length > 0 ? servicesResult : generateMockServices(randomClaim)
+        claimServices: servicesResult.length > 0 ? servicesResult : generateMockServices(randomClaim),
+        isSyntheticSample: false,
       });
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/random-claim", "get random claim");
@@ -10488,6 +10494,81 @@ Respond with JSON:
       handleRouteError(res, error, "/api/fwa/phase-a3/actions", "get phase A3 actions");
     }
   });
+}
+
+function buildSyntheticSampleClaim(): any {
+  const now = new Date();
+  const claimNumber = `CLM-SAMPLE-${now.getFullYear()}-${Math.floor(Math.random() * 100000)
+    .toString()
+    .padStart(5, "0")}`;
+  return {
+    id: `sample-${Date.now()}`,
+    claimNumber,
+    policyId: null,
+    memberId: `MEM-SAMPLE-${Math.floor(Math.random() * 10000)}`,
+    providerId: "PRV-KSA-001",
+    practitionerId: null,
+    claimType: "Inpatient",
+    registrationDate: now,
+    serviceDate: now,
+    amount: "50000",
+    approvedAmount: null,
+    denialReason: null,
+    status: "pending",
+    primaryDiagnosis: "I21.0",
+    icdCodes: ["I21.0", "I10", "E11.9"],
+    cptCodes: ["92928", "93458", "99223"],
+    description:
+      "Synthetic sample claim used because the claims table is currently empty in this environment.",
+    specialty: "Cardiology",
+    hospital: "King Faisal Specialist Hospital",
+    hasSurgery: true,
+    surgeryFee: "45000",
+    hasIcu: true,
+    lengthOfStay: 3,
+    preAuthRef: `PA-${Math.floor(Math.random() * 100000)}`,
+    category: "Surgery",
+    insurerId: null,
+    facilityId: null,
+    isNewborn: false,
+    isChronic: true,
+    isPreExisting: false,
+    isPreAuthorized: true,
+    isMaternity: false,
+    groupNo: null,
+    city: "Riyadh",
+    providerType: "hospital",
+    coverageRelationship: null,
+    providerShare: null,
+    onAdmissionDiagnosis: ["I21.0"],
+    dischargeDiagnosis: ["I21.0"],
+    policyEffectiveDate: "2024-01-01",
+    policyExpiryDate: "2024-12-31",
+    mdgfClaimNumber: null,
+    hcpCode: null,
+    occurrenceDate: null,
+    source: "synthetic-sample",
+    resubmission: false,
+    dischargeDisposition: null,
+    admissionDate: now,
+    dischargeDate: null,
+    preAuthStatus: "approved",
+    preAuthIcd10s: ["I21.0"],
+    netPayableAmount: null,
+    patientShare: null,
+    aiStatus: null,
+    validationResults: null,
+    flagged: false,
+    flagReason: null,
+    outlierScore: null,
+    createdAt: now,
+    updatedAt: now,
+    patientId: `PAT-KSA-${Math.floor(Math.random() * 10000)}`,
+    policyNumber: "POL-KSA-GOV-BASIC-2024-004",
+    batchNumber: `BATCH-${Math.floor(Math.random() * 1000)}`,
+    procedureCode: "92928",
+    diagnosisCodes: ["I10", "E11.9"],
+  };
 }
 
 function generateMockServices(claim: any): any[] {

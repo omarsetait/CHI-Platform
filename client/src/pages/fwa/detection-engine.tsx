@@ -425,100 +425,127 @@ export default function DetectionEnginePage() {
   };
 
   const loadSampleClaim = async () => {
+    let response: Response;
     try {
-      const response = await fetch("/api/fwa/random-claim");
-      if (!response.ok) {
-        throw new Error("Failed to fetch sample claim");
-      }
-      const claim = await response.json();
-      
-      const serviceLines = claim.claimServices?.map((s: any) => 
-        `${s.cptCode || s.code || "99213"}|${s.quantity || 1}|${s.unitPrice || s.amount || 500}|${s.description || "Service"}`
-      ).join("\n") || "92928|1|45000|PCI with Drug-Eluting Stent\n93458|1|8500|Left Heart Catheterization\n99223|1|2500|Initial Hospital Care";
-      
-      const medications = claim.medications?.map((m: any) =>
-        `${m.code || m.ndcCode || "00023-0001-01"}|${m.name || "Medication"}|${m.quantity || 1}|${m.dosage || "10mg"}`
-      ).join("\n") || "00023-5523-60|Ticagrelor 90mg|60|90mg BID\n00006-0749-54|Atorvastatin 80mg|30|80mg daily\n00591-0307-01|Aspirin 81mg|30|81mg daily";
-      
-      setClaimData({
-        id: claim.id || "sample-" + Date.now(),
-        claimNumber: claim.claimNumber || "CLM-" + Date.now(),
-        payer: "tawuniya",
-        batchNumber: claim.batchNumber || "BATCH-" + Math.floor(Math.random() * 1000),
-        batchDate: claim.registrationDate ? new Date(claim.registrationDate).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
-        patientId: claim.patientId || "PAT-KSA-" + Math.floor(Math.random() * 10000),
-        dateOfBirth: "1985-03-15",
-        gender: "male",
-        isNewborn: false,
-        isChronic: true,
-        isPreExisting: false,
-        policyNo: claim.policyNumber || "POL-KSA-GOV-BASIC-2024-004",
-        policyEffectiveDate: "2024-01-01",
-        policyExpiryDate: "2024-12-31",
-        providerId: claim.providerId || "PRV-KSA-001",
-        practitionerLicense: "LIC-SA-" + Math.floor(Math.random() * 100000),
-        specialtyCode: "CAR",
-        city: claim.hospital ? "Riyadh" : "Riyadh",
-        providerType: "hospital",
-        networkStatus: "in-network",
-        claimType: claim.claimType?.toLowerCase() || "inpatient",
-        serviceDate: claim.serviceDate ? new Date(claim.serviceDate).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
-        benefitCode: claim.category === "Surgery" ? "SURG" : "ICU",
-        amount: claim.amount || "50000",
-        isPreAuthorized: true,
-        primaryDiagnosis: claim.primaryDiagnosis || claim.icd || "I21.0",
-        secondaryDiagnosisCodes: claim.diagnosisCodes?.join("|") || "I10|E11.9",
-        procedureCode: claim.procedureCode || claim.cpt || "92928",
-        serviceLines: serviceLines,
-        medications: medications,
-        description: claim.description || "Standard medical care provided.",
+      response = await fetch("/api/fwa/random-claim");
+    } catch (networkError) {
+      console.error("Network error loading sample claim:", networkError);
+      applyFallbackSampleClaim();
+      toast({
+        title: "Couldn't reach server",
+        description: "Using a default sample claim while the server is unreachable.",
+        variant: "destructive",
       });
-      
+      return;
+    }
+
+    if (!response.ok) {
+      console.error(
+        `Failed to load sample claim: ${response.status} ${response.statusText}`,
+      );
+      applyFallbackSampleClaim();
+      const isServerError = response.status >= 500;
+      toast({
+        title: isServerError ? "Server error loading claim" : "Sample Claim Loaded",
+        description: isServerError
+          ? `Server returned ${response.status}. Using a default sample claim.`
+          : "Using a default sample claim.",
+        variant: isServerError ? "destructive" : "default",
+      });
+      return;
+    }
+
+    const claim = await response.json();
+
+    const serviceLines = claim.claimServices?.map((s: any) =>
+      `${s.cptCode || s.serviceCode || s.code || "99213"}|${s.quantity || 1}|${s.unitPrice || s.amount || 500}|${s.serviceDescription || s.description || "Service"}`
+    ).join("\n") || "92928|1|45000|PCI with Drug-Eluting Stent\n93458|1|8500|Left Heart Catheterization\n99223|1|2500|Initial Hospital Care";
+
+    const medications = claim.medications?.map((m: any) =>
+      `${m.code || m.ndcCode || "00023-0001-01"}|${m.name || "Medication"}|${m.quantity || 1}|${m.dosage || "10mg"}`
+    ).join("\n") || "00023-5523-60|Ticagrelor 90mg|60|90mg BID\n00006-0749-54|Atorvastatin 80mg|30|80mg daily\n00591-0307-01|Aspirin 81mg|30|81mg daily";
+
+    setClaimData({
+      id: claim.id || "sample-" + Date.now(),
+      claimNumber: claim.claimNumber || "CLM-" + Date.now(),
+      payer: "tawuniya",
+      batchNumber: claim.batchNumber || "BATCH-" + Math.floor(Math.random() * 1000),
+      batchDate: claim.registrationDate ? new Date(claim.registrationDate).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+      patientId: claim.patientId || "PAT-KSA-" + Math.floor(Math.random() * 10000),
+      dateOfBirth: "1985-03-15",
+      gender: "male",
+      isNewborn: false,
+      isChronic: true,
+      isPreExisting: false,
+      policyNo: claim.policyNumber || "POL-KSA-GOV-BASIC-2024-004",
+      policyEffectiveDate: "2024-01-01",
+      policyExpiryDate: "2024-12-31",
+      providerId: claim.providerId || "PRV-KSA-001",
+      practitionerLicense: "LIC-SA-" + Math.floor(Math.random() * 100000),
+      specialtyCode: "CAR",
+      city: claim.hospital ? "Riyadh" : "Riyadh",
+      providerType: "hospital",
+      networkStatus: "in-network",
+      claimType: claim.claimType?.toLowerCase() || "inpatient",
+      serviceDate: claim.serviceDate ? new Date(claim.serviceDate).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+      benefitCode: claim.category === "Surgery" ? "SURG" : "ICU",
+      amount: claim.amount || "50000",
+      isPreAuthorized: true,
+      primaryDiagnosis: claim.primaryDiagnosis || claim.icd || "I21.0",
+      secondaryDiagnosisCodes: claim.diagnosisCodes?.join("|") || "I10|E11.9",
+      procedureCode: claim.procedureCode || claim.cpt || "92928",
+      serviceLines: serviceLines,
+      medications: medications,
+      description: claim.description || "Standard medical care provided.",
+    });
+
+    if (claim.isSyntheticSample) {
+      toast({
+        title: "Sample Claim Loaded",
+        description: `Loaded a default sample claim with ${claim.claimServices?.length || 0} services (no claims in the database yet).`,
+      });
+    } else {
       toast({
         title: "Sample Claim Loaded",
         description: `Loaded claim ${claim.claimNumber || claim.id} from database with ${claim.claimServices?.length || 0} services`,
       });
-    } catch (error) {
-      console.error("Failed to load sample claim:", error);
-      setClaimData({
-        id: "sample-" + Date.now(),
-        claimNumber: "CLM-KSA-2026-" + Math.floor(Math.random() * 10000),
-        payer: "tawuniya",
-        batchNumber: "BATCH-" + Math.floor(Math.random() * 1000),
-        batchDate: new Date().toISOString().split('T')[0],
-        patientId: "PAT-KSA-" + Math.floor(Math.random() * 10000),
-        dateOfBirth: "1985-03-15",
-        gender: "male",
-        isNewborn: false,
-        isChronic: true,
-        isPreExisting: false,
-        policyNo: "POL-KSA-GOV-BASIC-2024-004",
-        policyEffectiveDate: "2024-01-01",
-        policyExpiryDate: "2024-12-31",
-        providerId: "PRV-KSA-001",
-        practitionerLicense: "LIC-SA-" + Math.floor(Math.random() * 100000),
-        specialtyCode: "CAR",
-        city: "Riyadh",
-        providerType: "hospital",
-        networkStatus: "in-network",
-        claimType: "inpatient",
-        serviceDate: new Date().toISOString().split('T')[0],
-        benefitCode: "ICU",
-        amount: "125000",
-        isPreAuthorized: true,
-        primaryDiagnosis: "I21.0",
-        secondaryDiagnosisCodes: "I10|E11.9|Z82.49",
-        procedureCode: "92928",
-        serviceLines: "92928|1|45000|PCI with Drug-Eluting Stent\n93458|1|8500|Left Heart Catheterization\n99223|1|2500|Initial Hospital Care\n36556|1|1200|Central Venous Catheter\n94640|2|800|Nebulizer Treatment",
-        medications: "00023-5523-60|Ticagrelor 90mg|60|90mg BID\n00006-0749-54|Atorvastatin 80mg|30|80mg daily\n00591-0307-01|Aspirin 81mg|30|81mg daily\n00093-0311-01|Metoprolol 50mg|60|50mg BID\n68180-0355-01|Lisinopril 10mg|30|10mg daily",
-        description: "Inpatient hospital admission for acute ST-elevation myocardial infarction (STEMI). Emergency PCI performed with drug-eluting stent placement.",
-      });
-      toast({
-        title: "Using Fallback",
-        description: "Using default sample data (database unavailable)",
-        variant: "destructive",
-      });
     }
+  };
+
+  const applyFallbackSampleClaim = () => {
+    setClaimData({
+      id: "sample-" + Date.now(),
+      claimNumber: "CLM-KSA-2026-" + Math.floor(Math.random() * 10000),
+      payer: "tawuniya",
+      batchNumber: "BATCH-" + Math.floor(Math.random() * 1000),
+      batchDate: new Date().toISOString().split('T')[0],
+      patientId: "PAT-KSA-" + Math.floor(Math.random() * 10000),
+      dateOfBirth: "1985-03-15",
+      gender: "male",
+      isNewborn: false,
+      isChronic: true,
+      isPreExisting: false,
+      policyNo: "POL-KSA-GOV-BASIC-2024-004",
+      policyEffectiveDate: "2024-01-01",
+      policyExpiryDate: "2024-12-31",
+      providerId: "PRV-KSA-001",
+      practitionerLicense: "LIC-SA-" + Math.floor(Math.random() * 100000),
+      specialtyCode: "CAR",
+      city: "Riyadh",
+      providerType: "hospital",
+      networkStatus: "in-network",
+      claimType: "inpatient",
+      serviceDate: new Date().toISOString().split('T')[0],
+      benefitCode: "ICU",
+      amount: "125000",
+      isPreAuthorized: true,
+      primaryDiagnosis: "I21.0",
+      secondaryDiagnosisCodes: "I10|E11.9|Z82.49",
+      procedureCode: "92928",
+      serviceLines: "92928|1|45000|PCI with Drug-Eluting Stent\n93458|1|8500|Left Heart Catheterization\n99223|1|2500|Initial Hospital Care\n36556|1|1200|Central Venous Catheter\n94640|2|800|Nebulizer Treatment",
+      medications: "00023-5523-60|Ticagrelor 90mg|60|90mg BID\n00006-0749-54|Atorvastatin 80mg|30|80mg daily\n00591-0307-01|Aspirin 81mg|30|81mg daily\n00093-0311-01|Metoprolol 50mg|60|50mg BID\n68180-0355-01|Lisinopril 10mg|30|10mg daily",
+      description: "Inpatient hospital admission for acute ST-elevation myocardial infarction (STEMI). Emergency PCI performed with drug-eluting stent placement.",
+    });
   };
 
   const handleFileSelect = (file: File) => {
