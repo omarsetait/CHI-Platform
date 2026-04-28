@@ -107,10 +107,6 @@ const SAUDI_FAMILY = ["Al-Rashidi", "Al-Dosari", "Al-Otaibi", "Al-Harbi", "Al-Za
 // ---------------------------------------------------------------------------
 
 async function seedHighRiskProviders() {
-  if (!(await isBelow(fwaHighRiskProviders, 7))) {
-    console.log("[SeedAll] High-risk providers already seeded");
-    return;
-  }
   console.log("[SeedAll] Seeding high-risk providers...");
 
   const providers = [
@@ -197,10 +193,6 @@ async function seedHighRiskProviders() {
 // ---------------------------------------------------------------------------
 
 async function seedHighRiskPatients() {
-  if (!(await isBelow(fwaHighRiskPatients, 20))) {
-    console.log("[SeedAll] High-risk patients already seeded");
-    return;
-  }
   console.log("[SeedAll] Seeding high-risk patients...");
 
   const patients: (typeof fwaHighRiskPatients.$inferInsert)[] = [];
@@ -271,10 +263,6 @@ async function seedHighRiskPatients() {
 // ---------------------------------------------------------------------------
 
 async function seedHighRiskDoctors() {
-  if (!(await isBelow(fwaHighRiskDoctors, 8))) {
-    console.log("[SeedAll] High-risk doctors already seeded");
-    return;
-  }
   console.log("[SeedAll] Seeding high-risk doctors...");
 
   const doctors = [
@@ -389,7 +377,7 @@ async function seedHighRiskDoctors() {
 // ---------------------------------------------------------------------------
 
 async function seedProviderDetectionResults() {
-  if (!(await isBelow(fwaProviderDetectionResults, 5))) {
+  if (!(await isBelow(fwaProviderDetectionResults, 8))) {
     console.log("[SeedAll] Provider detection results already seeded");
     return;
   }
@@ -473,7 +461,7 @@ async function seedProviderDetectionResults() {
 // ---------------------------------------------------------------------------
 
 async function seedDoctorDetectionResults() {
-  if (!(await isBelow(fwaDoctorDetectionResults, 5))) {
+  if (!(await isBelow(fwaDoctorDetectionResults, 10))) {
     console.log("[SeedAll] Doctor detection results already seeded");
     return;
   }
@@ -551,7 +539,7 @@ async function seedDoctorDetectionResults() {
 // ---------------------------------------------------------------------------
 
 async function seedPatientDetectionResults() {
-  if (!(await isBelow(fwaPatientDetectionResults, 10))) {
+  if (!(await isBelow(fwaPatientDetectionResults, 20))) {
     console.log("[SeedAll] Patient detection results already seeded");
     return;
   }
@@ -693,10 +681,6 @@ async function seedPatientDetectionResults() {
 // ---------------------------------------------------------------------------
 
 async function seedEnforcementCases() {
-  if (!(await isBelow(enforcementCases, 7))) {
-    console.log("[SeedAll] Enforcement cases already seeded");
-    return;
-  }
   console.log("[SeedAll] Seeding enforcement cases...");
 
   const cases = [
@@ -898,10 +882,6 @@ async function seedEnforcementCases() {
 // ---------------------------------------------------------------------------
 
 async function seedFwaCasesAndFindings() {
-  if (!(await isBelow(fwaCases, 5))) {
-    console.log("[SeedAll] FWA cases already seeded");
-    return;
-  }
   console.log("[SeedAll] Seeding FWA cases and findings...");
 
   const caseDefs = [
@@ -1020,11 +1000,6 @@ async function seedFwaCasesAndFindings() {
 // ---------------------------------------------------------------------------
 
 async function seedPreAuthFull() {
-  const currentCount = (await db.select({ c: count() }).from(preAuthClaims))[0]?.c || 0;
-  if (Number(currentCount) >= 20) {
-    console.log("[SeedAll] Pre-auth claims already have sufficient data");
-    return;
-  }
   console.log("[SeedAll] Seeding pre-auth claims, signals, decisions...");
 
   const payerIds = ["BUPA-001", "TAWUNIYA-001", "MEDGULF-001", "ALRAJHI-001", "SAICO-001"];
@@ -1155,21 +1130,19 @@ async function seedPreAuthFull() {
     console.error("[SeedAll] Error seeding pre-auth signals/decisions:", err);
   }
 
-  // Seed policy rules if empty
-  if (await isEmpty(preAuthPolicyRules)) {
-    const rules = [
-      { ruleId: "RULE-CHI-001", ruleName: "High-Cost Procedure Flag", ruleType: "cost_threshold", layer: 1, condition: { field: "total_amount", operator: "gt", value: 50000 }, action: "PEND_REVIEW", severity: "HIGH" as const },
-      { ruleId: "RULE-CHI-002", ruleName: "Diagnosis-Procedure Mismatch", ruleType: "clinical_validation", layer: 2, condition: { field: "icd_cpt_pair", operator: "mismatch", value: "semantic_check" }, action: "PEND_REVIEW", severity: "MEDIUM" as const },
-      { ruleId: "RULE-CHI-003", ruleName: "Peer Outlier Detection", ruleType: "statistical_outlier", layer: 2, condition: { field: "procedure_frequency", operator: "gt_percentile", value: 95 }, action: "PEND_REVIEW", severity: "HIGH" as const },
-      { ruleId: "RULE-CHI-004", ruleName: "Guideline Deviation Alert", ruleType: "clinical_guideline", layer: 2, condition: { field: "treatment_protocol", operator: "deviates", value: "SCFHS_guidelines" }, action: "PEND_REVIEW", severity: "MEDIUM" as const },
-      { ruleId: "RULE-CHI-005", ruleName: "Network Status Verification", ruleType: "eligibility", layer: 1, condition: { field: "network_status", operator: "eq", value: "out_of_network" }, action: "REJECT", severity: "HIGH" as const },
-      { ruleId: "RULE-CHI-006", ruleName: "Prior Authorization Required", ruleType: "authorization", layer: 1, condition: { field: "requires_prior_auth", operator: "eq", value: true }, action: "PEND_REVIEW", severity: "HIGH" as const },
-      { ruleId: "RULE-CHI-007", ruleName: "Duplicate Claim Check", ruleType: "duplicate_detection", layer: 1, condition: { field: "claim_within_30_days", operator: "eq", value: true }, action: "REJECT", severity: "HIGH" as const },
-      { ruleId: "RULE-CHI-008", ruleName: "Policy Coverage Verification", ruleType: "coverage", layer: 1, condition: { field: "service_covered", operator: "eq", value: false }, action: "REJECT", severity: "HIGH" as const },
-    ];
-    await batchInsert(preAuthPolicyRules, rules);
-    console.log(`[SeedAll] Inserted ${rules.length} pre-auth policy rules`);
-  }
+  // Seed policy rules (ruleId is unique — duplicates skipped)
+  const rules = [
+    { ruleId: "RULE-CHI-001", ruleName: "High-Cost Procedure Flag", ruleType: "cost_threshold", layer: 1, condition: { field: "total_amount", operator: "gt", value: 50000 }, action: "PEND_REVIEW", severity: "HIGH" as const },
+    { ruleId: "RULE-CHI-002", ruleName: "Diagnosis-Procedure Mismatch", ruleType: "clinical_validation", layer: 2, condition: { field: "icd_cpt_pair", operator: "mismatch", value: "semantic_check" }, action: "PEND_REVIEW", severity: "MEDIUM" as const },
+    { ruleId: "RULE-CHI-003", ruleName: "Peer Outlier Detection", ruleType: "statistical_outlier", layer: 2, condition: { field: "procedure_frequency", operator: "gt_percentile", value: 95 }, action: "PEND_REVIEW", severity: "HIGH" as const },
+    { ruleId: "RULE-CHI-004", ruleName: "Guideline Deviation Alert", ruleType: "clinical_guideline", layer: 2, condition: { field: "treatment_protocol", operator: "deviates", value: "SCFHS_guidelines" }, action: "PEND_REVIEW", severity: "MEDIUM" as const },
+    { ruleId: "RULE-CHI-005", ruleName: "Network Status Verification", ruleType: "eligibility", layer: 1, condition: { field: "network_status", operator: "eq", value: "out_of_network" }, action: "REJECT", severity: "HIGH" as const },
+    { ruleId: "RULE-CHI-006", ruleName: "Prior Authorization Required", ruleType: "authorization", layer: 1, condition: { field: "requires_prior_auth", operator: "eq", value: true }, action: "PEND_REVIEW", severity: "HIGH" as const },
+    { ruleId: "RULE-CHI-007", ruleName: "Duplicate Claim Check", ruleType: "duplicate_detection", layer: 1, condition: { field: "claim_within_30_days", operator: "eq", value: true }, action: "REJECT", severity: "HIGH" as const },
+    { ruleId: "RULE-CHI-008", ruleName: "Policy Coverage Verification", ruleType: "coverage", layer: 1, condition: { field: "service_covered", operator: "eq", value: false }, action: "REJECT", severity: "HIGH" as const },
+  ];
+  await batchInsert(preAuthPolicyRules, rules);
+  console.log(`[SeedAll] Upserted ${rules.length} pre-auth policy rules (duplicates skipped)`);
 }
 
 // ---------------------------------------------------------------------------
@@ -1177,16 +1150,6 @@ async function seedPreAuthFull() {
 // ---------------------------------------------------------------------------
 
 async function seedIntelligencePortal() {
-  const [provCount] = await Promise.all([
-    db.select({ c: count() }).from(portalProviders),
-  ]);
-
-  // If no portal providers, seed a subset
-  if (Number(provCount[0]?.c || 0) === 0) {
-    console.log("[SeedAll] No portal providers found. Seeding portal base data...");
-    await seedPortalBaseData();
-  }
-
   const providers = await db.select({ code: portalProviders.code }).from(portalProviders);
   if (providers.length === 0) {
     console.log("[SeedAll] Cannot seed intelligence portal: no providers");
@@ -1253,8 +1216,7 @@ async function seedIntelligencePortal() {
   console.log(`[SeedAll] Upserted ${drg.length} DRG assessment records (duplicates skipped)`);
 
   // Seed rejection records
-  const rejCount = (await db.select({ c: count() }).from(providerRejections))[0]?.c || 0;
-  if (Number(rejCount) < 50) {
+  {
     console.log("[SeedAll] Seeding provider rejections...");
     const ICD = ["J18.9", "E11.9", "K80.2", "M54.5", "I10", "J06.9", "L30.9", "S82.0"];
     const CPT = ["71046", "99213", "47562", "73721", "80053", "99214", "43239", "27447"];
@@ -1295,104 +1257,86 @@ async function seedIntelligencePortal() {
 // ---------------------------------------------------------------------------
 
 async function seedPortalBaseData() {
-  const [insCount, regCount, provCount, empCount, memCount] = await Promise.all([
-    db.select({ c: count() }).from(portalInsurers),
-    db.select({ c: count() }).from(portalRegions),
-    db.select({ c: count() }).from(portalProviders),
-    db.select({ c: count() }).from(portalEmployers),
-    db.select({ c: count() }).from(portalMembers),
-  ]);
+  const insurers = [
+    { code: "INS-001", name: "Bupa Arabia", nameAr: "بوبا العربية", licenseNo: "CCHI-INS-001", marketShare: "22.4", lossRatio: "78.2", capitalAdequacy: "185.0", healthStatus: "healthy" as const, premiumVolumeSar: "8200000000.00" },
+    { code: "INS-002", name: "Tawuniya", nameAr: "التعاونية", licenseNo: "CCHI-INS-002", marketShare: "19.4", lossRatio: "82.1", capitalAdequacy: "172.0", healthStatus: "healthy" as const, premiumVolumeSar: "7100000000.00" },
+    { code: "INS-003", name: "MedGulf", nameAr: "ميدغلف", licenseNo: "CCHI-INS-003", marketShare: "12.8", lossRatio: "85.4", capitalAdequacy: "148.0", healthStatus: "watch" as const, premiumVolumeSar: "4700000000.00" },
+    { code: "INS-004", name: "Al Rajhi Takaful", nameAr: "تكافل الراجحي", licenseNo: "CCHI-INS-004", marketShare: "8.6", lossRatio: "76.5", capitalAdequacy: "192.0", healthStatus: "healthy" as const, premiumVolumeSar: "3150000000.00" },
+    { code: "INS-005", name: "SAICO", nameAr: "سايكو", licenseNo: "CCHI-INS-005", marketShare: "5.4", lossRatio: "89.2", capitalAdequacy: "128.0", healthStatus: "at_risk" as const, premiumVolumeSar: "1980000000.00" },
+    { code: "INS-006", name: "Walaa Insurance", nameAr: "ولاء للتأمين", licenseNo: "CCHI-INS-006", marketShare: "4.2", lossRatio: "70.8", capitalAdequacy: "210.0", healthStatus: "healthy" as const, premiumVolumeSar: "1540000000.00" },
+  ];
+  await batchInsert(portalInsurers, insurers);
+  console.log("[SeedAll] Upserted portal insurers (duplicates skipped)");
 
-  if (Number(insCount[0]?.c || 0) === 0) {
-    const insurers = [
-      { code: "INS-001", name: "Bupa Arabia", nameAr: "بوبا العربية", licenseNo: "CCHI-INS-001", marketShare: "22.4", lossRatio: "78.2", capitalAdequacy: "185.0", healthStatus: "healthy" as const, premiumVolumeSar: "8200000000.00" },
-      { code: "INS-002", name: "Tawuniya", nameAr: "التعاونية", licenseNo: "CCHI-INS-002", marketShare: "19.4", lossRatio: "82.1", capitalAdequacy: "172.0", healthStatus: "healthy" as const, premiumVolumeSar: "7100000000.00" },
-      { code: "INS-003", name: "MedGulf", nameAr: "ميدغلف", licenseNo: "CCHI-INS-003", marketShare: "12.8", lossRatio: "85.4", capitalAdequacy: "148.0", healthStatus: "watch" as const, premiumVolumeSar: "4700000000.00" },
-      { code: "INS-004", name: "Al Rajhi Takaful", nameAr: "تكافل الراجحي", licenseNo: "CCHI-INS-004", marketShare: "8.6", lossRatio: "76.5", capitalAdequacy: "192.0", healthStatus: "healthy" as const, premiumVolumeSar: "3150000000.00" },
-      { code: "INS-005", name: "SAICO", nameAr: "سايكو", licenseNo: "CCHI-INS-005", marketShare: "5.4", lossRatio: "89.2", capitalAdequacy: "128.0", healthStatus: "at_risk" as const, premiumVolumeSar: "1980000000.00" },
-      { code: "INS-006", name: "Walaa Insurance", nameAr: "ولاء للتأمين", licenseNo: "CCHI-INS-006", marketShare: "4.2", lossRatio: "70.8", capitalAdequacy: "210.0", healthStatus: "healthy" as const, premiumVolumeSar: "1540000000.00" },
-    ];
-    await batchInsert(portalInsurers, insurers);
-    console.log("[SeedAll] Inserted portal insurers");
-  }
+  const regions = [
+    { code: "RIY", name: "Riyadh", nameAr: "الرياض", population: 8600000, insuredCount: 7740000, providerCount: 12, coverageRate: "90.0" },
+    { code: "MAK", name: "Makkah", nameAr: "مكة المكرمة", population: 9000000, insuredCount: 7650000, providerCount: 8, coverageRate: "85.0" },
+    { code: "EST", name: "Eastern Province", nameAr: "المنطقة الشرقية", population: 5100000, insuredCount: 4590000, providerCount: 6, coverageRate: "90.0" },
+    { code: "MDN", name: "Madinah", nameAr: "المدينة المنورة", population: 2200000, insuredCount: 1848000, providerCount: 4, coverageRate: "84.0" },
+    { code: "ASR", name: "Asir", nameAr: "عسير", population: 2300000, insuredCount: 1725000, providerCount: 3, coverageRate: "75.0" },
+  ];
+  await batchInsert(portalRegions, regions);
+  console.log("[SeedAll] Upserted portal regions (duplicates skipped)");
 
-  if (Number(regCount[0]?.c || 0) === 0) {
-    const regions = [
-      { code: "RIY", name: "Riyadh", nameAr: "الرياض", population: 8600000, insuredCount: 7740000, providerCount: 12, coverageRate: "90.0" },
-      { code: "MAK", name: "Makkah", nameAr: "مكة المكرمة", population: 9000000, insuredCount: 7650000, providerCount: 8, coverageRate: "85.0" },
-      { code: "EST", name: "Eastern Province", nameAr: "المنطقة الشرقية", population: 5100000, insuredCount: 4590000, providerCount: 6, coverageRate: "90.0" },
-      { code: "MDN", name: "Madinah", nameAr: "المدينة المنورة", population: 2200000, insuredCount: 1848000, providerCount: 4, coverageRate: "84.0" },
-      { code: "ASR", name: "Asir", nameAr: "عسير", population: 2300000, insuredCount: 1725000, providerCount: 3, coverageRate: "75.0" },
-    ];
-    await batchInsert(portalRegions, regions);
-    console.log("[SeedAll] Inserted portal regions");
-  }
+  const providers = [
+    { code: "PRV-001", name: "Riyadh Care Hospital", nameAr: "مستشفى رعاية الرياض", licenseNo: "MOH-RC-001", region: "RIY", city: "Riyadh", type: "tertiary_hospital" as const, bedCount: 450, specialties: ["Internal Medicine", "Cardiology", "Orthopedics"], accreditationStatus: "accredited" as const, phone: "+966-1-200-0001", email: "info@riyadhcare.sa", latitude: "24.68", longitude: "46.72", acceptedInsurers: ["INS-001", "INS-002", "INS-003"], languages: ["Arabic", "English"], rating: "4.6", reviewCount: 342, avgWaitMinutes: 18, workingHours: "Sun-Thu 7:00-22:00" },
+    { code: "PRV-004", name: "Dr. Sulaiman Al Habib Hospital", nameAr: "مستشفى الدكتور سليمان الحبيب", licenseNo: "MOH-SH-004", region: "RIY", city: "Riyadh", type: "tertiary_hospital" as const, bedCount: 400, specialties: ["Cardiology", "Neurology", "Orthopedics"], accreditationStatus: "accredited" as const, phone: "+966-1-200-0004", email: "info@hmg.sa", latitude: "24.72", longitude: "46.68", acceptedInsurers: ["INS-001", "INS-002", "INS-003"], languages: ["Arabic", "English", "Urdu"], rating: "4.7", reviewCount: 678, avgWaitMinutes: 20, workingHours: "Sun-Thu 7:00-22:00" },
+    { code: "PRV-013", name: "King Abdulaziz University Hospital", nameAr: "مستشفى جامعة الملك عبدالعزيز", licenseNo: "MOH-KA-013", region: "MAK", city: "Jeddah", type: "tertiary_hospital" as const, bedCount: 800, specialties: ["All Specialties"], accreditationStatus: "accredited" as const, phone: "+966-2-200-0013", email: "info@kauh.sa", latitude: "21.48", longitude: "39.19", acceptedInsurers: ["INS-001", "INS-002", "INS-003"], languages: ["Arabic", "English"], rating: "4.7", reviewCount: 945, avgWaitMinutes: 18, workingHours: "Sun-Thu 7:00-22:00" },
+    { code: "PRV-021", name: "Dammam Medical Complex", nameAr: "مجمع الدمام الطبي", licenseNo: "MOH-DM-021", region: "EST", city: "Dammam", type: "tertiary_hospital" as const, bedCount: 600, specialties: ["All Specialties"], accreditationStatus: "accredited" as const, phone: "+966-3-200-0021", email: "info@dmc.sa", latitude: "26.43", longitude: "50.10", acceptedInsurers: ["INS-001", "INS-002", "INS-003"], languages: ["Arabic", "English", "Urdu"], rating: "4.3", reviewCount: 678, avgWaitMinutes: 20, workingHours: "Sun-Thu 8:00-20:00" },
+    { code: "PRV-023", name: "Saad Specialist Hospital", nameAr: "مستشفى سعد التخصصي", licenseNo: "MOH-SS-023", region: "EST", city: "Al Khobar", type: "specialist_clinic" as const, bedCount: 200, specialties: ["Oncology", "Cardiology", "Neurology"], accreditationStatus: "accredited" as const, phone: "+966-3-200-0023", email: "info@saad.sa", latitude: "26.28", longitude: "50.20", acceptedInsurers: ["INS-001", "INS-002"], languages: ["Arabic", "English"], rating: "4.5", reviewCount: 534, avgWaitMinutes: 18, workingHours: "Sun-Thu 7:00-22:00" },
+    { code: "PRV-026", name: "Johns Hopkins Aramco Healthcare", nameAr: "جونز هوبكنز أرامكو الصحية", licenseNo: "MOH-JH-026", region: "EST", city: "Dhahran", type: "tertiary_hospital" as const, bedCount: 350, specialties: ["All Specialties"], accreditationStatus: "accredited" as const, phone: "+966-3-200-0026", email: "info@jhah.sa", latitude: "26.27", longitude: "50.15", acceptedInsurers: ["INS-001", "INS-002", "INS-003"], languages: ["Arabic", "English"], rating: "4.6", reviewCount: 789, avgWaitMinutes: 15, workingHours: "Sun-Thu 7:00-22:00" },
+  ];
+  await batchInsert(portalProviders, providers);
+  console.log("[SeedAll] Upserted portal providers (duplicates skipped)");
 
-  if (Number(provCount[0]?.c || 0) === 0) {
-    const providers = [
-      { code: "PRV-001", name: "Riyadh Care Hospital", nameAr: "مستشفى رعاية الرياض", licenseNo: "MOH-RC-001", region: "RIY", city: "Riyadh", type: "tertiary_hospital" as const, bedCount: 450, specialties: ["Internal Medicine", "Cardiology", "Orthopedics"], accreditationStatus: "accredited" as const, phone: "+966-1-200-0001", email: "info@riyadhcare.sa", latitude: "24.68", longitude: "46.72", acceptedInsurers: ["INS-001", "INS-002", "INS-003"], languages: ["Arabic", "English"], rating: "4.6", reviewCount: 342, avgWaitMinutes: 18, workingHours: "Sun-Thu 7:00-22:00" },
-      { code: "PRV-004", name: "Dr. Sulaiman Al Habib Hospital", nameAr: "مستشفى الدكتور سليمان الحبيب", licenseNo: "MOH-SH-004", region: "RIY", city: "Riyadh", type: "tertiary_hospital" as const, bedCount: 400, specialties: ["Cardiology", "Neurology", "Orthopedics"], accreditationStatus: "accredited" as const, phone: "+966-1-200-0004", email: "info@hmg.sa", latitude: "24.72", longitude: "46.68", acceptedInsurers: ["INS-001", "INS-002", "INS-003"], languages: ["Arabic", "English", "Urdu"], rating: "4.7", reviewCount: 678, avgWaitMinutes: 20, workingHours: "Sun-Thu 7:00-22:00" },
-      { code: "PRV-013", name: "King Abdulaziz University Hospital", nameAr: "مستشفى جامعة الملك عبدالعزيز", licenseNo: "MOH-KA-013", region: "MAK", city: "Jeddah", type: "tertiary_hospital" as const, bedCount: 800, specialties: ["All Specialties"], accreditationStatus: "accredited" as const, phone: "+966-2-200-0013", email: "info@kauh.sa", latitude: "21.48", longitude: "39.19", acceptedInsurers: ["INS-001", "INS-002", "INS-003"], languages: ["Arabic", "English"], rating: "4.7", reviewCount: 945, avgWaitMinutes: 18, workingHours: "Sun-Thu 7:00-22:00" },
-      { code: "PRV-021", name: "Dammam Medical Complex", nameAr: "مجمع الدمام الطبي", licenseNo: "MOH-DM-021", region: "EST", city: "Dammam", type: "tertiary_hospital" as const, bedCount: 600, specialties: ["All Specialties"], accreditationStatus: "accredited" as const, phone: "+966-3-200-0021", email: "info@dmc.sa", latitude: "26.43", longitude: "50.10", acceptedInsurers: ["INS-001", "INS-002", "INS-003"], languages: ["Arabic", "English", "Urdu"], rating: "4.3", reviewCount: 678, avgWaitMinutes: 20, workingHours: "Sun-Thu 8:00-20:00" },
-      { code: "PRV-023", name: "Saad Specialist Hospital", nameAr: "مستشفى سعد التخصصي", licenseNo: "MOH-SS-023", region: "EST", city: "Al Khobar", type: "specialist_clinic" as const, bedCount: 200, specialties: ["Oncology", "Cardiology", "Neurology"], accreditationStatus: "accredited" as const, phone: "+966-3-200-0023", email: "info@saad.sa", latitude: "26.28", longitude: "50.20", acceptedInsurers: ["INS-001", "INS-002"], languages: ["Arabic", "English"], rating: "4.5", reviewCount: 534, avgWaitMinutes: 18, workingHours: "Sun-Thu 7:00-22:00" },
-      { code: "PRV-026", name: "Johns Hopkins Aramco Healthcare", nameAr: "جونز هوبكنز أرامكو الصحية", licenseNo: "MOH-JH-026", region: "EST", city: "Dhahran", type: "tertiary_hospital" as const, bedCount: 350, specialties: ["All Specialties"], accreditationStatus: "accredited" as const, phone: "+966-3-200-0026", email: "info@jhah.sa", latitude: "26.27", longitude: "50.15", acceptedInsurers: ["INS-001", "INS-002", "INS-003"], languages: ["Arabic", "English"], rating: "4.6", reviewCount: 789, avgWaitMinutes: 15, workingHours: "Sun-Thu 7:00-22:00" },
-    ];
-    await batchInsert(portalProviders, providers);
-    console.log("[SeedAll] Inserted portal providers");
-  }
+  const employers = [
+    { code: "EMP-001", name: "Al Madinah Construction Group", nameAr: "مجموعة المدينة للمقاولات", crNumber: "CR-1010234567", sector: "construction" as const, sizeBand: "large" as const, employeeCount: 1200, insuredCount: 1164, pendingEnrollment: 36, city: "Riyadh", region: "RIY", complianceStatus: "compliant" as const },
+    { code: "EMP-002", name: "Nujoom Tech Solutions", nameAr: "نجوم للحلول التقنية", crNumber: "CR-1010345678", sector: "technology" as const, sizeBand: "medium" as const, employeeCount: 280, insuredCount: 280, pendingEnrollment: 0, city: "Riyadh", region: "RIY", complianceStatus: "compliant" as const },
+    { code: "EMP-003", name: "Gulf Hospitality Co", nameAr: "شركة الخليج للضيافة", crNumber: "CR-4030456789", sector: "hospitality" as const, sizeBand: "medium" as const, employeeCount: 600, insuredCount: 571, pendingEnrollment: 29, city: "Jeddah", region: "MAK", complianceStatus: "action_required" as const },
+    { code: "EMP-004", name: "Saudi Build Corp", nameAr: "شركة البناء السعودية", crNumber: "CR-1010456002", sector: "construction" as const, sizeBand: "enterprise" as const, employeeCount: 2200, insuredCount: 2134, pendingEnrollment: 66, city: "Riyadh", region: "RIY", complianceStatus: "compliant" as const },
+    { code: "EMP-005", name: "Eastern Builders LLC", nameAr: "البناؤون الشرقيون", crNumber: "CR-2050456004", sector: "construction" as const, sizeBand: "medium" as const, employeeCount: 680, insuredCount: 646, pendingEnrollment: 34, city: "Dammam", region: "EST", complianceStatus: "action_required" as const },
+    { code: "EMP-006", name: "Al Rajhi Development", nameAr: "الراجحي للتطوير", crNumber: "CR-4030456003", sector: "construction" as const, sizeBand: "large" as const, employeeCount: 1500, insuredCount: 1455, pendingEnrollment: 45, city: "Jeddah", region: "MAK", complianceStatus: "compliant" as const },
+  ];
+  await batchInsert(portalEmployers, employers);
+  console.log("[SeedAll] Upserted portal employers (duplicates skipped)");
 
-  if (Number(empCount[0]?.c || 0) === 0) {
-    const employers = [
-      { code: "EMP-001", name: "Al Madinah Construction Group", nameAr: "مجموعة المدينة للمقاولات", crNumber: "CR-1010234567", sector: "construction" as const, sizeBand: "large" as const, employeeCount: 1200, insuredCount: 1164, pendingEnrollment: 36, city: "Riyadh", region: "RIY", complianceStatus: "compliant" as const },
-      { code: "EMP-002", name: "Nujoom Tech Solutions", nameAr: "نجوم للحلول التقنية", crNumber: "CR-1010345678", sector: "technology" as const, sizeBand: "medium" as const, employeeCount: 280, insuredCount: 280, pendingEnrollment: 0, city: "Riyadh", region: "RIY", complianceStatus: "compliant" as const },
-      { code: "EMP-003", name: "Gulf Hospitality Co", nameAr: "شركة الخليج للضيافة", crNumber: "CR-4030456789", sector: "hospitality" as const, sizeBand: "medium" as const, employeeCount: 600, insuredCount: 571, pendingEnrollment: 29, city: "Jeddah", region: "MAK", complianceStatus: "action_required" as const },
-      { code: "EMP-004", name: "Saudi Build Corp", nameAr: "شركة البناء السعودية", crNumber: "CR-1010456002", sector: "construction" as const, sizeBand: "enterprise" as const, employeeCount: 2200, insuredCount: 2134, pendingEnrollment: 66, city: "Riyadh", region: "RIY", complianceStatus: "compliant" as const },
-      { code: "EMP-005", name: "Eastern Builders LLC", nameAr: "البناؤون الشرقيون", crNumber: "CR-2050456004", sector: "construction" as const, sizeBand: "medium" as const, employeeCount: 680, insuredCount: 646, pendingEnrollment: 34, city: "Dammam", region: "EST", complianceStatus: "action_required" as const },
-      { code: "EMP-006", name: "Al Rajhi Development", nameAr: "الراجحي للتطوير", crNumber: "CR-4030456003", sector: "construction" as const, sizeBand: "large" as const, employeeCount: 1500, insuredCount: 1455, pendingEnrollment: 45, city: "Jeddah", region: "MAK", complianceStatus: "compliant" as const },
-    ];
-    await batchInsert(portalEmployers, employers);
-    console.log("[SeedAll] Inserted portal employers");
+  // Employer policies (unique per employerCode+insurerCode)
+  const tiers = ["bronze", "silver", "gold", "platinum"];
+  const policies = employers.map((emp, idx) => ({
+    employerCode: emp.code,
+    insurerCode: `INS-00${(idx % 6) + 1}`,
+    insurerName: ["Bupa Arabia", "Tawuniya", "MedGulf", "Al Rajhi Takaful", "SAICO", "Walaa Insurance"][idx % 6],
+    planTier: tiers[idx % 4],
+    premiumPerEmployee: d(2800 + idx * 400),
+    totalAnnualPremium: d((2800 + idx * 400) * emp.employeeCount),
+    coverageStart: new Date(2025, 0, 1),
+    coverageEnd: new Date(2026, 11, 31),
+    dependentsCount: Math.round(emp.employeeCount * 0.6),
+    renewalDaysRemaining: 30 + idx * 45,
+  }));
+  await batchInsert(employerPolicies, policies);
+  console.log("[SeedAll] Upserted employer policies (duplicates skipped)");
 
-    // Employer policies
-    const tiers = ["bronze", "silver", "gold", "platinum"];
-    const policies = employers.map((emp, idx) => ({
-      employerCode: emp.code,
-      insurerCode: `INS-00${(idx % 6) + 1}`,
-      insurerName: ["Bupa Arabia", "Tawuniya", "MedGulf", "Al Rajhi Takaful", "SAICO", "Walaa Insurance"][idx % 6],
-      planTier: tiers[idx % 4],
-      premiumPerEmployee: d(2800 + idx * 400),
-      totalAnnualPremium: d((2800 + idx * 400) * emp.employeeCount),
-      coverageStart: new Date(2025, 0, 1),
-      coverageEnd: new Date(2026, 11, 31),
-      dependentsCount: Math.round(emp.employeeCount * 0.6),
-      renewalDaysRemaining: 30 + idx * 45,
-    }));
-    await batchInsert(employerPolicies, policies);
-    console.log("[SeedAll] Inserted employer policies");
-  }
+  const members = [
+    { code: "MEM-001", name: "Fatimah Al-Dosari", nameAr: "فاطمة الدوسري", iqamaNo: "1024567890", policyNumber: "POL-BUPA-001", employerCode: "EMP-002", employerName: "Nujoom Tech Solutions", insurerCode: "INS-001", insurerName: "Bupa Arabia", planTier: "gold" as const, nationality: "Saudi", age: 34, gender: "Female", city: "Riyadh", region: "RIY", dependentsCount: 2, policyValidUntil: new Date(2026, 11, 31) },
+    { code: "MEM-002", name: "Mohammed Al-Harbi", nameAr: "محمد الحربي", iqamaNo: "1034567891", policyNumber: "POL-TAW-001", employerCode: "EMP-001", employerName: "Al Madinah Construction Group", insurerCode: "INS-002", insurerName: "Tawuniya", planTier: "silver" as const, nationality: "Saudi", age: 52, gender: "Male", city: "Riyadh", region: "RIY", dependentsCount: 4, policyValidUntil: new Date(2026, 11, 31) },
+    { code: "MEM-003", name: "Sara Al-Otaibi", nameAr: "سارة العتيبي", iqamaNo: "1044567892", policyNumber: "POL-BUPA-002", employerCode: "EMP-003", employerName: "Gulf Hospitality Co", insurerCode: "INS-001", insurerName: "Bupa Arabia", planTier: "bronze" as const, nationality: "Saudi", age: 28, gender: "Female", city: "Jeddah", region: "MAK", dependentsCount: 1, policyValidUntil: new Date(2026, 6, 30) },
+  ];
+  await batchInsert(portalMembers, members);
+  console.log("[SeedAll] Upserted portal members (duplicates skipped)");
 
-  if (Number(memCount[0]?.c || 0) === 0) {
-    const members = [
-      { code: "MEM-001", name: "Fatimah Al-Dosari", nameAr: "فاطمة الدوسري", iqamaNo: "1024567890", policyNumber: "POL-BUPA-001", employerCode: "EMP-002", employerName: "Nujoom Tech Solutions", insurerCode: "INS-001", insurerName: "Bupa Arabia", planTier: "gold" as const, nationality: "Saudi", age: 34, gender: "Female", city: "Riyadh", region: "RIY", dependentsCount: 2, policyValidUntil: new Date(2026, 11, 31) },
-      { code: "MEM-002", name: "Mohammed Al-Harbi", nameAr: "محمد الحربي", iqamaNo: "1034567891", policyNumber: "POL-TAW-001", employerCode: "EMP-001", employerName: "Al Madinah Construction Group", insurerCode: "INS-002", insurerName: "Tawuniya", planTier: "silver" as const, nationality: "Saudi", age: 52, gender: "Male", city: "Riyadh", region: "RIY", dependentsCount: 4, policyValidUntil: new Date(2026, 11, 31) },
-      { code: "MEM-003", name: "Sara Al-Otaibi", nameAr: "سارة العتيبي", iqamaNo: "1044567892", policyNumber: "POL-BUPA-002", employerCode: "EMP-003", employerName: "Gulf Hospitality Co", insurerCode: "INS-001", insurerName: "Bupa Arabia", planTier: "bronze" as const, nationality: "Saudi", age: 28, gender: "Female", city: "Jeddah", region: "MAK", dependentsCount: 1, policyValidUntil: new Date(2026, 6, 30) },
-    ];
-    await batchInsert(portalMembers, members);
-    console.log("[SeedAll] Inserted portal members");
-
-    // Member coverage
-    const coverageItems = [
-      { memberCode: "MEM-001", benefitCategory: "Emergency Care", status: "covered" as const, limitSar: null, usedSar: "2400.00", copayPercent: 0, sortOrder: 0 },
-      { memberCode: "MEM-001", benefitCategory: "Outpatient Visits", status: "covered" as const, limitSar: null, usedSar: "1800.00", limitUnits: 150, usedUnits: 12, copayPercent: 20, sortOrder: 1 },
-      { memberCode: "MEM-001", benefitCategory: "Dental", status: "covered" as const, limitSar: "8000.00", usedSar: "3400.00", copayPercent: 20, sortOrder: 2 },
-      { memberCode: "MEM-002", benefitCategory: "Emergency Care", status: "covered" as const, limitSar: null, usedSar: "0.00", copayPercent: 10, sortOrder: 0 },
-      { memberCode: "MEM-002", benefitCategory: "Chronic Conditions", status: "covered" as const, limitSar: "50000.00", usedSar: "14200.00", copayPercent: 15, sortOrder: 1 },
-      { memberCode: "MEM-003", benefitCategory: "Emergency Care", status: "covered" as const, limitSar: null, usedSar: "0.00", copayPercent: 15, sortOrder: 0 },
-      { memberCode: "MEM-003", benefitCategory: "Maternity", status: "covered" as const, limitSar: "20000.00", usedSar: "4500.00", copayPercent: 20, sortOrder: 1 },
-    ];
-    await batchInsert(memberCoverage, coverageItems);
-    console.log("[SeedAll] Inserted member coverage records");
-  }
+  // Member coverage (unique per memberCode+benefitCategory)
+  const coverageItems = [
+    { memberCode: "MEM-001", benefitCategory: "Emergency Care", status: "covered" as const, limitSar: null, usedSar: "2400.00", copayPercent: 0, sortOrder: 0 },
+    { memberCode: "MEM-001", benefitCategory: "Outpatient Visits", status: "covered" as const, limitSar: null, usedSar: "1800.00", limitUnits: 150, usedUnits: 12, copayPercent: 20, sortOrder: 1 },
+    { memberCode: "MEM-001", benefitCategory: "Dental", status: "covered" as const, limitSar: "8000.00", usedSar: "3400.00", copayPercent: 20, sortOrder: 2 },
+    { memberCode: "MEM-002", benefitCategory: "Emergency Care", status: "covered" as const, limitSar: null, usedSar: "0.00", copayPercent: 10, sortOrder: 0 },
+    { memberCode: "MEM-002", benefitCategory: "Chronic Conditions", status: "covered" as const, limitSar: "50000.00", usedSar: "14200.00", copayPercent: 15, sortOrder: 1 },
+    { memberCode: "MEM-003", benefitCategory: "Emergency Care", status: "covered" as const, limitSar: null, usedSar: "0.00", copayPercent: 15, sortOrder: 0 },
+    { memberCode: "MEM-003", benefitCategory: "Maternity", status: "covered" as const, limitSar: "20000.00", usedSar: "4500.00", copayPercent: 20, sortOrder: 1 },
+  ];
+  await batchInsert(memberCoverage, coverageItems);
+  console.log("[SeedAll] Upserted member coverage records (duplicates skipped)");
 }
 
 // ---------------------------------------------------------------------------
@@ -1400,10 +1344,6 @@ async function seedPortalBaseData() {
 // ---------------------------------------------------------------------------
 
 async function seedEmployerViolations() {
-  if (!(await isBelow(employerViolations, 3))) {
-    console.log("[SeedAll] Employer violations already seeded");
-    return;
-  }
   console.log("[SeedAll] Seeding employer violations...");
 
   const now = new Date();
@@ -1411,6 +1351,7 @@ async function seedEmployerViolations() {
 
   const violations = [
     {
+      violationRef: "VIO-EMP003-LATE-001",
       employerCode: "EMP-003",
       violationType: "Late employee enrollment",
       description: "Failed to enroll 29 new employees within the mandatory 10-day registration window",
@@ -1420,6 +1361,7 @@ async function seedEmployerViolations() {
       resolvedDate: null,
     },
     {
+      violationRef: "VIO-EMP005-GAP-001",
       employerCode: "EMP-005",
       violationType: "Coverage gap for dependents",
       description: "34 dependents of insured employees found without active coverage for more than 30 days",
@@ -1429,6 +1371,7 @@ async function seedEmployerViolations() {
       resolvedDate: null,
     },
     {
+      violationRef: "VIO-EMP001-LATE-001",
       employerCode: "EMP-001",
       violationType: "Late employee enrollment",
       description: "36 employees enrolled 15 days after the mandatory deadline",
@@ -1438,6 +1381,7 @@ async function seedEmployerViolations() {
       resolvedDate: daysAgo(60),
     },
     {
+      violationRef: "VIO-EMP003-TIER-001",
       employerCode: "EMP-003",
       violationType: "Non-compliant plan tier",
       description: "Insurance plan for 45 employees does not meet minimum CHI benefit requirements",
@@ -1447,6 +1391,7 @@ async function seedEmployerViolations() {
       resolvedDate: null,
     },
     {
+      violationRef: "VIO-EMP006-EXP-001",
       employerCode: "EMP-006",
       violationType: "Expired policy renewal",
       description: "Group health insurance policy lapsed for 8 days before renewal was processed",
@@ -1458,7 +1403,7 @@ async function seedEmployerViolations() {
   ];
 
   await batchInsert(employerViolations, violations);
-  console.log(`[SeedAll] Inserted ${violations.length} employer violations`);
+  console.log(`[SeedAll] Upserted ${violations.length} employer violations (duplicates skipped)`);
 }
 
 // ---------------------------------------------------------------------------
@@ -1466,10 +1411,6 @@ async function seedEmployerViolations() {
 // ---------------------------------------------------------------------------
 
 async function seedMemberComplaints() {
-  if (!(await isBelow(memberComplaints, 12))) {
-    console.log("[SeedAll] Member complaints already seeded");
-    return;
-  }
   console.log("[SeedAll] Seeding member complaints...");
 
   const now = new Date();
@@ -1754,10 +1695,6 @@ async function seedMemberComplaints() {
 // ---------------------------------------------------------------------------
 
 async function seedDoctor360() {
-  if (!(await isBelow(doctor360, 8))) {
-    console.log("[SeedAll] doctor_360 already seeded");
-    return;
-  }
   console.log("[SeedAll] Seeding doctor_360...");
 
   const doctors: (typeof doctor360.$inferInsert)[] = [
@@ -1942,10 +1879,6 @@ async function seedDoctor360() {
 // ---------------------------------------------------------------------------
 
 async function seedFwaDetectionResultsForPatients() {
-  if (!(await isBelow(fwaDetectionResults, 20))) {
-    console.log("[SeedAll] fwa_detection_results already seeded");
-    return;
-  }
   console.log("[SeedAll] Seeding fwa_detection_results for patients...");
 
   // Patient IDs and their associated providers and risk profile

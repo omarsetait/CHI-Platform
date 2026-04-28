@@ -198,7 +198,7 @@ export const preAuthSignals = pgTable("pre_auth_signals", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   claimId: varchar("claim_id").references(() => preAuthClaims.id).notNull(),
   detector: preAuthSignalTypeEnum("detector").notNull(),
-  signalId: text("signal_id").notNull(),
+  signalId: text("signal_id").notNull().unique(),
   riskFlag: boolean("risk_flag").default(false),
   severity: preAuthSeverityEnum("severity"),
   confidence: decimal("confidence", { precision: 5, scale: 4 }),
@@ -226,7 +226,7 @@ export type PreAuthSignal = typeof preAuthSignals.$inferSelect;
 // Pre-Auth Decisions table
 export const preAuthDecisions = pgTable("pre_auth_decisions", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  claimId: varchar("claim_id").references(() => preAuthClaims.id).notNull(),
+  claimId: varchar("claim_id").references(() => preAuthClaims.id).notNull().unique(),
   aggregatedScore: decimal("aggregated_score", { precision: 5, scale: 4 }),
   riskLevel: preAuthSeverityEnum("risk_level"),
   hasHardStop: boolean("has_hard_stop").default(false),
@@ -512,7 +512,9 @@ export const fwaAnalysisFindings = pgTable("fwa_analysis_findings", {
   severity: fwaPriorityEnum("severity").notNull(),
   evidence: jsonb("evidence").$type<Record<string, any>>().default({}),
   createdAt: timestamp("created_at").defaultNow()
-});
+}, (t) => ({
+  caseIdFindingTypeSourceUnique: unique("fwa_analysis_findings_case_type_source_unique").on(t.caseId, t.findingType, t.source),
+}));
 
 export const insertFwaAnalysisFindingSchema = createInsertSchema(fwaAnalysisFindings).omit({
   id: true,
@@ -532,7 +534,9 @@ export const fwaCategories = pgTable("fwa_categories", {
   severityScore: decimal("severity_score", { precision: 5, scale: 2 }).notNull(),
   recommendedActions: text("recommended_actions").array().default([]),
   createdAt: timestamp("created_at").defaultNow()
-});
+}, (t) => ({
+  caseIdCategoryTypeUnique: unique("fwa_categories_case_category_unique").on(t.caseId, t.categoryType),
+}));
 
 export const insertFwaCategorySchema = createInsertSchema(fwaCategories).omit({
   id: true,
@@ -556,7 +560,9 @@ export const fwaActions = pgTable("fwa_actions", {
   executedBy: text("executed_by").notNull(),
   executedAt: timestamp("executed_at"),
   createdAt: timestamp("created_at").defaultNow()
-});
+}, (t) => ({
+  caseIdActionTypeTrackUnique: unique("fwa_actions_case_type_track_unique").on(t.caseId, t.actionType, t.actionTrack),
+}));
 
 export const insertFwaActionSchema = createInsertSchema(fwaActions).omit({
   id: true,
@@ -3226,7 +3232,7 @@ export type FwaDetectionConfig = typeof fwaDetectionConfigs.$inferSelect;
 // Detection Results - Stores scores from each detection method per claim
 export const fwaDetectionResults = pgTable("fwa_detection_results", {
   id: text("id").primaryKey().default(sql`gen_random_uuid()`),
-  claimId: text("claim_id").notNull(),
+  claimId: text("claim_id").notNull().unique(),
   caseId: text("case_id"),
   providerId: text("provider_id"),
   patientId: text("patient_id"),
@@ -5207,7 +5213,7 @@ export type InsertProviderScorecard = typeof providerScorecards.$inferInsert;
 export const providerRejections = pgTable("provider_rejections", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   providerCode: varchar("provider_code", { length: 20 }).notNull(),
-  claimRef: varchar("claim_ref", { length: 30 }).notNull(),
+  claimRef: varchar("claim_ref", { length: 30 }).notNull().unique(),
   patientMrn: varchar("patient_mrn", { length: 20 }),
   icdCode: varchar("icd_code", { length: 15 }).notNull(),
   icdDescription: text("icd_description"),
@@ -5299,7 +5305,9 @@ export const employerPolicies = pgTable("employer_policies", {
   dependentsCount: integer("dependents_count").default(0),
   renewalDaysRemaining: integer("renewal_days_remaining"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+}, (t) => ({
+  employerInsurerUnique: unique("employer_policies_employer_insurer_unique").on(t.employerCode, t.insurerCode),
+}));
 
 export type EmployerPolicy = typeof employerPolicies.$inferSelect;
 export type InsertEmployerPolicy = typeof employerPolicies.$inferInsert;
@@ -5330,6 +5338,7 @@ export type InsertWorkforceHealthProfile = typeof workforceHealthProfiles.$infer
 
 export const employerViolations = pgTable("employer_violations", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  violationRef: varchar("violation_ref", { length: 30 }).unique(),
   employerCode: varchar("employer_code", { length: 20 }).notNull(),
   violationType: text("violation_type").notNull(),
   description: text("description"),
@@ -5407,7 +5416,9 @@ export const memberCoverage = pgTable("member_coverage", {
   noteAr: text("note_ar"),
   sortOrder: integer("sort_order").default(0),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+}, (t) => ({
+  memberBenefitUnique: unique("member_coverage_member_benefit_unique").on(t.memberCode, t.benefitCategory),
+}));
 
 export type MemberCoverage = typeof memberCoverage.$inferSelect;
 export type InsertMemberCoverage = typeof memberCoverage.$inferInsert;
