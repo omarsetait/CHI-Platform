@@ -555,10 +555,46 @@ export function registerPreAuthRoutes(
     }
   });
 
+  // GET /api/pre-auth/claims/:id/decisions - Get decisions for claim (returns array)
+  app.get("/api/pre-auth/claims/:id/decisions", async (req, res) => {
+    try {
+      const idParam = req.params.id;
+      let decision = await storage.getPreAuthDecisionByClaimId(idParam);
+      if (!decision) {
+        const claim = await storage.getPreAuthClaimByClaimId(idParam);
+        if (claim) {
+          decision = await storage.getPreAuthDecisionByClaimId(claim.id);
+        }
+        if (!decision) {
+          const claimById = await storage.getPreAuthClaim(idParam);
+          if (claimById) {
+            decision = await storage.getPreAuthDecisionByClaimId(claimById.id);
+          }
+        }
+      }
+      res.json(decision ? [decision] : []);
+    } catch (error) {
+      handleRouteError(res, error, "/api/pre-auth/claims/:id/decisions", "fetch decisions");
+    }
+  });
+
   // GET /api/pre-auth/claims/:claimId/decision - Get decision for claim
   app.get("/api/pre-auth/claims/:claimId/decision", async (req, res) => {
     try {
-      const decision = await storage.getPreAuthDecisionByClaimId(req.params.claimId);
+      const idParam = req.params.claimId;
+      let decision = await storage.getPreAuthDecisionByClaimId(idParam);
+      if (!decision) {
+        const claimByStringId = await storage.getPreAuthClaimByClaimId(idParam);
+        if (claimByStringId) {
+          decision = await storage.getPreAuthDecisionByClaimId(claimByStringId.id);
+        }
+      }
+      if (!decision) {
+        const claimById = await storage.getPreAuthClaim(idParam);
+        if (claimById) {
+          decision = await storage.getPreAuthDecisionByClaimId(claimById.id);
+        }
+      }
       if (!decision) {
         return res.status(404).json({ error: "Decision not found" });
       }
