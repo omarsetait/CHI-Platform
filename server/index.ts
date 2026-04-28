@@ -5,7 +5,7 @@ import rateLimit from "express-rate-limit";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { seedDatabaseWithDemoData } from "./services/demo-data-seeder";
-import { createDatabaseIndexes } from "./db-indexes";
+import { createDatabaseIndexes, ensureSessionTable } from "./db-indexes";
 import { createDatabaseConstraints } from "./db-constraints";
 import { closePool } from "./db";
 import { knowledgeUploadQueueService } from "./services/knowledge-upload-queue-service";
@@ -117,6 +117,16 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  // The session table MUST exist before route registration, otherwise every
+  // request through express-session middleware 500s with
+  // `relation "user_sessions" does not exist`. Block startup on this.
+  try {
+    await ensureSessionTable();
+  } catch (err) {
+    console.error("[DB] Failed to ensure session table:", err);
+    process.exit(1);
+  }
+
   // Create database indexes and constraints for query optimization and data integrity
   createDatabaseIndexes().catch(err => {
     console.error("[DB] Error creating indexes:", err);
