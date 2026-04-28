@@ -21,6 +21,12 @@ export const fwaPillarConfig: PillarConfig = {
   subtitle: "National fraud intelligence command center",
   navSections: [
     {
+      title: "Command Center",
+      items: [
+        { label: "Command Center", href: "/fwa/chat", icon: MessageCircle },
+      ],
+    },
+    {
       title: "Detection & Analysis",
       items: [
         { label: "Detection Engine", href: "/fwa/detection-engine", icon: Shield },
@@ -47,7 +53,6 @@ export const fwaPillarConfig: PillarConfig = {
       title: "Knowledge & AI",
       items: [
         { label: "Knowledge Hub", href: "/fwa/knowledge-hub", icon: Database },
-        { label: "Daman AI Chat", href: "/fwa/chat", icon: MessageCircle },
       ],
     },
   ],
