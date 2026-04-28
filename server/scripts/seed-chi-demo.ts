@@ -46,6 +46,9 @@ import {
   fwaHighRiskProviders,
   fwaHighRiskPatients,
   fwaHighRiskDoctors,
+  fwaProviderTimeline,
+  fwaDoctorTimeline,
+  fwaPatientTimeline,
   claims,
   enforcementCases,
   onlineListeningMentions,
@@ -407,6 +410,192 @@ function buildHighRiskDoctorRows() {
     lastFlaggedDate: new Date("2026-01-18"),
   });
 
+  return rows;
+}
+
+// ---------------------------------------------------------------------------
+// 4b. Entity Score Timelines (provider / doctor / patient)
+//
+// Generates 8 historical batch entries per high-risk entity (one every
+// ~3 weeks, ending at the anchor date) so the Detection Score Trend chart
+// on each entity profile page has data to plot. The avg_risk_score is
+// varied around the entity's current risk score with a realistic upward
+// trend (older batches lower, recent batches at-or-near the entity's
+// current score) plus deterministic jitter.
+// ---------------------------------------------------------------------------
+
+const TIMELINE_ANCHOR_DATE = new Date("2026-02-15");
+const TIMELINE_BATCHES = 8; // number of historical batch entries per entity
+const TIMELINE_WEEKS_BETWEEN = 3; // gap between batches, in weeks
+
+function buildTimelineDates(): Array<{ date: Date; batchId: string }> {
+  const out: Array<{ date: Date; batchId: string }> = [];
+  for (let i = TIMELINE_BATCHES - 1; i >= 0; i--) {
+    const date = new Date(TIMELINE_ANCHOR_DATE);
+    date.setDate(date.getDate() - i * TIMELINE_WEEKS_BETWEEN * 7);
+    const yyyy = date.getFullYear();
+    const mm = pad(date.getMonth() + 1, 2);
+    const dd = pad(date.getDate(), 2);
+    out.push({ date, batchId: `BATCH-${yyyy}-${mm}-${dd}` });
+  }
+  return out;
+}
+
+/**
+ * Compute a per-batch risk score that trends from a lower starting value up
+ * toward the entity's current `currentScore`, with deterministic jitter.
+ * Returns a value clamped to [0, 100] with two decimals.
+ */
+function timelineScoreFor(currentScore: number, idx: number, total: number, seed: string): string {
+  const start = Math.max(0, currentScore - 14);
+  const trend = start + ((currentScore - start) * idx) / Math.max(1, total - 1);
+  const jitter = (seededRandom(`${seed}-${idx}`) - 0.5) * 6; // +/- 3 points
+  const value = Math.max(0, Math.min(100, trend + jitter));
+  return value.toFixed(2);
+}
+
+function trendDirectionFor(prev: number | null, curr: number): string {
+  if (prev === null) return "stable";
+  const delta = curr - prev;
+  if (delta > 1.5) return "increasing";
+  if (delta < -1.5) return "decreasing";
+  return "stable";
+}
+
+function buildProviderTimelineRows(
+  providerRows: ReturnType<typeof buildHighRiskProviderRows>
+): Array<typeof fwaProviderTimeline.$inferInsert> {
+  const dates = buildTimelineDates();
+  const rows: Array<typeof fwaProviderTimeline.$inferInsert> = [];
+
+  for (const p of providerRows) {
+    const currentScore = parseFloat(p.riskScore);
+    const totalClaims = p.totalClaims;
+    const flaggedClaims = p.flaggedClaims;
+    const avgClaim = parseFloat(p.avgClaimAmount);
+    const seed = p.providerId;
+
+    let prevScore: number | null = null;
+    for (let i = 0; i < dates.length; i++) {
+      const { date, batchId } = dates[i];
+      const score = parseFloat(timelineScoreFor(currentScore, i, dates.length, seed));
+      // Spread total claims across batches with mild variation
+      const claimShare = totalClaims / dates.length;
+      const claimCount = Math.max(1, Math.round(claimShare * (0.75 + seededRandom(`${seed}-c-${i}`) * 0.5)));
+      const flaggedShare = Math.max(0, Math.round((flaggedClaims / dates.length) * (0.6 + seededRandom(`${seed}-f-${i}`) * 0.8)));
+      const totalAmount = (claimCount * avgClaim).toFixed(2);
+
+      rows.push({
+        providerId: p.providerId,
+        batchId,
+        batchDate: date,
+        claimCount,
+        totalAmount,
+        avgClaimAmount: avgClaim.toFixed(2),
+        uniquePatients: Math.max(1, Math.round(claimCount * 0.6)),
+        uniqueDoctors: Math.max(1, Math.round(claimCount * 0.15)),
+        flaggedClaimsCount: Math.min(claimCount, flaggedShare),
+        highRiskClaimsCount: Math.min(claimCount, Math.round(flaggedShare * 0.6)),
+        avgRiskScore: score.toFixed(2),
+        riskScoreChange: prevScore === null ? "0.00" : (score - prevScore).toFixed(2),
+        trendDirection: trendDirectionFor(prevScore, score),
+        topProcedures: [],
+        topDiagnoses: [],
+      });
+      prevScore = score;
+    }
+  }
+  return rows;
+}
+
+function buildDoctorTimelineRows(
+  doctorRows: ReturnType<typeof buildHighRiskDoctorRows>
+): Array<typeof fwaDoctorTimeline.$inferInsert> {
+  const dates = buildTimelineDates();
+  const rows: Array<typeof fwaDoctorTimeline.$inferInsert> = [];
+
+  for (const d of doctorRows) {
+    const currentScore = parseFloat(d.riskScore);
+    const totalClaims = d.totalClaims;
+    const flaggedClaims = d.flaggedClaims;
+    const avgClaim = parseFloat(d.avgClaimAmount);
+    const seed = d.doctorId;
+
+    let prevScore: number | null = null;
+    for (let i = 0; i < dates.length; i++) {
+      const { date, batchId } = dates[i];
+      const score = parseFloat(timelineScoreFor(currentScore, i, dates.length, seed));
+      const claimShare = totalClaims / dates.length;
+      const claimCount = Math.max(1, Math.round(claimShare * (0.75 + seededRandom(`${seed}-c-${i}`) * 0.5)));
+      const flaggedShare = Math.max(0, Math.round((flaggedClaims / dates.length) * (0.6 + seededRandom(`${seed}-f-${i}`) * 0.8)));
+      const totalAmount = (claimCount * avgClaim).toFixed(2);
+
+      rows.push({
+        doctorId: d.doctorId,
+        batchId,
+        batchDate: date,
+        claimCount,
+        totalAmount,
+        avgClaimAmount: avgClaim.toFixed(2),
+        uniquePatients: Math.max(1, Math.round(claimCount * 0.7)),
+        uniqueProviders: Math.max(1, Math.round(claimCount * 0.1)),
+        flaggedClaimsCount: Math.min(claimCount, flaggedShare),
+        highRiskClaimsCount: Math.min(claimCount, Math.round(flaggedShare * 0.6)),
+        avgRiskScore: score.toFixed(2),
+        riskScoreChange: prevScore === null ? "0.00" : (score - prevScore).toFixed(2),
+        trendDirection: trendDirectionFor(prevScore, score),
+        topProcedures: [],
+        topDiagnoses: [],
+      });
+      prevScore = score;
+    }
+  }
+  return rows;
+}
+
+function buildPatientTimelineRows(
+  patientRows: ReturnType<typeof buildHighRiskPatientRows>
+): Array<typeof fwaPatientTimeline.$inferInsert> {
+  const dates = buildTimelineDates();
+  const rows: Array<typeof fwaPatientTimeline.$inferInsert> = [];
+
+  for (const p of patientRows) {
+    const currentScore = parseFloat(p.riskScore);
+    const totalClaims = p.totalClaims;
+    const flaggedClaims = p.flaggedClaims;
+    const totalAmount = parseFloat(p.totalAmount);
+    const avgClaim = totalClaims > 0 ? totalAmount / totalClaims : 0;
+    const seed = p.patientId;
+
+    let prevScore: number | null = null;
+    for (let i = 0; i < dates.length; i++) {
+      const { date, batchId } = dates[i];
+      const score = parseFloat(timelineScoreFor(currentScore, i, dates.length, seed));
+      const claimShare = totalClaims / dates.length;
+      const claimCount = Math.max(1, Math.round(claimShare * (0.75 + seededRandom(`${seed}-c-${i}`) * 0.5)));
+      const flaggedShare = Math.max(0, Math.round((flaggedClaims / dates.length) * (0.6 + seededRandom(`${seed}-f-${i}`) * 0.8)));
+      const batchTotal = (claimCount * avgClaim).toFixed(2);
+
+      rows.push({
+        patientId: p.patientId,
+        batchId,
+        batchDate: date,
+        claimCount,
+        totalAmount: batchTotal,
+        avgClaimAmount: avgClaim.toFixed(2),
+        uniqueProviders: Math.max(1, Math.round(claimCount * 0.4)),
+        uniqueDoctors: Math.max(1, Math.round(claimCount * 0.5)),
+        flaggedClaimsCount: Math.min(claimCount, flaggedShare),
+        highRiskClaimsCount: Math.min(claimCount, Math.round(flaggedShare * 0.6)),
+        avgRiskScore: score.toFixed(2),
+        riskScoreChange: prevScore === null ? "0.00" : (score - prevScore).toFixed(2),
+        trendDirection: trendDirectionFor(prevScore, score),
+        topDiagnoses: [],
+        providerList: [],
+      });
+      prevScore = score;
+    }
+  }
   return rows;
 }
 
@@ -1191,7 +1380,39 @@ async function seed() {
 
     if (existing.length > 0) {
       console.log("Data already seeded (found PRV-CS1-001 in provider_directory).");
-      console.log("Use --force to clear and re-seed.");
+
+      // Backfill timeline tables if they were not populated by an earlier seed run.
+      const existingTimeline = await db
+        .select()
+        .from(fwaProviderTimeline)
+        .where(eq(fwaProviderTimeline.providerId, "PRV-CS1-001"))
+        .limit(1);
+
+      if (existingTimeline.length === 0) {
+        console.log("\nTimeline tables are empty — backfilling entity score timelines...");
+        const hrProviderRows = buildHighRiskProviderRows();
+        const hrPatientRows = buildHighRiskPatientRows();
+        const hrDoctorRows = buildHighRiskDoctorRows();
+        const providerTimelineRows = buildProviderTimelineRows(hrProviderRows);
+        const doctorTimelineRows = buildDoctorTimelineRows(hrDoctorRows);
+        const patientTimelineRows = buildPatientTimelineRows(hrPatientRows);
+        if (providerTimelineRows.length > 0) {
+          await db.insert(fwaProviderTimeline).values(providerTimelineRows).onConflictDoNothing();
+        }
+        if (doctorTimelineRows.length > 0) {
+          await db.insert(fwaDoctorTimeline).values(doctorTimelineRows).onConflictDoNothing();
+        }
+        if (patientTimelineRows.length > 0) {
+          await db.insert(fwaPatientTimeline).values(patientTimelineRows).onConflictDoNothing();
+        }
+        console.log(
+          `  done (${providerTimelineRows.length} provider, ${doctorTimelineRows.length} doctor, ${patientTimelineRows.length} patient timeline rows)`
+        );
+      } else {
+        console.log("Timeline tables already populated.");
+      }
+
+      console.log("\nUse --force to clear and re-seed everything.");
       process.exit(0);
     }
   }
@@ -1204,6 +1425,9 @@ async function seed() {
     await db.execute(sql`DELETE FROM online_listening_mentions`);
     await db.execute(sql`DELETE FROM enforcement_cases`);
     await db.execute(sql`DELETE FROM claims_v2`);
+    await db.execute(sql`DELETE FROM fwa_provider_timeline`);
+    await db.execute(sql`DELETE FROM fwa_doctor_timeline`);
+    await db.execute(sql`DELETE FROM fwa_patient_timeline`);
     await db.execute(sql`DELETE FROM fwa_high_risk_doctors`);
     await db.execute(sql`DELETE FROM fwa_high_risk_patients`);
     await db.execute(sql`DELETE FROM fwa_high_risk_providers`);
@@ -1234,6 +1458,24 @@ async function seed() {
   const hrDoctorRows = buildHighRiskDoctorRows();
   await db.insert(fwaHighRiskDoctors).values(hrDoctorRows).onConflictDoNothing();
   console.log(`  done (${hrDoctorRows.length} high-risk doctors)\n`);
+
+  // 4b. Entity Score Timelines
+  console.log("Seeding entity score timelines...");
+  const providerTimelineRows = buildProviderTimelineRows(hrProviderRows);
+  const doctorTimelineRows = buildDoctorTimelineRows(hrDoctorRows);
+  const patientTimelineRows = buildPatientTimelineRows(hrPatientRows);
+  if (providerTimelineRows.length > 0) {
+    await db.insert(fwaProviderTimeline).values(providerTimelineRows).onConflictDoNothing();
+  }
+  if (doctorTimelineRows.length > 0) {
+    await db.insert(fwaDoctorTimeline).values(doctorTimelineRows).onConflictDoNothing();
+  }
+  if (patientTimelineRows.length > 0) {
+    await db.insert(fwaPatientTimeline).values(patientTimelineRows).onConflictDoNothing();
+  }
+  console.log(
+    `  done (${providerTimelineRows.length} provider, ${doctorTimelineRows.length} doctor, ${patientTimelineRows.length} patient timeline rows)\n`
+  );
 
   // 5. Claims
   console.log("Seeding claims...");
@@ -1270,6 +1512,9 @@ async function seed() {
   console.log(`  High-Risk Providers: ${hrProviderRows.length}`);
   console.log(`  High-Risk Patients:  ${hrPatientRows.length}`);
   console.log(`  High-Risk Doctors:   ${hrDoctorRows.length}`);
+  console.log(`  Provider Timeline:   ${providerTimelineRows.length}`);
+  console.log(`  Doctor Timeline:     ${doctorTimelineRows.length}`);
+  console.log(`  Patient Timeline:    ${patientTimelineRows.length}`);
   console.log(`  Claims:              ${claimRows.length} (${claimRows.filter((c) => c.flagged).length} flagged)`);
   console.log(`  Enforcement Cases:   ${enforcementRows.length}`);
   console.log(`  Online Mentions:     ${mentionRows.length}`);
