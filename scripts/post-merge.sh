@@ -2,4 +2,4 @@
 set -e
 
 npm install
-npx drizzle-kit push --force
+echo "" | npx drizzle-kit push --force < /dev/null
