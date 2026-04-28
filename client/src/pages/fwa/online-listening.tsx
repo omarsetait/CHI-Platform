@@ -161,17 +161,44 @@ export default function OnlineListening() {
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/fwa/chi/online-listening"] });
-      toast({
-        title: "Fetch complete",
-        description: `Found and analyzed ${data.analyzed || 0} articles from ${data.totalFetched || 0} results.`,
-      });
+      const totalFetched = data.totalFetched ?? 0;
+      const totalRelevant = data.totalRelevant ?? 0;
+      const saved = data.saved ?? 0;
+      const duplicates = data.duplicates ?? 0;
+
+      if (saved === 0) {
+        toast({
+          title: "لم يتم العثور على أخبار جديدة / No new mentions",
+          description: totalFetched === 0
+            ? "لم تُرجع المصادر الإخبارية أي مقالات لكلماتك المفتاحية. جرّب زر \"تحليل إكس / Analyze X\" بدلاً من ذلك."
+            : `جلبنا ${totalFetched} مقالاً (${totalRelevant} ذو صلة، ${duplicates} مكرر) لكن لم يكن أي منها جديداً. جرّب زر \"تحليل إكس / Analyze X\" أو غيّر الكلمات المفتاحية في إعدادات المصادر.`,
+        });
+      } else {
+        toast({
+          title: "Fetch complete",
+          description: `Fetched ${totalFetched} articles, ${totalRelevant} relevant, saved ${saved} new mentions${duplicates > 0 ? ` (${duplicates} duplicates)` : ""}.`,
+        });
+      }
     },
     onError: (error: any) => {
-      toast({
-        title: "Fetch failed",
-        description: error.message || "Failed to fetch news. Check if NEWS_API_KEY is configured.",
-        variant: "destructive",
-      });
+      const raw = error?.message || "";
+      // Try to surface the specific server-side error code/message if present
+      let title = "Fetch failed";
+      let description = raw || "Failed to fetch news. Check if NEWS_API_KEY is configured.";
+      if (raw.includes("NEWS_API_KEY_INVALID")) {
+        title = "Invalid NewsAPI key";
+        description = "NewsAPI rejected the key (HTTP 401). Update NEWS_API_KEY in environment secrets.";
+      } else if (raw.includes("NEWS_API_RATE_LIMITED")) {
+        title = "NewsAPI rate limit reached";
+        description = "Too many requests to NewsAPI (HTTP 429). Try again later.";
+      } else if (raw.includes("NEWS_API_UPGRADE_REQUIRED")) {
+        title = "NewsAPI upgrade required";
+        description = "This query requires a paid NewsAPI plan (HTTP 426).";
+      } else if (raw.includes("NEWS_API_KEY_MISSING")) {
+        title = "NewsAPI key missing";
+        description = "Add NEWS_API_KEY to environment secrets and restart the app.";
+      }
+      toast({ title, description, variant: "destructive" });
     },
   });
 

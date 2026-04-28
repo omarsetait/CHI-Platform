@@ -4577,20 +4577,42 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
   app.post("/api/fwa/chi/online-listening/fetch", async (req, res) => {
     try {
       const validatedData = newsSearchSchema.parse(req.body);
-      const { keywords } = validatedData;
+      const { keywords: clientKeywords, providers: clientProviders = [] } = validatedData;
 
       const newsApiKey = process.env.NEWS_API_KEY;
       if (!newsApiKey) {
         return res.status(400).json({
-          error: "NewsAPI key not configured",
-          message: "Please add NEWS_API_KEY to your environment secrets"
+          error: "NEWS_API_KEY_MISSING",
+          message: "NewsAPI key is not configured. Add NEWS_API_KEY to environment secrets.",
+          mentions: [],
+          totalFetched: 0,
+          totalRelevant: 0,
+          saved: 0,
+          duplicates: 0,
+          sourcesTried: [],
         });
       }
 
-      console.log("[Online Listening] Fetching news with keywords:", keywords);
+      // Combine client keywords + provider names into the actual search queries
+      const userQueries: string[] = Array.from(new Set([
+        ...clientKeywords.map(k => k.trim()).filter(Boolean),
+        ...clientProviders.map(p => p.trim()).filter(Boolean),
+      ])).slice(0, 10);
+
+      // Default Arabic Saudi healthcare query list (only used if client sent nothing)
+      const defaultQueries = [
+        "السعودية مستشفى",
+        "صحة السعودية",
+        "تأمين صحي سعودي",
+        "وزارة الصحة السعودية",
+      ];
+      const queries = userQueries.length > 0 ? userQueries : defaultQueries;
+
+      console.log("[Online Listening] Fetching news with queries:", queries);
 
       const results: any[] = [];
-      const errors: string[] = [];
+      const sourcesTried: Array<{ source: string; query?: string; status: string; count: number; httpCode?: number }> = [];
+      let hardFailure: { code: string; message: string; httpCode: number } | null = null;
 
       // Get enabled sources from database configuration
       const enabledConfigs = await storage.getListeningSourceConfigs();
@@ -4610,37 +4632,134 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         alwatan: "alwatan.com.sa",
       };
 
-      // Build domains list from enabled sources only
-      const saudiDomains = enabledSources
+      // Build list of enabled Saudi domains for site-scoped RSS fallback
+      const enabledSaudiDomains = enabledSources
         .map(s => sourceDomainMap[s.sourceId])
-        .filter(d => d)
-        .join(",");
+        .filter(d => d);
 
-      console.log("[Online Listening] Using domains:", saudiDomains || "none configured");
+      console.log("[Online Listening] Enabled Saudi domains:", enabledSaudiDomains.join(",") || "none configured");
 
-      // 1. Search Arabic healthcare news (broader search - NewsAPI has limited Saudi coverage)
-      const arabicKeywords = ["السعودية مستشفى", "صحة السعودية", "تأمين صحي سعودي", "وزارة الصحة السعودية"];
-      for (const keyword of arabicKeywords.slice(0, 3)) {
+      // Helper: classify a NewsAPI HTTP error as missing/invalid/rate-limited
+      const classifyNewsApiError = (status: number): { code: string; message: string } | null => {
+        if (status === 401) return { code: "NEWS_API_KEY_INVALID", message: "NewsAPI rejected the API key as invalid (HTTP 401). Verify NEWS_API_KEY in environment secrets." };
+        if (status === 429) return { code: "NEWS_API_RATE_LIMITED", message: "NewsAPI rate limit reached (HTTP 429). Try again later or upgrade your NewsAPI plan." };
+        if (status === 426) return { code: "NEWS_API_UPGRADE_REQUIRED", message: "NewsAPI requires a paid plan for this query (HTTP 426). The free tier has limited capabilities." };
+        return null;
+      };
+
+      // Helper: parse Google News RSS XML into article shape
+      const parseGoogleNewsRss = (xml: string, searchKeyword: string): any[] => {
+        const items: any[] = [];
+        const itemRegex = /<item>([\s\S]*?)<\/item>/g;
+        const stripCdata = (s: string) => s.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1").trim();
+        const getTag = (block: string, tag: string): string => {
+          const m = new RegExp(`<${tag}[^>]*>([\\s\\S]*?)</${tag}>`).exec(block);
+          return m ? stripCdata(m[1]) : "";
+        };
+        let match;
+        while ((match = itemRegex.exec(xml)) !== null) {
+          const block = match[1];
+          const title = getTag(block, "title");
+          const link = getTag(block, "link");
+          const pubDate = getTag(block, "pubDate");
+          const description = getTag(block, "description").replace(/<[^>]+>/g, "").trim();
+          const sourceMatch = /<source[^>]*>([\s\S]*?)<\/source>/.exec(block);
+          const sourceName = sourceMatch ? stripCdata(sourceMatch[1]) : "Google News";
+          if (!title || !link) continue;
+          let publishedIso = new Date().toISOString();
+          if (pubDate) {
+            const d = new Date(pubDate);
+            if (!isNaN(d.getTime())) publishedIso = d.toISOString();
+          }
+          items.push({
+            title,
+            url: link,
+            description,
+            publishedAt: publishedIso,
+            author: null,
+            source: { name: sourceName },
+            searchKeyword,
+            sourceType: "google_news_rss",
+            userRequested: true,
+          });
+        }
+        return items;
+      };
+
+      // 1. NewsAPI /everything — one call per user query (Arabic-first; English implicitly via 'q')
+      for (const query of queries) {
+        if (hardFailure) break;
         try {
-          const url = `https://newsapi.org/v2/everything?q=${encodeURIComponent(keyword)}&language=ar&sortBy=publishedAt&pageSize=15`;
-          console.log("[Online Listening] Fetching Arabic news for:", keyword);
+          const url = `https://newsapi.org/v2/everything?q=${encodeURIComponent(query)}&sortBy=publishedAt&pageSize=15`;
           const response = await fetch(url, { headers: { "X-Api-Key": newsApiKey } });
           if (response.ok) {
             const data = await response.json();
-            console.log(`[Online Listening] Arabic results for "${keyword}": ${data.totalResults} total`);
-            if (data.articles?.length > 0) {
-              results.push(...data.articles.map((a: any) => ({ ...a, searchKeyword: keyword, sourceType: 'arabic_news' })));
+            const count = data.articles?.length || 0;
+            console.log(`[Online Listening] NewsAPI /everything "${query}": ${count} articles (totalResults=${data.totalResults})`);
+            sourcesTried.push({ source: "newsapi_everything", query, status: "ok", count, httpCode: 200 });
+            if (count > 0) {
+              results.push(...data.articles.map((a: any) => ({
+                ...a,
+                searchKeyword: query,
+                sourceType: "newsapi_everything",
+                userRequested: true,
+              })));
             }
           } else {
             const errText = await response.text();
-            console.log(`[Online Listening] API error for "${keyword}":`, errText);
+            console.log(`[Online Listening] NewsAPI /everything "${query}" HTTP ${response.status}: ${errText.substring(0, 200)}`);
+            sourcesTried.push({ source: "newsapi_everything", query, status: "error", count: 0, httpCode: response.status });
+            const classified = classifyNewsApiError(response.status);
+            if (classified) hardFailure = { ...classified, httpCode: response.status };
           }
         } catch (e: any) {
-          console.log("[Online Listening] Fetch error:", e.message);
+          console.log(`[Online Listening] NewsAPI /everything "${query}" fetch error:`, e.message);
+          sourcesTried.push({ source: "newsapi_everything", query, status: "error", count: 0 });
         }
       }
 
-      // 2. Saudi Arabia top headlines (general - health category often empty)
+      // Short-circuit on auth/quota failures so the user gets a specific error
+      if (hardFailure) {
+        return res.status(502).json({
+          error: hardFailure.code,
+          message: hardFailure.message,
+          mentions: [],
+          totalFetched: 0,
+          totalRelevant: 0,
+          saved: 0,
+          duplicates: 0,
+          sourcesTried,
+        });
+      }
+
+      // 2. Google News RSS fallback — broader Saudi coverage, including site-scoped queries on enabled domains
+      for (const query of queries) {
+        const siteScope = enabledSaudiDomains.length > 0
+          ? ` (${enabledSaudiDomains.map(d => `site:${d}`).join(" OR ")})`
+          : "";
+        const rssQ = `${query}${siteScope}`;
+        try {
+          const rssUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(rssQ)}&hl=ar&gl=SA&ceid=SA:ar`;
+          const rssResponse = await fetch(rssUrl, {
+            headers: { "User-Agent": "Mozilla/5.0 TachyHealth/1.0" },
+          });
+          if (rssResponse.ok) {
+            const xml = await rssResponse.text();
+            const items = parseGoogleNewsRss(xml, query);
+            console.log(`[Online Listening] Google News RSS "${query}": ${items.length} items`);
+            sourcesTried.push({ source: "google_news_rss", query, status: "ok", count: items.length, httpCode: 200 });
+            results.push(...items);
+          } else {
+            console.log(`[Online Listening] Google News RSS "${query}" HTTP ${rssResponse.status}`);
+            sourcesTried.push({ source: "google_news_rss", query, status: "error", count: 0, httpCode: rssResponse.status });
+          }
+        } catch (e: any) {
+          console.log(`[Online Listening] Google News RSS "${query}" fetch error:`, e.message);
+          sourcesTried.push({ source: "google_news_rss", query, status: "error", count: 0 });
+        }
+      }
+
+      // 3. NewsAPI /top-headlines (broad SA fallback, strict-filtered below)
       try {
         const saResponse = await fetch(
           `https://newsapi.org/v2/top-headlines?country=sa&pageSize=20`,
@@ -4648,36 +4767,52 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         );
         if (saResponse.ok) {
           const saData = await saResponse.json();
-          console.log(`[Online Listening] SA headlines: ${saData.totalResults} total`);
-          // Filter for healthcare-related content
-          const healthArticles = (saData.articles || []).filter((a: any) => {
-            const text = `${a.title || ""} ${a.description || ""}`.toLowerCase();
-            return text.includes("صح") || text.includes("مستشف") || text.includes("طب") ||
-              text.includes("health") || text.includes("hospital") || text.includes("medical");
-          });
-          results.push(...healthArticles.map((a: any) => ({ ...a, sourceType: 'sa_headlines' })));
+          const count = saData.articles?.length || 0;
+          console.log(`[Online Listening] NewsAPI /top-headlines SA: ${count} articles`);
+          sourcesTried.push({ source: "newsapi_top_headlines_sa", status: "ok", count, httpCode: 200 });
+          results.push(...(saData.articles || []).map((a: any) => ({
+            ...a,
+            sourceType: "newsapi_top_headlines_sa",
+            userRequested: false,
+          })));
+        } else {
+          const errText = await saResponse.text();
+          console.log(`[Online Listening] NewsAPI /top-headlines SA HTTP ${saResponse.status}: ${errText.substring(0, 200)}`);
+          sourcesTried.push({ source: "newsapi_top_headlines_sa", status: "error", count: 0, httpCode: saResponse.status });
+          const classified = classifyNewsApiError(saResponse.status);
+          if (classified) hardFailure = { ...classified, httpCode: saResponse.status };
         }
       } catch (e: any) {
-        console.log("[Online Listening] SA headlines error:", e.message);
+        console.log("[Online Listening] NewsAPI /top-headlines SA fetch error:", e.message);
+        sourcesTried.push({ source: "newsapi_top_headlines_sa", status: "error", count: 0 });
       }
 
-      // 3. English healthcare news about Saudi Arabia
-      try {
-        const enUrl = `https://newsapi.org/v2/everything?q=${encodeURIComponent("Saudi Arabia healthcare OR Saudi hospital OR Saudi health ministry")}&language=en&sortBy=publishedAt&pageSize=10`;
-        const enResponse = await fetch(enUrl, { headers: { "X-Api-Key": newsApiKey } });
-        if (enResponse.ok) {
-          const enData = await enResponse.json();
-          console.log(`[Online Listening] English SA healthcare results: ${enData.totalResults} total`);
-          if (enData.articles?.length > 0) {
-            results.push(...enData.articles.map((a: any) => ({ ...a, sourceType: 'english_news' })));
-          }
-        }
-      } catch (e: any) {
-        console.log("[Online Listening] English news error:", e.message);
+      // Re-check hard failure after top-headlines (if /everything skipped due to no queries, this could be the first NewsAPI call)
+      if (hardFailure) {
+        return res.status(502).json({
+          error: hardFailure.code,
+          message: hardFailure.message,
+          mentions: [],
+          totalFetched: 0,
+          totalRelevant: 0,
+          saved: 0,
+          duplicates: 0,
+          sourcesTried,
+        });
       }
 
-      // Deduplicate by URL and filter for Saudi healthcare relevance
+      const totalFetched = results.length;
+
+      // Dedup by URL
       const seenUrls = new Set<string>();
+      const deduped = results.filter(a => {
+        if (!a?.url || seenUrls.has(a.url)) return false;
+        seenUrls.add(a.url);
+        return true;
+      });
+
+      // Strict double-regex relevance filter — applied ONLY to broad fallback results.
+      // Anything that came from a query the user explicitly requested (or a Saudi-domain RSS feed) is treated as relevant.
       const saudiHealthKeywords = [
         /سعود|saudi|riyadh|الرياض|جدة|jeddah|مكة|mecca|المملكة/i,
         /مستشفى|hospital|صحة|health|طبي|medical|علاج|treatment/i,
@@ -4685,31 +4820,31 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         /الحبيب|المواساة|السعودي الألماني|دله|فيصل التخصصي/i,
       ];
 
-      const articles = results.filter(article => {
-        if (!article?.url || seenUrls.has(article.url)) return false;
-        seenUrls.add(article.url);
-
-        // Check if article is relevant to Saudi healthcare
+      const articles = deduped.filter(article => {
+        if (article.userRequested) return true;
         const content = `${article.title || ""} ${article.description || ""}`.toLowerCase();
         const isSaudiRelated = saudiHealthKeywords[0].test(content);
         const isHealthRelated = saudiHealthKeywords[1].test(content) || saudiHealthKeywords[2].test(content);
         const isProviderMentioned = saudiHealthKeywords[3].test(content);
-
-        // Must be Saudi-related AND (health-related OR mention a provider)
         const isRelevant = isSaudiRelated && (isHealthRelated || isProviderMentioned);
         if (!isRelevant) {
-          console.log(`[Online Listening] Filtering out irrelevant: ${article.title?.substring(0, 40)}...`);
+          console.log(`[Online Listening] Filtering out irrelevant fallback: ${article.title?.substring(0, 40)}...`);
         }
         return isRelevant;
       });
 
-      console.log(`[Online Listening] Total relevant articles after dedup: ${articles.length}`);
+      const totalRelevant = articles.length;
+      console.log(`[Online Listening] totalFetched=${totalFetched}, deduped=${deduped.length}, totalRelevant=${totalRelevant}`);
 
       if (articles.length === 0) {
         return res.json({
           mentions: [],
-          message: "No articles found for the given keywords",
-          errors: errors.length > 0 ? errors : undefined
+          totalFetched,
+          totalRelevant: 0,
+          saved: 0,
+          duplicates: 0,
+          message: "No Saudi healthcare articles were found in the upstream sources for the given keywords.",
+          sourcesTried,
         });
       }
 
@@ -4742,10 +4877,36 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         return null;
       };
 
-      // Store articles directly first (fast) - no waiting for AI analysis
-      const savedMentions = [];
+      // Cap at 30 articles to save
+      const toConsider = articles.slice(0, 30);
 
-      for (const article of articles.slice(0, 30)) { // Save up to 30 articles
+      // Pre-check duplicates by URL against the DB so we can return honest counts
+      let existingUrls = new Set<string>();
+      try {
+        const candidateUrls = toConsider.map(a => a.url).filter(Boolean) as string[];
+        if (candidateUrls.length > 0) {
+          const { db } = await import("../db");
+          const { onlineListeningMentions } = await import("@shared/schema");
+          const { inArray } = await import("drizzle-orm");
+          const rows = await db
+            .select({ url: onlineListeningMentions.sourceUrl })
+            .from(onlineListeningMentions)
+            .where(inArray(onlineListeningMentions.sourceUrl, candidateUrls));
+          existingUrls = new Set(rows.map(r => r.url).filter((u): u is string => !!u));
+        }
+      } catch (e: any) {
+        console.log("[Online Listening] Duplicate pre-check error (continuing):", e.message);
+      }
+
+      // Store articles directly first (fast) - no waiting for AI analysis
+      const savedMentions: any[] = [];
+      let duplicates = 0;
+
+      for (const article of toConsider) {
+        if (article.url && existingUrls.has(article.url)) {
+          duplicates++;
+          continue;
+        }
         try {
           // Detect if content contains Arabic characters
           const content = article.title + (article.description ? ` - ${article.description}` : "");
@@ -4778,6 +4939,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
               language: detectedLanguage,
               searchKeyword: article.searchKeyword,
               providerNameEn: extractedProvider?.nameEn || null,
+              upstreamSourceType: article.sourceType,
               needsAnalysis: true
             },
             createdAt: new Date()
@@ -4786,22 +4948,27 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           // Save to database
           await storage.createOnlineListeningMention(mention);
           savedMentions.push(mention);
+          if (article.url) existingUrls.add(article.url);
           console.log(`[Online Listening] Saved article [${detectedLanguage}]: ${article.title?.substring(0, 50)}...`);
         } catch (saveError: any) {
-          // Skip duplicates silently
-          if (!saveError.message?.includes('duplicate')) {
+          if (saveError.message?.toLowerCase().includes('duplicate') || saveError.code === '23505') {
+            duplicates++;
+          } else {
             console.error("Error saving article:", saveError.message);
           }
         }
       }
 
-      console.log(`[Online Listening] Saved ${savedMentions.length} new mentions to database`);
+      console.log(`[Online Listening] Saved=${savedMentions.length} duplicates=${duplicates} totalFetched=${totalFetched} totalRelevant=${totalRelevant}`);
 
       res.json({
         mentions: savedMentions,
-        totalFetched: articles.length,
+        totalFetched,
+        totalRelevant,
         saved: savedMentions.length,
-        message: `Found ${articles.length} articles, saved ${savedMentions.length} new mentions`
+        duplicates,
+        message: `Fetched ${totalFetched} articles, saved ${savedMentions.length} new mentions (${duplicates} duplicates)`,
+        sourcesTried,
       });
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/chi/online-listening/fetch", "fetch online mentions");
