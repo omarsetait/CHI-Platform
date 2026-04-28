@@ -1355,6 +1355,24 @@ export const fwaClaimServices = pgTable("fwa_claim_services", {
   denialReason: text("denial_reason"),
   modifiers: text("modifiers").array().default([]),
   diagnosisPointers: text("diagnosis_pointers").array().default([]),
+  // CHI sample-aligned fields
+  activityType: text("activity_type"),
+  internalServiceCode: text("internal_service_code"),
+  providerServiceDescription: text("provider_service_description"),
+  specialtyCode: text("specialty_code"),
+  practitionerId: text("practitioner_id"),
+  patientShareAmount: decimal("patient_share_amount", { precision: 12, scale: 2 }),
+  payerShareAmount: decimal("payer_share_amount", { precision: 12, scale: 2 }),
+  netAmount: decimal("net_amount", { precision: 12, scale: 2 }),
+  validationEngines: jsonb("validation_engines").$type<Array<{
+    engine: string;
+    status: string;
+    qaListedServiceCode?: string;
+    qaThServiceDesc?: string;
+    qaTachyActivityType?: string;
+    aiStatus?: string;
+    notes?: string;
+  }>>().default([]),
   createdAt: timestamp("created_at").defaultNow()
 });
 
@@ -3589,6 +3607,23 @@ export const claims = pgTable("claims_v2", {
   flagged: boolean("flagged").default(false),
   flagReason: text("flag_reason"),
   outlierScore: decimal("outlier_score", { precision: 5, scale: 4 }),
+  // CHI sample-aligned fields
+  providerLicense: text("provider_license"),
+  secondaryDiagnosis: text("secondary_diagnosis"),
+  otherDiagnosis: text("other_diagnosis"),
+  serviceDuration: integer("service_duration"),
+  encounterStart: timestamp("encounter_start"),
+  encounterEnd: timestamp("encounter_end"),
+  // Multi-engine validation results (CHI / Tachy AI / second AI engine)
+  validationEngines: jsonb("validation_engines").$type<Array<{
+    engine: string;            // e.g. "CHI", "Tachy-AI", "AI-2"
+    status: string;            // "Accepted" | "Rejected" | "Partial Approved"
+    validationResults?: string;
+    aiStatus?: string;
+    aiValidationResults?: string;
+    llmDiagnosisDesc?: string;
+    icd10Descriptions?: string;
+  }>>().default([]),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

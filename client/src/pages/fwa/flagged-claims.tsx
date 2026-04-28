@@ -1,9 +1,9 @@
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useLocation, useSearch } from "wouter";
-import { Button } from "@/components/ui/button";
+import { useLocation, useSearch, Link } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Progress } from "@/components/ui/progress";
@@ -42,6 +42,10 @@ import {
   Stethoscope,
   Calendar,
   X,
+  Filter,
+  ArrowRight,
+  ClipboardList,
+  Activity,
 } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 
@@ -236,9 +240,43 @@ export default function FlaggedClaimsPage() {
   const [selectedClaim, setSelectedClaim] = useState<FlaggedClaim | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
 
+  // Read entity-filter URL params via wouter (e.g. ?provider=PRV-CS1-001)
+  const searchString = useSearch();
+  const [, setLocation] = useLocation();
+  const params = useMemo(() => new URLSearchParams(searchString), [searchString]);
+  const providerFilter = params.get("provider") || "";
+  const patientFilter = params.get("patient") || "";
+  const doctorFilter = params.get("doctor") || "";
+
+  const queryString = useMemo(() => {
+    const sp = new URLSearchParams();
+    if (providerFilter) sp.set("provider", providerFilter);
+    if (patientFilter) sp.set("patient", patientFilter);
+    if (doctorFilter) sp.set("doctor", doctorFilter);
+    const s = sp.toString();
+    return s ? `?${s}` : "";
+  }, [providerFilter, patientFilter, doctorFilter]);
+
   const { data, isLoading } = useQuery<FlaggedClaimsResponse>({
-    queryKey: ["/api/fwa/flagged-claims"],
+    queryKey: ["/api/fwa/flagged-claims", { provider: providerFilter, patient: patientFilter, doctor: doctorFilter }],
+    queryFn: async () => {
+      const res = await fetch(`/api/fwa/flagged-claims${queryString}`, { credentials: "include" });
+      if (!res.ok) throw new Error(`Failed: ${res.status}`);
+      return res.json();
+    },
   });
+
+  const clearEntityFilter = () => {
+    setLocation("/fwa/flagged-claims");
+  };
+
+  const entityFilterLabel = providerFilter
+    ? `Provider: ${providerFilter}`
+    : patientFilter
+      ? `Patient: ${patientFilter}`
+      : doctorFilter
+        ? `Doctor: ${doctorFilter}`
+        : "";
 
   const claims = data?.claims ?? [];
   const summary = data?.summary;
@@ -275,6 +313,51 @@ export default function FlaggedClaimsPage() {
     setSelectedClaim(claim);
     setSheetOpen(true);
   };
+
+  // Fetch full detail (services, encounter, policy) when sidebar opens
+  const { data: claimDetail, isLoading: claimDetailLoading } = useQuery<{
+    claim: {
+      encounterStart: string | null;
+      encounterEnd: string | null;
+      lengthOfStay: number | null;
+      serviceDuration: number | null;
+      dischargeDisposition: string | null;
+      secondaryDiagnosis: string | null;
+      otherDiagnosis: string | null;
+      policyEffectiveDate: string | null;
+      policyExpiryDate: string | null;
+      groupNo: string | null;
+      coverageRelationship: string | null;
+      providerLicense: string | null;
+      city: string | null;
+      isChronic: boolean | null;
+    };
+    services: Array<{
+      id: string;
+      lineNumber: number;
+      serviceCode: string;
+      serviceDescription: string;
+      activityType: string | null;
+      quantity: string;
+      totalPrice: string;
+      approvedAmount: string | null;
+      approvalStatus: string | null;
+      adjudicationStatus: string | null;
+    }>;
+    practitionerName: string | null;
+  }>({
+    queryKey: ["/api/fwa/flagged-claims", selectedClaim?.id ?? selectedClaim?.claimNumber, "detail"],
+    queryFn: async () => {
+      const key = selectedClaim?.id || selectedClaim?.claimNumber;
+      if (!key) throw new Error("No claim selected");
+      const res = await fetch(`/api/fwa/flagged-claims/${encodeURIComponent(key)}`, {
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error(`Failed: ${res.status}`);
+      return res.json();
+    },
+    enabled: sheetOpen && !!(selectedClaim?.id || selectedClaim?.claimNumber),
+  });
 
   const outlierScorePercent = (score: string | null | undefined): number => {
     return Math.round(Number(score || 0) * 100);
@@ -340,6 +423,31 @@ export default function FlaggedClaimsPage() {
             <X className="h-3.5 w-3.5 mr-1" />
             Clear
           </Button>
+        </div>
+      )}
+
+      {/* Entity filter chip (from URL params) */}
+      {entityFilterLabel && (
+        <div className="flex items-center gap-2" data-testid="entity-filter-chip">
+          <Filter className="h-4 w-4 text-muted-foreground" />
+          <span className="text-sm text-muted-foreground">Filtered by:</span>
+          <Badge
+            variant="outline"
+            className="gap-1 pr-1 bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-900/30 dark:text-purple-400 dark:border-purple-800"
+            data-testid="badge-entity-filter"
+          >
+            <span className="font-mono text-xs">{entityFilterLabel}</span>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={clearEntityFilter}
+              className="h-5 w-5 p-0 ml-1 hover:bg-purple-200 dark:hover:bg-purple-800"
+              data-testid="button-clear-entity-filter"
+              aria-label="Clear entity filter"
+            >
+              <X className="h-3 w-3" />
+            </Button>
+          </Badge>
         </div>
       )}
 
@@ -738,6 +846,157 @@ export default function FlaggedClaimsPage() {
                     <p className="text-sm mt-0.5">{formatDate(selectedClaim.serviceDate)}</p>
                   </div>
                 </div>
+
+                {/* Encounter (from detail endpoint) */}
+                {claimDetail?.claim && (
+                  <>
+                    <Separator />
+                    <div className="space-y-3">
+                      <h4 className="text-sm font-medium text-muted-foreground flex items-center gap-1.5">
+                        <Activity className="h-4 w-4" />
+                        Encounter
+                      </h4>
+                      <div className="grid grid-cols-2 gap-3 text-sm">
+                        <div>
+                          <p className="text-xs text-muted-foreground">Length of Stay</p>
+                          <p>
+                            {claimDetail.claim.lengthOfStay !== null
+                              ? `${claimDetail.claim.lengthOfStay} day(s)`
+                              : "—"}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-muted-foreground">Service Duration</p>
+                          <p>
+                            {claimDetail.claim.serviceDuration !== null
+                              ? `${claimDetail.claim.serviceDuration} min`
+                              : "—"}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-muted-foreground">Disposition</p>
+                          <p>{claimDetail.claim.dischargeDisposition ?? "—"}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-muted-foreground">Group</p>
+                          <p className="truncate">{claimDetail.claim.groupNo ?? "—"}</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Policy */}
+                    {(claimDetail.claim.policyEffectiveDate || claimDetail.claim.policyExpiryDate) && (
+                      <>
+                        <Separator />
+                        <div className="space-y-2">
+                          <h4 className="text-sm font-medium text-muted-foreground">Policy</h4>
+                          <div className="grid grid-cols-2 gap-3 text-sm">
+                            <div>
+                              <p className="text-xs text-muted-foreground">Effective</p>
+                              <p>{formatDate(claimDetail.claim.policyEffectiveDate)}</p>
+                            </div>
+                            <div>
+                              <p className="text-xs text-muted-foreground">Expiry</p>
+                              <p>{formatDate(claimDetail.claim.policyExpiryDate)}</p>
+                            </div>
+                            {claimDetail.claim.coverageRelationship && (
+                              <div>
+                                <p className="text-xs text-muted-foreground">Relationship</p>
+                                <p className="capitalize">{claimDetail.claim.coverageRelationship}</p>
+                              </div>
+                            )}
+                            {claimDetail.claim.isChronic && (
+                              <div className="flex items-end">
+                                <Badge variant="outline" className="text-xs">Chronic</Badge>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </>
+                )}
+
+                {/* Services Included */}
+                <Separator />
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-sm font-medium text-muted-foreground flex items-center gap-1.5">
+                      <ClipboardList className="h-4 w-4" />
+                      Services Included
+                    </h4>
+                    {claimDetail && (
+                      <Badge variant="outline" className="text-xs" data-testid="badge-service-count">
+                        {claimDetail.services.length}
+                      </Badge>
+                    )}
+                  </div>
+                  {claimDetailLoading ? (
+                    <div className="space-y-2">
+                      <Skeleton className="h-12 w-full" />
+                      <Skeleton className="h-12 w-full" />
+                    </div>
+                  ) : claimDetail && claimDetail.services.length > 0 ? (
+                    <div className="space-y-2">
+                      {claimDetail.services.map((s) => {
+                        const status = (s.approvalStatus || s.adjudicationStatus || "").toLowerCase();
+                        const accepted = status === "approved" || status.includes("accept");
+                        return (
+                          <div
+                            key={s.id}
+                            className="rounded-md border p-2.5 text-sm"
+                            data-testid={`sidebar-service-${s.lineNumber}`}
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-2">
+                                  <Badge variant="outline" className="font-mono text-xs">
+                                    {s.serviceCode}
+                                  </Badge>
+                                  {s.activityType && (
+                                    <span className="text-xs text-muted-foreground">
+                                      {s.activityType}
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-xs mt-1 line-clamp-2">{s.serviceDescription}</p>
+                              </div>
+                              <div className="text-right shrink-0">
+                                <p className="text-sm font-medium">
+                                  {formatCurrency(Number(s.totalPrice))}
+                                </p>
+                                <Badge
+                                  variant="outline"
+                                  className={`text-xs mt-1 ${
+                                    accepted
+                                      ? "bg-emerald-100 text-emerald-800 border-emerald-300"
+                                      : "bg-rose-100 text-rose-800 border-rose-300"
+                                  }`}
+                                >
+                                  {accepted ? "Approved" : "Denied"}
+                                </Badge>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">No service lines recorded.</p>
+                  )}
+                </div>
+
+                {/* View Full Details */}
+                <Separator />
+                <Link
+                  href={`/fwa/claims/${encodeURIComponent(selectedClaim.claimNumber)}`}
+                  data-testid="link-view-full-details"
+                >
+                  <Button className="w-full" size="lg">
+                    View Full Details
+                    <ArrowRight className="h-4 w-4 ml-2" />
+                  </Button>
+                </Link>
               </div>
             </>
           )}

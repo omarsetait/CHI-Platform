@@ -10,7 +10,7 @@ import {
   ExternalLink, FileText, Network, Search, ChevronLeft, ChevronRight,
   ArrowUpDown, ArrowUp, ArrowDown, ShieldCheck, BarChart3, Brain,
   Cpu, FileSearch, Activity, MapPin, Users, Stethoscope, Download,
-  Loader2, CalendarIcon, SlidersHorizontal, X,
+  Loader2, CalendarIcon, SlidersHorizontal, X, Flag,
 } from "lucide-react";
 import {
   Tooltip as UITooltip,
@@ -634,9 +634,15 @@ function PatientDrillDown({
           {/* Actions */}
           <div className="flex gap-2 pt-2 border-t">
             <Link href={`/fwa/high-risk-entities/patient/${patient.patientId}`}>
-              <Button size="sm" variant="default" className="gap-1 bg-purple-600 hover:bg-purple-700">
+              <Button size="sm" variant="default" className="gap-1 bg-purple-600 hover:bg-purple-700" data-testid={`button-patient-profile-${patient.patientId}`}>
                 <ExternalLink className="h-3 w-3" />
                 View Full Profile
+              </Button>
+            </Link>
+            <Link href={`/fwa/flagged-claims?patient=${patient.patientId}`}>
+              <Button size="sm" variant="outline" className="gap-1" data-testid={`button-patient-flagged-${patient.patientId}`}>
+                <Flag className="h-3 w-3" />
+                View Flagged Claims
               </Button>
             </Link>
           </div>
@@ -789,9 +795,15 @@ function DoctorDrillDown({
           {/* Actions */}
           <div className="flex gap-2 pt-2 border-t">
             <Link href={`/fwa/high-risk-entities/doctor/${doctor.doctorId}`}>
-              <Button size="sm" variant="default" className="gap-1 bg-purple-600 hover:bg-purple-700">
+              <Button size="sm" variant="default" className="gap-1 bg-purple-600 hover:bg-purple-700" data-testid={`button-doctor-profile-${doctor.doctorId}`}>
                 <ExternalLink className="h-3 w-3" />
                 View Full Profile
+              </Button>
+            </Link>
+            <Link href={`/fwa/flagged-claims?doctor=${doctor.doctorId}`}>
+              <Button size="sm" variant="outline" className="gap-1" data-testid={`button-doctor-flagged-${doctor.doctorId}`}>
+                <Flag className="h-3 w-3" />
+                View Flagged Claims
               </Button>
             </Link>
           </div>

@@ -170,6 +170,12 @@ app.use((req, res, next) => {
           const { seedAllSections } = await import("./services/seed-all-sections");
           await seedAllSections();
         }
+
+        // Always ensure entity-anchored flagged claims exist for the
+        // /fwa/high-risk-entities → /fwa/flagged-claims drill-down.
+        // Independent of DISABLE_SEEDER; idempotent (skips if already populated).
+        const { seedEntityClaims } = await import("./services/seed-entity-claims");
+        await seedEntityClaims();
       } catch (err) {
         console.error("[Seeder] Error in platform-wide startup seed check:", err);
       }

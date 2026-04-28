@@ -9827,8 +9827,55 @@ Respond with JSON:
   });
 
   // ── Flagged Claims (DB-backed Saudi healthcare claims) ──
-  app.get("/api/fwa/flagged-claims", async (_req, res) => {
+  // Optional entity filters: ?provider=PRV-XX&patient=(PAT-XX|MBR-XX)&doctor=DOC-XX
+  // Note: claims.memberId stores MBR-* IDs. When the UI sends a PAT-* ID we
+  // resolve it to its memberId via fwa_high_risk_patients before filtering.
+  // Doctor DOC-* IDs map directly to claims.practitionerId.
+  app.get("/api/fwa/flagged-claims", async (req, res) => {
     try {
+      const { and } = await import("drizzle-orm");
+      const { fwaHighRiskPatients } = await import("@shared/schema");
+
+      const provider = typeof req.query.provider === "string" ? req.query.provider.trim() : "";
+      const patientRaw = typeof req.query.patient === "string" ? req.query.patient.trim() : "";
+      const doctor = typeof req.query.doctor === "string" ? req.query.doctor.trim() : "";
+
+      // Resolve PAT-* → MBR-* via the high-risk patients table.
+      let patientMemberId = "";
+      let patientUnresolved = false;
+      if (patientRaw) {
+        if (patientRaw.startsWith("PAT-")) {
+          const lookup = await db
+            .select({ memberId: fwaHighRiskPatients.memberId })
+            .from(fwaHighRiskPatients)
+            .where(eq(fwaHighRiskPatients.patientId, patientRaw))
+            .limit(1);
+          if (lookup[0]?.memberId) {
+            patientMemberId = lookup[0].memberId;
+          } else {
+            patientUnresolved = true;
+          }
+        } else {
+          // Assume already a member ID (MBR-*)
+          patientMemberId = patientRaw;
+        }
+      }
+
+      // If a PAT-* was passed but we couldn't resolve it, return empty rather
+      // than silently dropping the filter.
+      if (patientUnresolved) {
+        return res.json({
+          claims: [],
+          summary: { totalFlagged: 0, totalExposure: 0, confirmedFraud: 0, underReview: 0 },
+          filters: { provider: provider || null, patient: patientRaw, doctor: doctor || null },
+        });
+      }
+
+      const conditions = [eq(claims.flagged, true)];
+      if (provider) conditions.push(eq(claims.providerId, provider));
+      if (patientMemberId) conditions.push(eq(claims.memberId, patientMemberId));
+      if (doctor) conditions.push(eq(claims.practitionerId, doctor));
+
       // Join providers so each claim carries the region code (e.g. "RIY"),
       // which the dashboard uses to drill down from the Saudi heatmap.
       const rows = await db
@@ -9838,9 +9885,9 @@ Respond with JSON:
         })
         .from(claims)
         .leftJoin(providers, eq(claims.providerId, providers.id))
-        .where(eq(claims.flagged, true))
+        .where(conditions.length === 1 ? conditions[0] : and(...conditions))
         .orderBy(desc(claims.registrationDate))
-        .limit(100);
+        .limit(500);
 
       const flaggedClaims = rows.map((r) => ({
         ...r.claim,
@@ -9854,10 +9901,70 @@ Respond with JSON:
         underReview: flaggedClaims.filter(c => c.status === "under_review").length,
       };
 
-      res.json({ claims: flaggedClaims, summary });
+      res.json({
+        claims: flaggedClaims,
+        summary,
+        filters: { provider: provider || null, patient: patientRaw || null, doctor: doctor || null },
+      });
     } catch (error) {
       console.error("[FWA] Error fetching flagged claims:", error);
       res.status(500).json({ error: "Failed to fetch flagged claims" });
+    }
+  });
+
+  // ── Single Claim Detail (claim header + service lines) ──
+  // Looks up by either the synthetic id (CLM-...) or the claim_number — both
+  // are unique. Returns claim, services, and lookup names for provider/patient/doctor.
+  app.get("/api/fwa/flagged-claims/:idOrNumber", async (req, res) => {
+    try {
+      const { or } = await import("drizzle-orm");
+      const {
+        fwaClaimServices,
+        members,
+        providers,
+        practitioners,
+      } = await import("@shared/schema");
+
+      const idOrNumber = req.params.idOrNumber;
+
+      const claimRows = await db
+        .select()
+        .from(claims)
+        .where(or(eq(claims.id, idOrNumber), eq(claims.claimNumber, idOrNumber)))
+        .limit(1);
+      if (claimRows.length === 0) {
+        return res.status(404).json({ error: "Claim not found" });
+      }
+      const claim = claimRows[0];
+
+      // Service lines for this claim (ordered by line number)
+      const services = await db
+        .select()
+        .from(fwaClaimServices)
+        .where(eq(fwaClaimServices.claimId, claim.id))
+        .orderBy(fwaClaimServices.lineNumber);
+
+      // Resolve human names for provider / patient / practitioner
+      const [providerRow] = claim.providerId
+        ? await db.select({ name: providers.name }).from(providers).where(eq(providers.id, claim.providerId)).limit(1)
+        : [undefined];
+      const [memberRow] = claim.memberId
+        ? await db.select({ name: members.name }).from(members).where(eq(members.id, claim.memberId)).limit(1)
+        : [undefined];
+      const [practitionerRow] = claim.practitionerId
+        ? await db.select({ name: practitioners.name }).from(practitioners).where(eq(practitioners.id, claim.practitionerId)).limit(1)
+        : [undefined];
+
+      res.json({
+        claim,
+        services,
+        providerName: providerRow?.name ?? null,
+        patientName: memberRow?.name ?? null,
+        practitionerName: practitionerRow?.name ?? null,
+      });
+    } catch (error) {
+      console.error("[FWA] Error fetching claim detail:", error);
+      res.status(500).json({ error: "Failed to fetch claim detail" });
     }
   });
 
