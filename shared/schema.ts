@@ -1249,6 +1249,40 @@ export type InsertFwaHighRiskDoctor = z.infer<typeof insertFwaHighRiskDoctorSche
 export type FwaHighRiskDoctor = typeof fwaHighRiskDoctors.$inferSelect;
 export type FwaHighRiskDoctorWithTrend = FwaHighRiskDoctor & FwaRiskTrendFields;
 
+// FWA High-Risk Payers
+// Mirrors the provider/doctor/patient high-risk model for payers (insurers).
+// Populated by the high-risk recompute job after every ingestion.
+export const fwaHighRiskPayers = pgTable("fwa_high_risk_payers", {
+  id: text("id").primaryKey().default(sql`gen_random_uuid()`),
+  payerId: text("payer_id").notNull().unique(),
+  payerName: text("payer_name").notNull(),
+  payerType: text("payer_type"),
+  riskScore: decimal("risk_score", { precision: 5, scale: 2 }).notNull(),
+  riskLevel: reconciliationRiskLevelEnum("risk_level").default("medium"),
+  totalClaims: integer("total_claims").default(0),
+  flaggedClaims: integer("flagged_claims").default(0),
+  denialRate: decimal("denial_rate", { precision: 5, scale: 2 }),
+  avgClaimAmount: decimal("avg_claim_amount", { precision: 12, scale: 2 }),
+  totalAmount: decimal("total_amount", { precision: 12, scale: 2 }),
+  totalExposure: decimal("total_exposure", { precision: 12, scale: 2 }),
+  uniqueProviders: integer("unique_providers").default(0),
+  uniqueMembers: integer("unique_members").default(0),
+  fwaCaseCount: integer("fwa_case_count").default(0),
+  reasons: text("reasons").array().default([]),
+  lastFlaggedDate: timestamp("last_flagged_date"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow()
+});
+
+export const insertFwaHighRiskPayerSchema = createInsertSchema(fwaHighRiskPayers).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true
+});
+export type InsertFwaHighRiskPayer = z.infer<typeof insertFwaHighRiskPayerSchema>;
+export type FwaHighRiskPayer = typeof fwaHighRiskPayers.$inferSelect;
+export type FwaHighRiskPayerWithTrend = FwaHighRiskPayer & FwaRiskTrendFields;
+
 // FWA Work Queue Claims
 export const fwaWorkQueueClaims = pgTable("fwa_work_queue_claims", {
   id: text("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -5000,6 +5034,91 @@ export const insertFwaPatientTimelineSchema = createInsertSchema(fwaPatientTimel
 });
 export type InsertFwaPatientTimeline = z.infer<typeof insertFwaPatientTimelineSchema>;
 export type FwaPatientTimeline = typeof fwaPatientTimeline.$inferSelect;
+
+// Payer Entity Detection Results
+// Mirrors fwaProviderDetectionResults so the high-risk recompute can persist
+// per-payer aggregated detection scores and evidence.
+export const fwaPayerDetectionResults = pgTable("fwa_payer_detection_results", {
+  id: text("id").primaryKey().default(sql`gen_random_uuid()`),
+  payerId: text("payer_id").notNull(),
+  batchId: text("batch_id"),
+  runId: text("run_id"),
+
+  compositeScore: decimal("composite_score", { precision: 5, scale: 2 }).notNull(),
+  riskLevel: entityRiskLevelEnum("risk_level").default("low"),
+
+  ruleEngineScore: decimal("rule_engine_score", { precision: 5, scale: 2 }),
+  statisticalScore: decimal("statistical_score", { precision: 5, scale: 2 }),
+  unsupervisedScore: decimal("unsupervised_score", { precision: 5, scale: 2 }),
+  ragLlmScore: decimal("rag_llm_score", { precision: 5, scale: 2 }),
+  semanticScore: decimal("semantic_score", { precision: 5, scale: 2 }),
+
+  // Aggregated metrics for the payer derived from claims_v2 + detection results
+  aggregatedMetrics: jsonb("aggregated_metrics").$type<{
+    totalClaims: number;
+    totalAmount: number;
+    avgClaimAmount: number;
+    uniqueProviders: number;
+    uniqueMembers: number;
+    flaggedClaimsCount: number;
+    flaggedClaimsPercent: number;
+    highRiskClaimsCount: number;
+    deniedClaimsCount: number;
+    denialRate: number;
+  }>(),
+
+  primaryDetectionMethod: fwaDetectionMethodEnum("primary_detection_method"),
+  detectionSummary: text("detection_summary"),
+  recommendedAction: text("recommended_action"),
+
+  analyzedAt: timestamp("analyzed_at").defaultNow(),
+  processingTimeMs: integer("processing_time_ms"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow()
+});
+
+export const insertFwaPayerDetectionResultSchema = createInsertSchema(fwaPayerDetectionResults).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true
+});
+export type InsertFwaPayerDetectionResult = z.infer<typeof insertFwaPayerDetectionResultSchema>;
+export type FwaPayerDetectionResult = typeof fwaPayerDetectionResults.$inferSelect;
+
+// Payer Timeline - mirrors fwaProviderTimeline; one row per (payerId, batchId)
+export const fwaPayerTimeline = pgTable("fwa_payer_timeline", {
+  id: text("id").primaryKey().default(sql`gen_random_uuid()`),
+  payerId: text("payer_id").notNull(),
+  batchId: text("batch_id").notNull(),
+  batchDate: timestamp("batch_date"),
+
+  claimCount: integer("claim_count").default(0),
+  totalAmount: decimal("total_amount", { precision: 15, scale: 2 }).default("0"),
+  avgClaimAmount: decimal("avg_claim_amount", { precision: 10, scale: 2 }),
+  uniqueProviders: integer("unique_providers").default(0),
+  uniqueMembers: integer("unique_members").default(0),
+
+  flaggedClaimsCount: integer("flagged_claims_count").default(0),
+  highRiskClaimsCount: integer("high_risk_claims_count").default(0),
+  avgRiskScore: decimal("avg_risk_score", { precision: 5, scale: 2 }),
+
+  claimCountChange: decimal("claim_count_change", { precision: 8, scale: 2 }),
+  amountChange: decimal("amount_change", { precision: 8, scale: 2 }),
+  riskScoreChange: decimal("risk_score_change", { precision: 5, scale: 2 }),
+  trendDirection: text("trend_direction"),
+
+  topProcedures: jsonb("top_procedures").$type<Array<{ code: string; count: number; amount: number }>>().default([]),
+  topDiagnoses: jsonb("top_diagnoses").$type<Array<{ code: string; count: number }>>().default([]),
+
+  createdAt: timestamp("created_at").defaultNow()
+});
+
+export const insertFwaPayerTimelineSchema = createInsertSchema(fwaPayerTimeline).omit({
+  id: true,
+  createdAt: true
+});
+export type InsertFwaPayerTimeline = z.infer<typeof insertFwaPayerTimelineSchema>;
+export type FwaPayerTimeline = typeof fwaPayerTimeline.$inferSelect;
 
 // Detection Thresholds Configuration
 // Stores configurable thresholds for the 4-method detection engine

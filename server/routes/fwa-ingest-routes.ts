@@ -267,6 +267,18 @@ export function registerFwaIngestRoutes(
     console.log(
       `[FwaIngest] job ${payload.jobId} completed — detected=${payload.detected}, skipped=${payload.skipped}, failed=${payload.failed}`
     );
+    // Eventually-consistent: kick off background recompute of high-risk
+    // entities (providers/doctors/patients/payers). Fire-and-forget so we
+    // never block the ingestion pipeline. The recompute service itself
+    // collapses concurrent triggers via an in-flight singleton.
+    void import("../services/high-risk-recompute-service").then(({ recomputeHighRiskEntities }) => {
+      recomputeHighRiskEntities({ jobId: payload.jobId }).catch((err) => {
+        console.error(
+          `[FwaIngest] high-risk recompute trigger failed for job ${payload.jobId}:`,
+          err instanceof Error ? err.message : err
+        );
+      });
+    });
   });
   ingestionEvents.on("ingest.failed", (payload) => {
     console.warn(`[FwaIngest] job ${payload.jobId} failed: ${payload.error}`);

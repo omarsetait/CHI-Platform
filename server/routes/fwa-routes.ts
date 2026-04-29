@@ -1661,6 +1661,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           hrp.fwa_case_count as hrp_fwa_case_count,
           hrp.reasons as hrp_reasons,
           hrp.last_flagged_date as hrp_last_flagged_date,
+          hrp.updated_at as hrp_updated_at,
           pdr.composite_score,
           pdr.rule_engine_score,
           pdr.statistical_score,
@@ -1788,8 +1789,9 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           trendDirection: trend.direction,
           riskScoreChange: trend.scoreChange,
           trendSource: trend.source,
+          lastUpdatedAt: p.hrp_updated_at || null,
           createdAt: new Date(),
-          updatedAt: new Date()
+          updatedAt: p.hrp_updated_at || new Date()
         };
       });
 
@@ -3610,6 +3612,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           hrp.primary_diagnosis,
           hrp.reasons,
           hrp.last_claim_date,
+          hrp.updated_at as hrp_updated_at,
           pdr.rule_engine_score,
           pdr.statistical_score,
           pdr.unsupervised_score,
@@ -3687,8 +3690,9 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           trendDirection: trend.direction,
           riskScoreChange: trend.scoreChange,
           trendSource: trend.source,
+          lastUpdatedAt: p.hrp_updated_at || null,
           createdAt: new Date(),
-          updatedAt: new Date()
+          updatedAt: p.hrp_updated_at || new Date()
         };
       });
 
@@ -3917,6 +3921,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           hrd.fwa_case_count,
           hrd.reasons,
           hrd.last_flagged_date,
+          hrd.updated_at as hrd_updated_at,
           ddr.rule_engine_score,
           ddr.statistical_score,
           ddr.unsupervised_score,
@@ -3997,8 +4002,9 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           trendDirection: trend.direction,
           riskScoreChange: trend.scoreChange,
           trendSource: trend.source,
+          lastUpdatedAt: d.hrd_updated_at || null,
           createdAt: new Date(),
-          updatedAt: new Date()
+          updatedAt: d.hrd_updated_at || new Date()
         };
       });
 
@@ -4042,6 +4048,226 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       });
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/high-risk/doctors/:doctorId", "fetch single high-risk doctor");
+    }
+  });
+
+  // POST /api/fwa/high-risk-entities/recompute - Manually trigger the
+  // background high-risk entity recompute job. Accepts an optional ingestion
+  // jobId or an explicit time window (since/until). Returns the recompute
+  // summary (counts, durations, errors) so the caller can confirm the run.
+  app.post("/api/fwa/high-risk-entities/recompute", async (req, res) => {
+    try {
+      const dateField = z.preprocess((val) => {
+        if (val === undefined || val === null || val === "") return undefined;
+        if (val instanceof Date) return val;
+        if (typeof val === "string" || typeof val === "number") {
+          const d = new Date(val);
+          return Number.isNaN(d.getTime()) ? val : d;
+        }
+        return val;
+      }, z.date({ invalid_type_error: "Expected a valid ISO date string" }).optional());
+
+      const bodySchema = z.object({
+        jobId: z.string().min(1).optional(),
+        since: dateField,
+        until: dateField,
+        batchId: z.string().min(1).optional(),
+      }).strict();
+      const parsed = bodySchema.safeParse(req.body ?? {});
+      if (!parsed.success) {
+        return res.status(400).json({
+          error: "Invalid request body",
+          details: parsed.error.errors,
+        });
+      }
+      const { recomputeHighRiskEntities } = await import("../services/high-risk-recompute-service");
+      const result = await recomputeHighRiskEntities({
+        jobId: parsed.data.jobId ?? null,
+        since: parsed.data.since ?? null,
+        until: parsed.data.until ?? null,
+        batchId: parsed.data.batchId ?? null,
+      });
+      res.json(result);
+    } catch (error) {
+      handleRouteError(res, error, "/api/fwa/high-risk-entities/recompute", "trigger high-risk recompute");
+    }
+  });
+
+  // GET /api/fwa/high-risk-payers - List high-risk payers (insurers) with
+  // pagination, sorting, and filters. Mirrors the high-risk providers
+  // endpoint shape so the frontend can render payers in the same table.
+  app.get("/api/fwa/high-risk-payers", async (req, res) => {
+    try {
+      const { db } = await import("../db");
+      const { sql } = await import("drizzle-orm");
+
+      const page = Math.max(1, parseInt(String(req.query.page ?? "1")) || 1);
+      const pageSize = Math.min(200, Math.max(1, parseInt(String(req.query.pageSize ?? "20")) || 20));
+      const offset = (page - 1) * pageSize;
+      const sortBy = String(req.query.sortBy ?? "riskScore");
+      const sortOrder = String(req.query.sortOrder ?? "desc").toUpperCase() === "ASC" ? "ASC" : "DESC";
+      const search = req.query.search ? String(req.query.search) : null;
+      const riskFilter = req.query.risk ? String(req.query.risk) : null;
+      const minScore = req.query.minScore ? parseFloat(String(req.query.minScore)) : null;
+      const maxScore = req.query.maxScore ? parseFloat(String(req.query.maxScore)) : null;
+
+      const conditions: string[] = [];
+      if (search) {
+        conditions.push(`(hrp.payer_id ILIKE '%${search.replace(/'/g, "''")}%' OR hrp.payer_name ILIKE '%${search.replace(/'/g, "''")}%')`);
+      }
+      if (minScore !== null && Number.isFinite(minScore)) {
+        conditions.push(`hrp.risk_score::numeric >= ${minScore}`);
+      }
+      if (maxScore !== null && Number.isFinite(maxScore)) {
+        conditions.push(`hrp.risk_score::numeric <= ${maxScore}`);
+      }
+      if (riskFilter && ["critical", "high", "medium", "low"].includes(riskFilter)) {
+        conditions.push(`hrp.risk_level = '${riskFilter}'`);
+      }
+      const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+
+      const sortColumns: Record<string, string> = {
+        riskScore: "hrp.risk_score::numeric",
+        totalExposure: "hrp.total_exposure::numeric",
+        totalClaims: "hrp.total_claims",
+        payerId: "hrp.payer_id",
+        denialRate: "hrp.denial_rate::numeric",
+      };
+      const orderColumn = sortColumns[sortBy] || "hrp.risk_score::numeric";
+
+      const countResult = await db.execute(sql.raw(`
+        SELECT COUNT(*) as total FROM fwa_high_risk_payers hrp ${whereClause}
+      `));
+      const total = parseInt((countResult.rows[0] as any)?.total) || 0;
+
+      const payers = await db.execute(sql.raw(`
+        SELECT
+          hrp.payer_id,
+          hrp.payer_name,
+          hrp.payer_type,
+          hrp.risk_score::numeric as risk_score,
+          hrp.risk_level,
+          hrp.total_claims,
+          hrp.flagged_claims,
+          hrp.denial_rate::numeric as denial_rate,
+          hrp.avg_claim_amount::numeric as avg_claim_amount,
+          hrp.total_amount::numeric as total_amount,
+          hrp.total_exposure::numeric as total_exposure,
+          hrp.unique_providers,
+          hrp.unique_members,
+          hrp.fwa_case_count,
+          hrp.reasons,
+          hrp.last_flagged_date,
+          hrp.updated_at as hrp_updated_at,
+          ptl.trend_direction as timeline_trend_direction,
+          ptl.risk_score_change as timeline_risk_score_change
+        FROM fwa_high_risk_payers hrp
+        LEFT JOIN LATERAL (
+          SELECT trend_direction, risk_score_change
+          FROM fwa_payer_timeline
+          WHERE payer_id = hrp.payer_id
+          ORDER BY batch_date DESC NULLS LAST, created_at DESC NULLS LAST
+          LIMIT 1
+        ) ptl ON TRUE
+        ${whereClause}
+        ORDER BY ${orderColumn} ${sortOrder} NULLS LAST
+        LIMIT ${pageSize} OFFSET ${offset}
+      `));
+
+      const safeNum = (val: any, fallback: number = 0): number => {
+        if (val === null || val === undefined) return fallback;
+        const num = parseFloat(String(val));
+        return Number.isFinite(num) ? num : fallback;
+      };
+
+      const formattedPayers = payers.rows.map((p: any, idx: number) => {
+        const payerId = p.payer_id?.trim() || `PAY-${idx + 1}`;
+        const riskScore = safeNum(p.risk_score, 0);
+        const totalClaims = parseInt(p.total_claims) || 0;
+        const flaggedClaims = parseInt(p.flagged_claims) || 0;
+        const totalAmount = safeNum(p.total_amount, 0);
+        const totalExposure = safeNum(p.total_exposure, 0);
+
+        let reasons: string[] = [];
+        if (p.reasons && Array.isArray(p.reasons) && p.reasons.length > 0) {
+          reasons = p.reasons;
+        } else if (p.reasons && typeof p.reasons === 'string') {
+          try { reasons = JSON.parse(p.reasons); } catch { reasons = [p.reasons]; }
+        }
+        if (reasons.length === 0) {
+          if (flaggedClaims > 0) reasons.push(`${flaggedClaims} flagged claims across network`);
+          if (riskScore >= 40) reasons.push(`Aggregate risk score: ${riskScore.toFixed(1)}%`);
+          if (totalAmount > 1000000) reasons.push(`High exposure: SAR ${totalAmount.toLocaleString()}`);
+          if (reasons.length === 0) reasons.push("Routine monitoring - no significant concerns");
+        }
+
+        const trend = deriveRiskTrend(p.timeline_trend_direction, p.timeline_risk_score_change, null);
+
+        return {
+          id: `py${offset + idx + 1}`,
+          payerId,
+          payerName: p.payer_name || payerId,
+          payerType: p.payer_type || "insurer",
+          riskScore: riskScore.toFixed(2),
+          riskLevel: p.risk_level || "low",
+          totalClaims,
+          flaggedClaims,
+          denialRate: p.denial_rate ? safeNum(p.denial_rate, 0).toFixed(2) : "0.00",
+          avgClaimAmount: safeNum(p.avg_claim_amount, 0).toFixed(2),
+          totalAmount: totalAmount.toFixed(2),
+          totalExposure: totalExposure.toFixed(2),
+          uniqueProviders: parseInt(p.unique_providers) || 0,
+          uniqueMembers: parseInt(p.unique_members) || 0,
+          fwaCaseCount: parseInt(p.fwa_case_count) || 0,
+          reasons,
+          lastFlaggedDate: p.last_flagged_date || null,
+          trendDirection: trend.direction,
+          riskScoreChange: trend.scoreChange,
+          trendSource: trend.source,
+          lastUpdatedAt: p.hrp_updated_at || null,
+          createdAt: new Date(),
+          updatedAt: p.hrp_updated_at || new Date(),
+        };
+      });
+
+      res.json({ data: formattedPayers, total, page, pageSize });
+    } catch (error) {
+      handleRouteError(res, error, "/api/fwa/high-risk-payers", "fetch high-risk payers");
+    }
+  });
+
+  // GET /api/fwa/high-risk/payers/:payerId - Get a single high-risk payer by ID
+  app.get("/api/fwa/high-risk/payers/:payerId", async (req, res) => {
+    try {
+      const { payerId } = req.params;
+      const { db } = await import("../db");
+      const { sql } = await import("drizzle-orm");
+      const result = await db.execute(sql`
+        SELECT * FROM fwa_high_risk_payers WHERE payer_id = ${payerId} LIMIT 1
+      `);
+      const row = result.rows[0] as any;
+      if (!row) return res.status(404).json({ error: "Payer not found" });
+      res.json({
+        payerId: row.payer_id,
+        payerName: row.payer_name,
+        payerType: row.payer_type,
+        riskScore: row.risk_score,
+        riskLevel: row.risk_level,
+        totalClaims: row.total_claims,
+        flaggedClaims: row.flagged_claims,
+        denialRate: row.denial_rate,
+        avgClaimAmount: row.avg_claim_amount,
+        totalAmount: row.total_amount,
+        totalExposure: row.total_exposure,
+        uniqueProviders: row.unique_providers,
+        uniqueMembers: row.unique_members,
+        fwaCaseCount: row.fwa_case_count,
+        reasons: row.reasons,
+        lastFlaggedDate: row.last_flagged_date,
+        lastUpdatedAt: row.updated_at,
+      });
+    } catch (error) {
+      handleRouteError(res, error, "/api/fwa/high-risk/payers/:payerId", "fetch single high-risk payer");
     }
   });
 
