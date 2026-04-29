@@ -46,6 +46,8 @@ import {
   ArrowRight,
   ClipboardList,
   Activity,
+  Building2,
+  Layers,
 } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 
@@ -121,6 +123,23 @@ const REGION_LABELS: Record<string, string> = {
   BAH: "Al Baha",
   JOF: "Al Jouf",
   NBR: "Northern Borders",
+};
+
+// ─── Arabic region labels (mirrors saudi-heatmap.tsx) ───
+const REGION_LABELS_AR: Record<string, string> = {
+  RIY: "الرياض",
+  MAK: "مكة المكرمة",
+  EST: "المنطقة الشرقية",
+  MDN: "المدينة المنورة",
+  ASR: "عسير",
+  QSM: "القصيم",
+  TBK: "تبوك",
+  HAL: "حائل",
+  JZN: "جازان",
+  NJR: "نجران",
+  BAH: "الباحة",
+  JOF: "الجوف",
+  NBR: "الحدود الشمالية",
 };
 
 // ─── Status labels matching DB status values ───
@@ -355,6 +374,82 @@ export default function FlaggedClaimsPage() {
     });
   }, [claims, search, categoryFilter, statusFilter, regionFilter]);
 
+  // Region snapshot: compute breakdown of *why* this region was painted red/orange
+  // on the Saudi heatmap. Numbers come from the same /api/fwa/flagged-claims data
+  // we already fetched (no extra request) and are restricted to the active region
+  // — independent of search / category / status filters so investigators see the
+  // full picture even after narrowing the table below.
+  const regionSnapshot = useMemo(() => {
+    if (!regionFilter) return null;
+
+    const inRegion = claims.filter(
+      (c) => (c.providerRegion || "").toUpperCase() === regionFilter,
+    );
+
+    const totalCount = inRegion.length;
+    const totalExposure = inRegion.reduce(
+      (sum, c) => sum + Number(c.amount || 0),
+      0,
+    );
+
+    // Top 3 fraud categories by claim count
+    const categoryMap = new Map<string, number>();
+    for (const c of inRegion) {
+      const key = c.category || "uncategorized";
+      categoryMap.set(key, (categoryMap.get(key) ?? 0) + 1);
+    }
+    const topCategories = Array.from(categoryMap.entries())
+      .map(([category, count]) => ({ category, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 3);
+
+    // Top 3 providers driving the region's risk score. We rank by a risk-weighted
+    // contribution (sum of per-claim risk scores) so a provider with several
+    // high-risk claims outranks a provider with one outlier — this mirrors how
+    // the heatmap aggregates risk across claims. Average risk and total
+    // exposure are surfaced as secondary metrics on each row.
+    interface ProviderAgg {
+      name: string;
+      claimCount: number;
+      exposure: number;
+      riskSum: number;
+    }
+    const providerMap = new Map<string, ProviderAgg>();
+    for (const c of inRegion) {
+      const name = c.providerName || "Unknown Provider";
+      const agg =
+        providerMap.get(name) ?? {
+          name,
+          claimCount: 0,
+          exposure: 0,
+          riskSum: 0,
+        };
+      agg.claimCount += 1;
+      agg.exposure += Number(c.amount || 0);
+      agg.riskSum += Math.round(Number(c.outlierScore || 0) * 100);
+      providerMap.set(name, agg);
+    }
+    const topProviders = Array.from(providerMap.values())
+      .map((p) => ({
+        name: p.name,
+        claimCount: p.claimCount,
+        exposure: p.exposure,
+        avgRisk: p.claimCount > 0 ? Math.round(p.riskSum / p.claimCount) : 0,
+        // Risk contribution = sum of risk scores across claims. Drives the
+        // ranking and matches how regional risk accumulates on the heatmap.
+        riskContribution: p.riskSum,
+      }))
+      .sort(
+        (a, b) =>
+          b.riskContribution - a.riskContribution ||
+          b.avgRisk - a.avgRisk ||
+          b.claimCount - a.claimCount,
+      )
+      .slice(0, 3);
+
+    return { totalCount, totalExposure, topCategories, topProviders };
+  }, [claims, regionFilter]);
+
   const handleClaimClick = (claim: FlaggedClaim) => {
     setSelectedClaim(claim);
     setSheetOpen(true);
@@ -523,6 +618,142 @@ export default function FlaggedClaimsPage() {
             Clear
           </Button>
         </div>
+      )}
+
+      {/* Region Snapshot — explains *why* this region is hot on the heatmap */}
+      {regionFilter && regionSnapshot && (
+        <Card data-testid="card-region-snapshot">
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <MapPin className="h-4 w-4 text-muted-foreground" />
+                <CardTitle className="text-base">
+                  Region Snapshot
+                </CardTitle>
+                <span className="text-sm text-muted-foreground">
+                  · {REGION_LABELS[regionFilter]}{" "}
+                  <span className="font-arabic" dir="rtl">
+                    {REGION_LABELS_AR[regionFilter]}
+                  </span>{" "}
+                  <span className="text-muted-foreground/70">({regionFilter})</span>
+                </span>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            {regionSnapshot.totalCount === 0 ? (
+              <p
+                className="text-sm text-muted-foreground"
+                data-testid="text-region-snapshot-empty"
+              >
+                No flagged claims found for this region in the current dataset.
+              </p>
+            ) : (
+              <>
+                {/* Top stats: FWA count + total exposure */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="rounded-md border bg-muted/30 px-4 py-3">
+                    <div className="flex items-center gap-2 text-muted-foreground">
+                      <Flag className="h-3.5 w-3.5" />
+                      <span className="text-xs">FWA Claims in Region</span>
+                    </div>
+                    <p
+                      className="text-2xl font-bold mt-1"
+                      data-testid="text-region-fwa-count"
+                    >
+                      {regionSnapshot.totalCount}
+                    </p>
+                  </div>
+                  <div className="rounded-md border bg-muted/30 px-4 py-3">
+                    <div className="flex items-center gap-2 text-muted-foreground">
+                      <DollarSign className="h-3.5 w-3.5" />
+                      <span className="text-xs">Total Exposure</span>
+                    </div>
+                    <p
+                      className="text-2xl font-bold mt-1"
+                      data-testid="text-region-total-exposure"
+                    >
+                      {formatCurrency(regionSnapshot.totalExposure)}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Two columns: top categories + top providers */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* Top 3 fraud categories */}
+                  <div className="space-y-2">
+                    <h4 className="text-sm font-medium text-muted-foreground flex items-center gap-1.5">
+                      <Layers className="h-4 w-4" />
+                      Top Fraud Categories
+                    </h4>
+                    <div className="space-y-2">
+                      {regionSnapshot.topCategories.map((cat, i) => (
+                        <div
+                          key={cat.category}
+                          className="flex items-center justify-between gap-3"
+                          data-testid={`row-region-category-${i}`}
+                        >
+                          <Badge
+                            className={`text-xs whitespace-nowrap ${getCategoryBadgeClasses(cat.category)}`}
+                          >
+                            {CATEGORY_LABELS[cat.category] ?? cat.category}
+                          </Badge>
+                          <span
+                            className="text-sm font-medium tabular-nums"
+                            data-testid={`text-region-category-count-${i}`}
+                          >
+                            {cat.count} claim{cat.count === 1 ? "" : "s"}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Top 3 providers driving the region's risk score */}
+                  <div className="space-y-2">
+                    <h4 className="text-sm font-medium text-muted-foreground flex items-center gap-1.5">
+                      <Building2 className="h-4 w-4" />
+                      Top Providers by Risk
+                    </h4>
+                    <div className="space-y-2">
+                      {regionSnapshot.topProviders.map((p, i) => (
+                        <div
+                          key={p.name}
+                          className="flex items-center justify-between gap-3"
+                          data-testid={`row-region-provider-${i}`}
+                        >
+                          <div className="min-w-0 flex-1">
+                            <p
+                              className="text-sm font-medium truncate"
+                              data-testid={`text-region-provider-name-${i}`}
+                              title={p.name}
+                            >
+                              {p.name}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {p.claimCount} claim{p.claimCount === 1 ? "" : "s"}
+                              {" · "}
+                              <span data-testid={`text-region-provider-exposure-${i}`}>
+                                {formatCurrency(p.exposure)}
+                              </span>
+                            </p>
+                          </div>
+                          <span
+                            className={`text-sm font-semibold tabular-nums whitespace-nowrap ${getRiskColor(p.avgRisk)}`}
+                            data-testid={`text-region-provider-risk-${i}`}
+                            title="Average risk score across this provider's flagged claims in the region"
+                          >
+                            {p.avgRisk}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+          </CardContent>
+        </Card>
       )}
 
       {/* Summary Cards */}
