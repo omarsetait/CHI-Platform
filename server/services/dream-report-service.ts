@@ -9,10 +9,16 @@ import type {
   Claim
 } from "@shared/schema";
 
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+let _openai: OpenAI | null = null;
+function getOpenAI(): OpenAI {
+  if (!_openai) {
+    const apiKey = process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY;
+    const baseURL = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
+    if (!apiKey) throw new Error("No OpenAI API key configured");
+    _openai = new OpenAI({ apiKey, baseURL });
+  }
+  return _openai;
+}
 
 interface AiReportContent {
   executiveSummary: string;
@@ -515,7 +521,7 @@ ${findingsInfo}`;
     const result = await withRetry(
       async () => {
         try {
-          const response = await openai.chat.completions.create({
+          const response = await getOpenAI().chat.completions.create({
             model: this.MODEL,
             messages: [
               { role: "system", content: systemPrompt },

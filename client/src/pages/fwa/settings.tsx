@@ -30,6 +30,9 @@ import {
   Shield,
   Save,
   Plus,
+  RotateCcw,
+  AlertTriangle,
+  CheckCircle2,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { SemanticEmbeddingsAdmin } from "@/components/semantic-embeddings-admin";
@@ -49,6 +52,58 @@ export default function FWASettings() {
     retentionDays: "90",
     timeZone: "Asia/Riyadh",
   });
+
+  const [adminToken, setAdminToken] = useState<string>(
+    () => localStorage.getItem("admin_seed_token") || ""
+  );
+  const [isSeeding, setIsSeeding] = useState(false);
+  const [seedResult, setSeedResult] = useState<{ counts?: Record<string, number> } | null>(null);
+  const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
+
+  const handleAdminTokenChange = (value: string) => {
+    setAdminToken(value);
+    localStorage.setItem("admin_seed_token", value);
+  };
+
+  const handleResetDemoData = async () => {
+    if (!adminToken.trim()) {
+      toast({
+        title: "Admin Token Required",
+        description: "Please enter your admin seed token before resetting demo data.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setResetConfirmOpen(false);
+    setIsSeeding(true);
+    setSeedResult(null);
+    try {
+      const response = await fetch("/api/admin/seed-all", {
+        method: "POST",
+        headers: {
+          "x-admin-token": adminToken.trim(),
+        },
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || `Request failed with status ${response.status}`);
+      }
+      setSeedResult({ counts: data.counts });
+      toast({
+        title: "Demo Data Reset Successful",
+        description: "All platform demo data has been refreshed successfully.",
+      });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "An unexpected error occurred.";
+      toast({
+        title: "Reset Failed",
+        description: message,
+        variant: "destructive",
+      });
+    } finally {
+      setIsSeeding(false);
+    }
+  };
 
   const [alertRuleDialogOpen, setAlertRuleDialogOpen] = useState(false);
   const [alertRule, setAlertRule] = useState({
@@ -320,6 +375,102 @@ export default function FWASettings() {
       </div>
 
       <SemanticEmbeddingsAdmin />
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg flex items-center gap-2">
+            <Database className="w-5 h-5 text-purple-600" />
+            Demo Data Management
+          </CardTitle>
+          <CardDescription>
+            Reset or refresh all platform demo data in one click. This re-seeds providers, patients,
+            doctors, claims, enforcement cases, and more.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          <div className="space-y-2">
+            <Label htmlFor="admin-token">Admin Seed Token</Label>
+            <Input
+              id="admin-token"
+              type="password"
+              placeholder="Enter your admin seed token"
+              value={adminToken}
+              onChange={(e) => handleAdminTokenChange(e.target.value)}
+              data-testid="input-admin-token"
+            />
+            <p className="text-xs text-muted-foreground">
+              Your token is saved locally in this browser so you only need to enter it once.
+            </p>
+          </div>
+
+          {seedResult?.counts && (
+            <div className="p-4 bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-800 rounded-lg space-y-2" data-testid="seed-result-summary">
+              <div className="flex items-center gap-2 text-green-700 dark:text-green-400 font-medium text-sm">
+                <CheckCircle2 className="w-4 h-4" />
+                Last reset completed successfully
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-1">
+                {Object.entries(seedResult.counts).map(([key, value]) => (
+                  <div key={key} className="text-xs text-muted-foreground" data-testid={`seed-count-${key}`}>
+                    <span className="font-medium text-foreground">{value}</span>{" "}
+                    {key.replace(/([A-Z])/g, " $1").toLowerCase()}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="flex items-center gap-3">
+            <Button
+              onClick={() => setResetConfirmOpen(true)}
+              disabled={isSeeding}
+              data-testid="button-reset-demo-data"
+              className="gap-2"
+            >
+              <RotateCcw className={`w-4 h-4 ${isSeeding ? "animate-spin" : ""}`} />
+              {isSeeding ? "Resetting Demo Data…" : "Reset Demo Data"}
+            </Button>
+            {isSeeding && (
+              <p className="text-sm text-muted-foreground" data-testid="status-seeding">
+                Seeding all platform data, this may take a moment…
+              </p>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Dialog open={resetConfirmOpen} onOpenChange={setResetConfirmOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2" data-testid="dialog-title-reset-demo">
+              <AlertTriangle className="w-5 h-5 text-amber-500" />
+              Reset Demo Data?
+            </DialogTitle>
+            <DialogDescription>
+              This will re-seed all platform demo data including high-risk providers, patients,
+              doctors, enforcement cases, pre-auth claims, and member complaints. Existing records
+              will not be duplicated — the seed is idempotent.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setResetConfirmOpen(false)}
+              data-testid="button-reset-cancel"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleResetDemoData}
+              disabled={isSeeding}
+              data-testid="button-reset-confirm"
+            >
+              <RotateCcw className="w-4 h-4 mr-2" />
+              Yes, Reset Data
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={alertRuleDialogOpen} onOpenChange={setAlertRuleDialogOpen}>
         <DialogContent>

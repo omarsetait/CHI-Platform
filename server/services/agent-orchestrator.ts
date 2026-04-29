@@ -3,10 +3,16 @@ import type { AgentPhase, AgentEntityType, AgentDescriptor } from "@shared/agent
 import { getAgentsForPhaseAndEntity, getPhaseConfig } from "@shared/agents";
 import { withRetry } from "../utils/openai-utils";
 
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+let _openai: OpenAI | null = null;
+function getOpenAI(): OpenAI {
+  if (!_openai) {
+    const apiKey = process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY;
+    const baseURL = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
+    if (!apiKey) throw new Error("No OpenAI API key configured");
+    _openai = new OpenAI({ apiKey, baseURL });
+  }
+  return _openai;
+}
 
 // RLHF Exemplar storage - keeps track of accepted human actions for prompt enrichment
 // In production, this would be fetched from the database
@@ -216,7 +222,7 @@ Generate a comprehensive ${phaseConfig.reportType} report with findings and reco
 Consider the entity's risk profile and generate realistic, actionable insights that would help insurance fraud investigators.`;
 
   try {
-    const completion = await withRetry(() => openai.chat.completions.create({
+    const completion = await withRetry(() => getOpenAI().chat.completions.create({
       model: "gpt-4o",
       messages: [
         { role: "system", content: systemPrompt },
@@ -414,7 +420,7 @@ Respond with a JSON object containing:
 }`;
 
   try {
-    const completion = await withRetry(() => openai.chat.completions.create({
+    const completion = await withRetry(() => getOpenAI().chat.completions.create({
       model: "gpt-4o",
       messages: [
         { role: "system", content: systemPrompt },
@@ -466,7 +472,7 @@ Respond with a JSON object containing:
 }`;
 
   try {
-    const completion = await withRetry(() => openai.chat.completions.create({
+    const completion = await withRetry(() => getOpenAI().chat.completions.create({
       model: "gpt-4o",
       messages: [
         { role: "system", content: systemPrompt },
@@ -517,7 +523,7 @@ Respond with a JSON object:
 }`;
 
   try {
-    const completion = await withRetry(() => openai.chat.completions.create({
+    const completion = await withRetry(() => getOpenAI().chat.completions.create({
       model: "gpt-4o",
       messages: [
         { role: "system", content: systemPrompt },
@@ -693,7 +699,7 @@ Analyze this provider against peer benchmarks and generate:
 Ensure all findings have specific evidence and quantified impacts. Generate 4-6 findings across different categories with realistic amounts typical for a large healthcare provider in Saudi Arabia.`;
 
   try {
-    const completion = await withRetry(() => openai.chat.completions.create({
+    const completion = await withRetry(() => getOpenAI().chat.completions.create({
       model: "gpt-4o",
       messages: [
         { role: "system", content: systemPrompt },
@@ -894,7 +900,7 @@ Respond with a JSON object:
       ? `Analyze patient "${patientName}" (ID: ${patientId}).\n\nExisting data:\n${JSON.stringify(existingData, null, 2)}`
       : `Analyze patient "${patientName}" (ID: ${patientId}). Generate realistic analysis based on typical healthcare fraud patterns.`;
 
-    const completion = await withRetry(() => openai.chat.completions.create({
+    const completion = await withRetry(() => getOpenAI().chat.completions.create({
       model: "gpt-4o",
       messages: [
         { role: "system", content: systemPrompt },
@@ -1063,7 +1069,7 @@ Respond with a JSON object:
       ? `Analyze provider "${providerName}" (ID: ${providerId}).\n\nExisting data:\n${JSON.stringify(existingData, null, 2)}`
       : `Analyze provider "${providerName}" (ID: ${providerId}). Generate realistic analysis based on typical healthcare provider billing patterns.`;
 
-    const completion = await withRetry(() => openai.chat.completions.create({
+    const completion = await withRetry(() => getOpenAI().chat.completions.create({
       model: "gpt-4o",
       messages: [
         { role: "system", content: systemPrompt },

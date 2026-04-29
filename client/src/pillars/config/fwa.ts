@@ -10,6 +10,7 @@ import {
   MessageCircle,
   Settings2,
   BookOpen,
+  Sparkles,
 } from "lucide-react";
 import type { PillarConfig } from "@/pillars/types";
 
@@ -22,11 +23,18 @@ export const fwaPillarConfig: PillarConfig = {
   subtitle: "National fraud intelligence command center",
   navSections: [
     {
+      title: "Command Center",
+      items: [
+        { label: "Command Center", href: "/fwa/chat", icon: MessageCircle },
+      ],
+    },
+    {
       title: "Detection & Analysis",
       items: [
         { label: "Detection Engine", href: "/fwa/detection-engine", icon: Shield },
         { label: "Coding Intelligence", href: "/fwa/coding-intelligence", icon: Stethoscope },
         { label: "Flagged Claims", href: "/fwa/flagged-claims", icon: FileSearch },
+        { label: "AI Test Case Generator", href: "/fwa/test-case-generator", icon: Sparkles },
       ],
     },
     {
@@ -47,7 +55,6 @@ export const fwaPillarConfig: PillarConfig = {
       title: "Knowledge & AI",
       items: [
         { label: "Knowledge Hub", href: "/fwa/knowledge-hub", icon: Database },
-        { label: "Daman AI Chat", href: "/fwa/chat", icon: MessageCircle },
       ],
     },
     {

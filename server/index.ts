@@ -5,7 +5,7 @@ import rateLimit from "express-rate-limit";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { seedDatabaseWithDemoData } from "./services/demo-data-seeder";
-import { createDatabaseIndexes } from "./db-indexes";
+import { createDatabaseIndexes, ensureSessionTable } from "./db-indexes";
 import { createDatabaseConstraints } from "./db-constraints";
 import { closePool } from "./db";
 import { knowledgeUploadQueueService } from "./services/knowledge-upload-queue-service";
@@ -117,6 +117,16 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  // The session table MUST exist before route registration, otherwise every
+  // request through express-session middleware 500s with
+  // `relation "user_sessions" does not exist`. Block startup on this.
+  try {
+    await ensureSessionTable();
+  } catch (err) {
+    console.error("[DB] Failed to ensure session table:", err);
+    process.exit(1);
+  }
+
   // Create database indexes and constraints for query optimization and data integrity
   createDatabaseIndexes().catch(err => {
     console.error("[DB] Error creating indexes:", err);
@@ -134,8 +144,56 @@ app.use((req, res, next) => {
     console.log("[Seeder] Seeding disabled via DISABLE_SEEDER=true");
   }
 
+  // Platform-wide seed always runs in dev when any critical table is under-populated,
+  // independent of DISABLE_SEEDER (which only gates the heavier full legacy seeder).
+  if (process.env.NODE_ENV !== 'production') {
+    (async () => {
+      try {
+        const { db: dbCheck } = await import("./db");
+        const {
+          fwaHighRiskProviders: hrpTable,
+          enforcementCases: ecTable,
+          preAuthClaims: pacTable,
+        } = await import("@shared/schema");
+        const { count: countFn } = await import("drizzle-orm");
+        const [[hrp], [ec], [pac]] = await Promise.all([
+          dbCheck.select({ c: countFn() }).from(hrpTable),
+          dbCheck.select({ c: countFn() }).from(ecTable),
+          dbCheck.select({ c: countFn() }).from(pacTable),
+        ]);
+        const needsSeed =
+          Number(hrp?.c ?? 0) < 5 ||
+          Number(ec?.c ?? 0) < 5 ||
+          Number(pac?.c ?? 0) < 5;
+        if (needsSeed) {
+          console.log("[Seeder] One or more critical sections empty — running platform-wide seed...");
+          const { seedAllSections } = await import("./services/seed-all-sections");
+          await seedAllSections();
+        }
+
+        // Always ensure entity-anchored flagged claims exist for the
+        // /fwa/high-risk-entities → /fwa/flagged-claims drill-down.
+        // Independent of DISABLE_SEEDER; idempotent (skips if already populated).
+        const { seedEntityClaims } = await import("./services/seed-entity-claims");
+        await seedEntityClaims();
+      } catch (err) {
+        console.error("[Seeder] Error in platform-wide startup seed check:", err);
+      }
+    })();
+  }
+
   const server = await registerRoutes(app);
   knowledgeUploadQueueService.start();
+
+  // Recover any FWA ingest jobs that were left in a non-terminal state
+  // by a previous process. Resumes those whose staged source file is still
+  // available; marks the rest as failed with a clear audit reason.
+  try {
+    const { recoverInFlightJobs } = await import("./services/fwa-ingest-pipeline");
+    await recoverInFlightJobs();
+  } catch (err) {
+    console.error("[FwaIngest] startup recovery failed:", err);
+  }
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;

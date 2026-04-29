@@ -1,6 +1,25 @@
 import { sql } from "drizzle-orm";
 import { db } from "./db";
 
+// Session store table (connect-pg-simple). Exposed separately so the
+// server can `await` it before registering routes. Its
+// `createTableIfMissing: true` flag does not reliably fire in this
+// environment, which would otherwise leave every API request to 500
+// with `relation "user_sessions" does not exist` until the index
+// init eventually finished.
+export async function ensureSessionTable(): Promise<void> {
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS "user_sessions" (
+      "sid" varchar NOT NULL COLLATE "default",
+      "sess" jsonb NOT NULL,
+      "expire" timestamp(6) NOT NULL,
+      CONSTRAINT "user_sessions_pkey" PRIMARY KEY ("sid")
+    );
+    CREATE INDEX IF NOT EXISTS "IDX_user_sessions_expire" ON "user_sessions" ("expire");
+  `);
+  console.log("[DB] Session table ready");
+}
+
 export async function createDatabaseIndexes(): Promise<void> {
   console.log("[DB] Creating database indexes...");
   

@@ -2,7 +2,7 @@ import type { Express } from "express";
 import type { IStorage } from "../storage";
 import OpenAI from "openai";
 import { z } from "zod";
-import { eq, desc, sql } from "drizzle-orm";
+import { eq, desc, sql, and, gte, lte } from "drizzle-orm";
 import { withRetry } from "../utils/openai-utils";
 import { sanitizeForAI } from "../utils/input-sanitizer";
 import { auditDataAccess } from "../middleware/audit";
@@ -101,10 +101,62 @@ const kbQuerySchema = z.object({
   context: z.any().optional(),
 });
 
-const openai = new OpenAI({
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY
-});
+let _openai: OpenAI | null = null;
+function getOpenAI(): OpenAI {
+  if (!_openai) {
+    const apiKey = process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY;
+    const baseURL = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
+    if (!apiKey) throw new Error("No OpenAI API key configured");
+    _openai = new OpenAI({ apiKey, baseURL });
+  }
+  return _openai;
+}
+
+/**
+ * Normalize a trend signal coming from the timeline tables (or a fallback signed
+ * change value) into the {direction, scoreChange, source} shape the high-risk
+ * entity list endpoints return. Direction is normalized to "up" | "down" |
+ * "stable" so the frontend can render a single set of icons consistently.
+ *
+ * - timelineDirection: raw value from fwa_*_timeline.trend_direction
+ *   ("increasing" | "stable" | "decreasing" | "up" | "down" | null)
+ * - timelineChange: raw value from fwa_*_timeline.risk_score_change (decimal as string|number|null)
+ * - fallbackChange: signed numeric change (e.g., provider cpm_trend) used when
+ *   no timeline row exists yet
+ */
+function deriveRiskTrend(
+  timelineDirection: string | null | undefined,
+  timelineChange: string | number | null | undefined,
+  fallbackChange: number | null | undefined,
+): { direction: "up" | "down" | "stable" | null; scoreChange: number | null; source: "timeline" | "fallback" | "none" } {
+  const parseNum = (v: string | number | null | undefined): number | null => {
+    if (v === null || v === undefined) return null;
+    const n = typeof v === "number" ? v : parseFloat(String(v));
+    return Number.isFinite(n) ? n : null;
+  };
+
+  if (timelineDirection) {
+    const dir = timelineDirection.toLowerCase();
+    let normalized: "up" | "down" | "stable" | null = null;
+    if (dir === "increasing" || dir === "up" || dir === "increasing_risk") normalized = "up";
+    else if (dir === "decreasing" || dir === "down" || dir === "decreasing_risk") normalized = "down";
+    else if (dir === "stable") normalized = "stable";
+    if (normalized) {
+      return { direction: normalized, scoreChange: parseNum(timelineChange), source: "timeline" };
+    }
+  }
+
+  const fb = parseNum(fallbackChange);
+  if (fb !== null) {
+    let direction: "up" | "down" | "stable";
+    if (fb > 0.5) direction = "up";
+    else if (fb < -0.5) direction = "down";
+    else direction = "stable";
+    return { direction, scoreChange: fb, source: "fallback" };
+  }
+
+  return { direction: null, scoreChange: null, source: "none" };
+}
 
 export function registerFwaRoutes(
   app: Express,
@@ -116,7 +168,7 @@ export function registerFwaRoutes(
   app.all("/api/admin/seed-database", async (req, res) => {
     try {
       // Strict token-based authentication - requires ADMIN_SEED_TOKEN env var
-      const authToken = req.headers["x-admin-token"] || req.query.token;
+      const authToken = req.headers["x-admin-token"];
       const expectedToken = process.env.ADMIN_SEED_TOKEN;
 
       if (!expectedToken || authToken !== expectedToken) {
@@ -154,10 +206,61 @@ export function registerFwaRoutes(
     }
   });
 
+  // Admin endpoint to seed all platform sections (idempotent)
+  app.post("/api/admin/seed-all", async (req, res) => {
+    try {
+      const authToken = req.headers["x-admin-token"];
+      const expectedToken = process.env.ADMIN_SEED_TOKEN;
+
+      if (!expectedToken || authToken !== expectedToken) {
+        return res.status(401).json({ error: "Unauthorized. ADMIN_SEED_TOKEN must be configured and x-admin-token header must match." });
+      }
+
+      console.log("[Admin] Platform-wide seed triggered via /api/admin/seed-all ...");
+
+      const { seedAllSections } = await import("../services/seed-all-sections");
+      await seedAllSections();
+
+      const {
+        fwaHighRiskProviders: hrpTable,
+        fwaHighRiskPatients: hrpatTable,
+        fwaHighRiskDoctors: hrdTable,
+        enforcementCases: ecTable,
+        preAuthClaims: paTable,
+        memberComplaints: mcTable,
+      } = await import("@shared/schema");
+      const { count } = await import("drizzle-orm");
+
+      const [hrp, hrpat, hrd, ec, pa, mc] = await Promise.all([
+        db.select({ c: count() }).from(hrpTable),
+        db.select({ c: count() }).from(hrpatTable),
+        db.select({ c: count() }).from(hrdTable),
+        db.select({ c: count() }).from(ecTable),
+        db.select({ c: count() }).from(paTable),
+        db.select({ c: count() }).from(mcTable),
+      ]);
+
+      res.json({
+        success: true,
+        message: "Platform-wide seed complete",
+        counts: {
+          highRiskProviders: Number(hrp[0]?.c || 0),
+          highRiskPatients: Number(hrpat[0]?.c || 0),
+          highRiskDoctors: Number(hrd[0]?.c || 0),
+          enforcementCases: Number(ec[0]?.c || 0),
+          preAuthClaims: Number(pa[0]?.c || 0),
+          memberComplaints: Number(mc[0]?.c || 0),
+        },
+      });
+    } catch (error) {
+      handleRouteError(res, error, "/api/admin/seed-all", "seed all sections");
+    }
+  });
+
   // Admin endpoint to verify database state (for debugging production)
   app.get("/api/admin/verify-database", async (req, res) => {
     try {
-      const authToken = req.headers["x-admin-token"] || req.query.token;
+      const authToken = req.headers["x-admin-token"];
       const expectedToken = process.env.ADMIN_SEED_TOKEN;
 
       if (!expectedToken || authToken !== expectedToken) {
@@ -209,7 +312,7 @@ export function registerFwaRoutes(
   // Admin endpoint to seed audit sessions data
   app.get("/api/admin/seed-audit-sessions", async (req, res) => {
     try {
-      const authToken = req.headers["x-admin-token"] || req.query.token;
+      const authToken = req.headers["x-admin-token"];
       const expectedToken = process.env.ADMIN_SEED_TOKEN;
 
       if (!expectedToken || authToken !== expectedToken) {
@@ -253,7 +356,7 @@ export function registerFwaRoutes(
   // Admin endpoint to populate rule violations in detection results
   app.get("/api/admin/populate-rule-violations", async (req, res) => {
     try {
-      const authToken = req.headers["x-admin-token"] || req.query.token;
+      const authToken = req.headers["x-admin-token"];
       const expectedToken = process.env.ADMIN_SEED_TOKEN;
 
       if (!expectedToken || authToken !== expectedToken) {
@@ -342,10 +445,94 @@ export function registerFwaRoutes(
     }
   });
 
+  // ===========================================================================
+  // AI TEST CASE GENERATOR
+  // Produces realistic synthetic claims (single, batch, or wizard) and routes
+  // them through the same smart ingestion pipeline as uploaded data so they
+  // receive identical 5-engine scoring and show up in Flagged Claims. Generated
+  // claims are persisted with claims_v2.source="generated" for later filtering.
+  // ===========================================================================
+  const generateTestCaseSchema = z.discriminatedUnion("mode", [
+    z.object({
+      mode: z.literal("single"),
+      params: z
+        .object({
+          scenario: z.enum(["clean", "suspicious", "fraudulent"]).optional(),
+          scenarioType: z.string().max(100).optional(),
+        })
+        .optional(),
+    }),
+    z.object({
+      mode: z.literal("batch"),
+      params: z
+        .object({
+          // Task contract: batch is a "small batch (5–10 mixed)". Anything
+          // larger should go through the wizard mode, which exposes more
+          // controls. Default chosen by the generator when omitted.
+          count: z.number().int().min(5).max(10).optional(),
+        })
+        .optional(),
+    }),
+    z.object({
+      mode: z.literal("wizard"),
+      params: z.object({
+        count: z.number().int().min(1).max(100),
+        severity: z.enum(["low", "medium", "high", "mixed"]),
+        scenario: z.enum(["clean", "suspicious", "fraudulent"]).optional(),
+        targetEntity: z
+          .object({
+            type: z.enum(["provider", "member", "practitioner"]),
+            id: z.string().min(1).max(100),
+          })
+          .optional(),
+        codeMix: z
+          .object({
+            icdCodes: z.array(z.string().max(20)).max(50).optional(),
+            cptCodes: z.array(z.string().max(20)).max(50).optional(),
+          })
+          .optional(),
+      }),
+    }),
+  ]);
+
+  app.post("/api/fwa/test-cases/generate", async (req, res) => {
+    try {
+      const parsed = generateTestCaseSchema.safeParse(req.body || {});
+      if (!parsed.success) {
+        return res.status(400).json({ error: "invalid body", issues: parsed.error.flatten() });
+      }
+      const { generateTestCases } = await import("../services/test-case-generator");
+      const job = await generateTestCases(parsed.data, {
+        createdBy: ((req as any).user?.username as string | undefined) || "system",
+      });
+      return res.status(202).json({
+        jobId: job.id,
+        status: job.status,
+        statusUrl: `/api/fwa/test-cases/${job.id}`,
+      });
+    } catch (err) {
+      handleRouteError(res, err, "/api/fwa/test-cases/generate", "generate test cases");
+    }
+  });
+
+  app.get("/api/fwa/test-cases/:jobId", async (req, res) => {
+    try {
+      const { getJobStatus } = await import("../services/fwa-ingest-pipeline");
+      const job = await getJobStatus(req.params.jobId);
+      if (!job) return res.status(404).json({ error: "job not found" });
+      // Mirrors the ingestion job format, with the additional 'mode' surfaced
+      // from sourceType for clients that want to distinguish generated vs
+      // uploaded jobs without re-checking sourceType themselves.
+      res.json({ ...job, mode: job.sourceType === "generated" ? "generated" : "ingest" });
+    } catch (err) {
+      handleRouteError(res, err, "/api/fwa/test-cases/:jobId", "get test case job");
+    }
+  });
+
   app.post("/api/fwa/rules/seed-enhanced", async (req, res) => {
     try {
       // Admin authorization required for database seeding
-      const authToken = req.headers["x-admin-token"] || req.query.token;
+      const authToken = req.headers["x-admin-token"];
       const expectedToken = process.env.ADMIN_SEED_TOKEN;
 
       if (!expectedToken || authToken !== expectedToken) {
@@ -394,7 +581,7 @@ Generate a formal letter that:
 
 The tone should be firm, authoritative, and leave no ambiguity about the seriousness of the findings. Use specific dollar amounts and percentages where available.`;
 
-      const response = await withRetry(() => openai.chat.completions.create({
+      const response = await withRetry(() => getOpenAI().chat.completions.create({
         model: "gpt-4o",
         messages: [
           {
@@ -1398,90 +1585,109 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       const dateTo = (req.query.dateTo as string) || "";
       const detectionMethod = (req.query.detectionMethod as string) || "";
 
-      // Build WHERE conditions for filtering
+      // Build WHERE conditions — driven by authoritative fwa_high_risk_providers seed table
       const conditions: string[] = [];
       if (search) {
-        conditions.push(`(pdr.provider_id ILIKE '%${search.replace(/'/g, "''")}%' OR pd.name ILIKE '%${search.replace(/'/g, "''")}%')`);
+        conditions.push(`(hrp.provider_id ILIKE '%${search.replace(/'/g, "''")}%' OR hrp.provider_name ILIKE '%${search.replace(/'/g, "''")}%')`);
       }
       if (minScore > 0) {
-        conditions.push(`COALESCE(pdr.composite_score, 0) >= ${minScore}`);
+        conditions.push(`hrp.risk_score::numeric >= ${minScore}`);
       }
       if (maxScore < 100) {
-        conditions.push(`COALESCE(pdr.composite_score, 0) <= ${maxScore}`);
+        conditions.push(`hrp.risk_score::numeric <= ${maxScore}`);
       }
       if (dateFrom) {
-        conditions.push(`pdr.analyzed_at >= '${dateFrom.replace(/'/g, "''")}'::timestamp`);
+        conditions.push(`hrp.last_flagged_date >= '${dateFrom.replace(/'/g, "''")}'::timestamp`);
       }
       if (dateTo) {
-        conditions.push(`pdr.analyzed_at <= '${dateTo.replace(/'/g, "''")}'::timestamp + interval '1 day'`);
+        conditions.push(`hrp.last_flagged_date <= '${dateTo.replace(/'/g, "''")}'::timestamp + interval '1 day'`);
       }
       if (detectionMethod) {
         conditions.push(`pdr.primary_detection_method = '${detectionMethod.replace(/'/g, "''")}'`);
       }
-      // Risk tier filter applied after score calculation
       const riskTierConditions: Record<string, string> = {
-        critical: "COALESCE(pdr.composite_score, 0) >= 40",
-        high: "COALESCE(pdr.composite_score, 0) >= 30 AND COALESCE(pdr.composite_score, 0) < 40",
-        medium: "COALESCE(pdr.composite_score, 0) >= 20 AND COALESCE(pdr.composite_score, 0) < 30",
-        low: "COALESCE(pdr.composite_score, 0) >= 10 AND COALESCE(pdr.composite_score, 0) < 20",
-        minimal: "COALESCE(pdr.composite_score, 0) < 10",
+        critical: "hrp.risk_level = 'critical'",
+        high: "hrp.risk_level = 'high'",
+        medium: "hrp.risk_level = 'medium'",
+        low: "hrp.risk_level = 'low'",
+        minimal: "hrp.risk_level = 'minimal'",
       };
       if (riskTier && riskTierConditions[riskTier]) {
         conditions.push(riskTierConditions[riskTier]);
       }
       const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
-      // Map sortBy field to SQL column
+      // Map sortBy field to SQL column (all from base hrp table)
       const sortColumns: Record<string, string> = {
-        riskScore: "pdr.composite_score",
-        totalExposure: "total_exposure",
-        totalClaims: "total_claims",
-        providerId: "pdr.provider_id",
+        riskScore: "hrp.risk_score::numeric",
+        totalExposure: "hrp.total_exposure::numeric",
+        totalClaims: "hrp.total_claims",
+        providerId: "hrp.provider_id",
       };
-      const orderColumn = sortColumns[sortBy] || "pdr.composite_score";
+      const orderColumn = sortColumns[sortBy] || "hrp.risk_score::numeric";
 
-      // Count query for total
+      // Count query — base is fwa_high_risk_providers (authoritative seed table)
       const countResult = await db.execute(sql.raw(`
         SELECT COUNT(*) as total
-        FROM fwa_provider_detection_results pdr
-        LEFT JOIN provider_directory pd ON pd.id = pdr.provider_id
+        FROM fwa_high_risk_providers hrp
+        LEFT JOIN LATERAL (
+          SELECT primary_detection_method FROM fwa_provider_detection_results
+          WHERE provider_id = hrp.provider_id
+          ORDER BY analyzed_at DESC LIMIT 1
+        ) pdr ON TRUE
         ${whereClause}
       `));
       const total = parseInt((countResult.rows[0] as any)?.total) || 0;
 
-      // Main data query with pagination
+      // Main data query — fwa_high_risk_providers as authoritative base,
+      // enriched with latest detection engine scores via LATERAL JOIN (one row per entity)
       const providers = await db.execute(sql.raw(`
-        WITH claim_aggs AS (
-          SELECT
-            provider_id,
-            COUNT(*)::int as claim_count,
-            COUNT(DISTINCT member_id)::int as patient_count,
-            COALESCE(SUM(amount::numeric), 0) as total_exposure,
-            COALESCE(AVG(amount::numeric), 0) as avg_amount
-          FROM claims_v2
-          WHERE provider_id IS NOT NULL
-          GROUP BY provider_id
-        )
         SELECT
-          pdr.provider_id,
-          COALESCE(pdr.composite_score, 0) as avg_risk_score,
-          COALESCE(pdr.composite_score, 0) as max_risk_score,
-          pdr.risk_level,
+          hrp.provider_id,
+          hrp.provider_name as hrp_provider_name,
+          hrp.provider_type as hrp_provider_type,
+          hrp.specialty as hrp_specialty,
+          hrp.organization as hrp_organization,
+          hrp.risk_score::numeric as hrp_risk_score,
+          hrp.risk_level as hrp_risk_level,
+          hrp.total_claims as hrp_total_claims,
+          hrp.flagged_claims as hrp_flagged_claims,
+          hrp.denial_rate as hrp_denial_rate,
+          hrp.avg_claim_amount as hrp_avg_claim_amount,
+          hrp.total_exposure as hrp_total_exposure,
+          hrp.claims_per_month as hrp_claims_per_month,
+          hrp.cpm_trend as hrp_cpm_trend,
+          hrp.cpm_peer_average as hrp_cpm_peer_average,
+          hrp.fwa_case_count as hrp_fwa_case_count,
+          hrp.reasons as hrp_reasons,
+          hrp.last_flagged_date as hrp_last_flagged_date,
+          hrp.updated_at as hrp_updated_at,
+          pdr.composite_score,
           pdr.rule_engine_score,
           pdr.statistical_score,
           pdr.unsupervised_score,
           pdr.rag_llm_score as rag_score,
           pdr.semantic_score,
           pdr.analyzed_at as last_detection_date,
-          COALESCE((pdr.aggregated_metrics->>'totalClaims')::integer, ca.claim_count, fs.claim_count, 0) as total_claims,
-          COALESCE(ca.patient_count, fs.unique_patients, 0) as unique_patients,
-          COALESCE((pdr.aggregated_metrics->>'totalAmount')::numeric, ca.total_exposure, fs.total_amount, 0) as total_exposure,
-          pd.name as provider_name,
-          pd.specialty
-        FROM fwa_provider_detection_results pdr
-        LEFT JOIN claim_aggs ca ON ca.provider_id = pdr.provider_id
-        LEFT JOIN fwa_feature_store fs ON fs.entity_id = pdr.provider_id AND fs.entity_type = 'provider'
-        LEFT JOIN provider_directory pd ON pd.id = pdr.provider_id
+          ptl.trend_direction as timeline_trend_direction,
+          ptl.risk_score_change as timeline_risk_score_change
+        FROM fwa_high_risk_providers hrp
+        LEFT JOIN LATERAL (
+          SELECT composite_score, rule_engine_score, statistical_score,
+                 unsupervised_score, rag_llm_score, semantic_score, analyzed_at,
+                 primary_detection_method,
+                 COALESCE((aggregated_metrics->>'uniquePatients')::integer, 0) as unique_patients
+          FROM fwa_provider_detection_results
+          WHERE provider_id = hrp.provider_id
+          ORDER BY analyzed_at DESC LIMIT 1
+        ) pdr ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT trend_direction, risk_score_change
+          FROM fwa_provider_timeline
+          WHERE provider_id = hrp.provider_id
+          ORDER BY batch_date DESC NULLS LAST, created_at DESC NULLS LAST
+          LIMIT 1
+        ) ptl ON TRUE
         ${whereClause}
         ORDER BY ${orderColumn} ${sortOrder} NULLS LAST
         LIMIT ${pageSize} OFFSET ${offset}
@@ -1519,57 +1725,119 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
 
       const formattedProviders = providers.rows.map((p: any, idx: number) => {
         const providerId = p.provider_id?.trim() || `PRV-${idx + 1}`;
-        const avgRiskScore = safeNum(p.avg_risk_score, 0);
-        const totalExposure = safeNum(p.total_exposure, 0);
-        const totalClaims = parseInt(p.total_claims) || 0;
-        const uniquePatients = parseInt(p.unique_patients) || 0;
-        const riskLevel = calculateRiskLevel(avgRiskScore);
-
+        // All core fields come directly from the authoritative hrp seed table
+        const avgRiskScore = safeNum(p.hrp_risk_score, 0);
+        const totalExposure = safeNum(p.hrp_total_exposure, 0);
+        const totalClaims = parseInt(p.hrp_total_claims) || 0;
+        const riskLevel = (p.hrp_risk_level || "low") as "critical" | "high" | "medium" | "low" | "minimal";
         const isHighRisk = riskLevel === 'high' || riskLevel === 'critical';
         const isCritical = riskLevel === 'critical';
 
-        const reasons: string[] = [];
-        if (isCritical) reasons.push("Critical risk level detected");
-        if (isHighRisk) reasons.push("Elevated risk patterns identified");
-        if (avgRiskScore >= 50) reasons.push(`Risk score: ${avgRiskScore.toFixed(1)}%`);
-        if (safeNum(p.statistical_score, 0) > 20) reasons.push(`Statistical deviation: ${safeNum(p.statistical_score, 0).toFixed(1)}`);
-        if (totalExposure > 500000) reasons.push(`High exposure: SAR ${totalExposure.toLocaleString()}`);
-        if (totalClaims > 30) reasons.push(`High volume: ${totalClaims} claims`);
-        if (reasons.length === 0) reasons.push("Routine monitoring - no significant concerns");
+        // Use seeded reasons; fall back to generated ones only if none exist
+        let reasons: string[] = [];
+        if (p.hrp_reasons && Array.isArray(p.hrp_reasons) && p.hrp_reasons.length > 0) {
+          reasons = p.hrp_reasons;
+        } else if (p.hrp_reasons && typeof p.hrp_reasons === 'string') {
+          try { reasons = JSON.parse(p.hrp_reasons); } catch { reasons = [p.hrp_reasons]; }
+        }
+        if (reasons.length === 0) {
+          if (isCritical) reasons.push("Critical risk level detected");
+          if (isHighRisk) reasons.push("Elevated risk patterns identified");
+          if (avgRiskScore >= 50) reasons.push(`Risk score: ${avgRiskScore.toFixed(1)}%`);
+          if (safeNum(p.statistical_score, 0) > 20) reasons.push(`Statistical deviation: ${safeNum(p.statistical_score, 0).toFixed(1)}`);
+          if (totalExposure > 500000) reasons.push(`High exposure: SAR ${totalExposure.toLocaleString()}`);
+          if (totalClaims > 30) reasons.push(`High volume: ${totalClaims} claims`);
+          if (reasons.length === 0) reasons.push("Routine monitoring - no significant concerns");
+        }
 
-        const providerName = p.provider_name || providerNames[providerId] ||
+        const providerName = p.hrp_provider_name || providerNames[providerId] ||
           (providerId.startsWith('PRV-GEN') ? `Saudi Healthcare Provider ${providerId.replace('PRV-GEN-', '')}` :
             `Provider ${providerId.substring(0, 8)}`);
+
+        const flaggedClaims = parseInt(p.hrp_flagged_claims) || (isHighRisk ? 1 : 0);
+        const avgClaimAmount = p.hrp_avg_claim_amount
+          ? safeNum(p.hrp_avg_claim_amount, 0)
+          : (totalClaims > 0 ? totalExposure / totalClaims : 0);
+
+        // Risk trend — prefer authoritative timeline, then fall back to cpm_trend
+        const cpmTrendNum = p.hrp_cpm_trend !== null && p.hrp_cpm_trend !== undefined
+          ? safeNum(p.hrp_cpm_trend, 0)
+          : null;
+        const trend = deriveRiskTrend(p.timeline_trend_direction, p.timeline_risk_score_change, cpmTrendNum);
 
         return {
           id: `p${offset + idx + 1}`,
           providerId: providerId,
           providerName: providerName,
-          providerType: "Healthcare Facility",
-          specialty: p.specialty || "Multi-Specialty",
-          organization: "Saudi Healthcare Network",
+          providerType: p.hrp_provider_type || "Healthcare Facility",
+          specialty: p.hrp_specialty || "Multi-Specialty",
+          organization: p.hrp_organization || "Saudi Healthcare Network",
           riskScore: avgRiskScore.toFixed(2),
           riskLevel: riskLevel,
           totalClaims: totalClaims,
-          flaggedClaims: isHighRisk ? 1 : 0,
-          denialRate: "0.00",
-          avgClaimAmount: (totalClaims > 0 ? totalExposure / totalClaims : 0).toFixed(2),
+          flaggedClaims: flaggedClaims,
+          denialRate: p.hrp_denial_rate ? safeNum(p.hrp_denial_rate, 0).toFixed(2) : "0.00",
+          avgClaimAmount: avgClaimAmount.toFixed(2),
           totalExposure: totalExposure.toFixed(2),
-          claimsPerMonth: String(Math.round(totalClaims / 6)),
-          cpmTrend: avgRiskScore > 40 ? "+5.2" : "-2.1",
-          cpmPeerAverage: "35.00",
-          fwaCaseCount: isHighRisk ? 1 : 0,
-          uniquePatients: uniquePatients,
+          claimsPerMonth: p.hrp_claims_per_month ? String(safeNum(p.hrp_claims_per_month, 0).toFixed(2)) : String(Math.round(totalClaims / 6)),
+          cpmTrend: p.hrp_cpm_trend ? String(safeNum(p.hrp_cpm_trend, 0).toFixed(1)) : (avgRiskScore > 40 ? "+5.2" : "-2.1"),
+          cpmPeerAverage: p.hrp_cpm_peer_average ? safeNum(p.hrp_cpm_peer_average, 35).toFixed(2) : "35.00",
+          fwaCaseCount: parseInt(p.hrp_fwa_case_count) || (isHighRisk ? 1 : 0),
+          uniquePatients: parseInt(p.unique_patients) || 0,
           reasons: reasons,
-          lastFlaggedDate: p.last_detection_date || new Date(),
+          lastFlaggedDate: p.hrp_last_flagged_date || p.last_detection_date || new Date(),
+          trendDirection: trend.direction,
+          riskScoreChange: trend.scoreChange,
+          trendSource: trend.source,
+          lastUpdatedAt: p.hrp_updated_at || null,
           createdAt: new Date(),
-          updatedAt: new Date()
+          updatedAt: p.hrp_updated_at || new Date()
         };
       });
 
       res.json({ data: formattedProviders, total, page, pageSize });
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/high-risk-providers", "fetch high-risk providers");
+    }
+  });
+
+  // GET /api/fwa/high-risk/providers/:providerId - Get a single high-risk provider by ID
+  app.get("/api/fwa/high-risk/providers/:providerId", async (req, res) => {
+    try {
+      const { providerId } = req.params;
+      const { db } = await import("../db");
+      const { sql } = await import("drizzle-orm");
+
+      const result = await db.execute(sql`
+        SELECT *
+        FROM fwa_high_risk_providers
+        WHERE provider_id = ${providerId}
+        LIMIT 1
+      `);
+
+      if (!result.rows || result.rows.length === 0) {
+        return res.status(404).json({ error: "Provider not found" });
+      }
+
+      const row = result.rows[0] as any;
+      res.json({
+        providerId: row.provider_id,
+        providerName: row.provider_name,
+        specialty: row.specialty,
+        organization: row.organization,
+        providerType: row.provider_type,
+        riskScore: parseFloat(row.risk_score) || 0,
+        riskLevel: row.risk_level,
+        totalClaims: row.total_claims,
+        flaggedClaims: row.flagged_claims,
+        totalExposure: row.total_exposure,
+        reasons: row.reasons,
+        denialRate: row.denial_rate,
+        claimsPerMonth: row.claims_per_month,
+        avgClaimAmount: row.avg_claim_amount,
+      });
+    } catch (error) {
+      handleRouteError(res, error, "/api/fwa/high-risk/providers/:providerId", "fetch single high-risk provider");
     }
   });
 
@@ -3273,127 +3541,103 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       const dateTo = (req.query.dateTo as string) || "";
       const detectionMethod = (req.query.detectionMethod as string) || "";
 
-      // Build HAVING/WHERE conditions for the CTE
-      const havingConditions: string[] = ["COUNT(*) >= 1"];
+      // Build WHERE conditions on the seeded fwa_high_risk_patients table
+      const whereConditions: string[] = [];
       if (search) {
-        havingConditions.push(`ds.patient_id ILIKE '%${search.replace(/'/g, "''")}%'`);
+        whereConditions.push(`(hrp.patient_id ILIKE '%${search.replace(/'/g, "''")}%' OR hrp.patient_name ILIKE '%${search.replace(/'/g, "''")}%')`);
       }
-      if (dateFrom) {
-        havingConditions.push(`MAX(ds.analyzed_at) >= '${dateFrom.replace(/'/g, "''")}'::timestamp`);
-      }
-      if (dateTo) {
-        havingConditions.push(`MAX(ds.analyzed_at) <= '${dateTo.replace(/'/g, "''")}'::timestamp + interval '1 day'`);
-      }
-
-      // Risk tier and score filters applied in outer query
-      const outerConditions: string[] = [];
       if (minScore > 0) {
-        outerConditions.push(`avg_risk_score >= ${minScore}`);
+        whereConditions.push(`hrp.risk_score::numeric >= ${minScore}`);
       }
       if (maxScore < 100) {
-        outerConditions.push(`avg_risk_score <= ${maxScore}`);
+        whereConditions.push(`hrp.risk_score::numeric <= ${maxScore}`);
       }
       const riskTierConditions: Record<string, string> = {
-        critical: "(avg_risk_score >= 40 OR critical_count >= 3)",
-        high: "(avg_risk_score >= 30 AND avg_risk_score < 40)",
-        medium: "(avg_risk_score >= 20 AND avg_risk_score < 30)",
-        low: "(avg_risk_score < 20)",
+        critical: "hrp.risk_level = 'critical'",
+        high: "hrp.risk_level = 'high'",
+        medium: "hrp.risk_level = 'medium'",
+        low: "hrp.risk_level = 'low'",
+        minimal: "hrp.risk_level = 'minimal'",
       };
       if (riskTier && riskTierConditions[riskTier]) {
-        outerConditions.push(riskTierConditions[riskTier]);
+        whereConditions.push(riskTierConditions[riskTier]);
       }
-      const outerWhereClause = outerConditions.length > 0 ? `WHERE ${outerConditions.join(" AND ")}` : "";
+      if (dateFrom) {
+        whereConditions.push(`hrp.last_claim_date >= '${dateFrom.replace(/'/g, "''")}'::timestamp`);
+      }
+      if (dateTo) {
+        whereConditions.push(`hrp.last_claim_date <= '${dateTo.replace(/'/g, "''")}'::timestamp + interval '1 day'`);
+      }
+      if (detectionMethod) {
+        whereConditions.push(`pdr.primary_detection_method = '${detectionMethod.replace(/'/g, "''")}'`);
+      }
+      const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(" AND ")}` : "";
 
       // Map sortBy field to SQL column
       const sortColumns: Record<string, string> = {
-        riskScore: "avg_risk_score",
-        totalAmount: "total_amount",
-        totalClaims: "total_claims",
-        patientId: "patient_id",
-        uniqueProviders: "unique_providers",
+        riskScore: "hrp.risk_score::numeric",
+        totalAmount: "hrp.total_amount::numeric",
+        totalClaims: "hrp.total_claims",
+        patientId: "hrp.patient_id",
+        patientName: "hrp.patient_name",
       };
-      const orderColumn = sortColumns[sortBy] || "avg_risk_score";
+      const orderColumn = sortColumns[sortBy] || "hrp.risk_score::numeric";
 
-      // Count query
+      // Count query — base is fwa_high_risk_patients (authoritative seed table)
       const countResult = await db.execute(sql.raw(`
-        WITH detection_stats AS (
-          SELECT
-            patient_id,
-            COUNT(*) as total_detections,
-            COUNT(DISTINCT claim_id) as total_claims,
-            COUNT(DISTINCT provider_id) as unique_providers,
-            COALESCE(AVG(CASE WHEN composite_score IS NOT NULL THEN composite_score::decimal ELSE NULL END), 0) as avg_risk_score,
-            SUM(CASE WHEN composite_risk_level = 'critical' THEN 1 ELSE 0 END) as critical_count
-          FROM fwa_detection_results
-          WHERE patient_id IS NOT NULL AND patient_id != '' ${search ? `AND patient_id ILIKE '%${search.replace(/'/g, "''")}%'` : ""}
-          GROUP BY patient_id
-          HAVING COUNT(*) >= 1
-        )
-        SELECT COUNT(*) as total FROM detection_stats ${outerWhereClause}
+        SELECT COUNT(*) as total
+        FROM fwa_high_risk_patients hrp
+        LEFT JOIN LATERAL (
+          SELECT primary_detection_method FROM fwa_patient_detection_results
+          WHERE patient_id = hrp.patient_id
+          ORDER BY analyzed_at DESC LIMIT 1
+        ) pdr ON TRUE
+        ${whereClause}
       `));
       const total = parseInt((countResult.rows[0] as any)?.total) || 0;
 
-      // Main data query with pagination
+      // Main data query — fwa_high_risk_patients as authoritative base (one row per entity),
+      // LATERAL JOIN ensures at most one detection result row per patient (no count inflation)
       const patients = await db.execute(sql.raw(`
-        WITH detection_stats AS (
-          SELECT
-            patient_id,
-            COUNT(*) as total_detections,
-            COUNT(DISTINCT claim_id) as total_claims,
-            COUNT(DISTINCT provider_id) as unique_providers,
-            COALESCE(AVG(CASE WHEN composite_score IS NOT NULL THEN composite_score::decimal ELSE NULL END), 0) as avg_risk_score,
-            COALESCE(MAX(CASE WHEN composite_score IS NOT NULL THEN composite_score::decimal ELSE NULL END), 0) as max_risk_score,
-            SUM(CASE WHEN composite_risk_level IN ('critical', 'high') THEN 1 ELSE 0 END) as high_risk_count,
-            SUM(CASE WHEN composite_risk_level = 'critical' THEN 1 ELSE 0 END) as critical_count,
-            MAX(analyzed_at) as last_detection_date
-          FROM fwa_detection_results
-          WHERE patient_id IS NOT NULL AND patient_id != '' ${search ? `AND patient_id ILIKE '%${search.replace(/'/g, "''")}%'` : ""}
-          GROUP BY patient_id
-          HAVING COUNT(*) >= 1
-        ),
-        claim_amounts AS (
-          SELECT
-            member_id as patient_id,
-            COALESCE(SUM(amount::decimal), 0) as total_amount,
-            COALESCE(AVG(amount::decimal), 0) as avg_claim_amount
-          FROM claims_v2
-          WHERE member_id IS NOT NULL AND amount IS NOT NULL
-          GROUP BY member_id
-        )
         SELECT
-          ds.patient_id,
-          ds.total_detections,
-          ds.total_claims,
-          ds.unique_providers,
-          ROUND(ds.avg_risk_score, 2) as avg_risk_score,
-          ROUND(ds.max_risk_score, 2) as max_risk_score,
-          ds.high_risk_count,
-          ds.critical_count,
-          ds.last_detection_date,
-          ROUND(COALESCE(ca.total_amount, p360.claims_amount, 0), 2) as total_amount,
-          CASE
-            WHEN ds.avg_risk_score >= 40 OR ds.critical_count >= 3 THEN 'critical'
-            WHEN ds.avg_risk_score >= 30 OR ds.high_risk_count >= 5 THEN 'high'
-            WHEN ds.avg_risk_score >= 20 OR ds.high_risk_count >= 2 THEN 'medium'
-            ELSE 'low'
-          END as risk_level,
-          CASE
-            WHEN ds.avg_risk_score >= 40 OR ds.critical_count >= 3 THEN 1
-            WHEN ds.avg_risk_score >= 30 OR ds.high_risk_count >= 5 THEN 2
-            WHEN ds.avg_risk_score >= 20 OR ds.high_risk_count >= 2 THEN 3
-            ELSE 4
-          END as risk_order
-        FROM detection_stats ds
-        LEFT JOIN claim_amounts ca ON ds.patient_id = ca.patient_id
-        LEFT JOIN (
-          SELECT patient_id, (claims_summary->>'totalAmount')::numeric as claims_amount
-          FROM patient_360
-        ) p360 ON ds.patient_id = p360.patient_id
-        ${outerWhereClause}
-        ORDER BY
-          risk_order ASC,
-          ${orderColumn} ${sortOrder},
-          ds.avg_risk_score DESC
+          hrp.patient_id,
+          hrp.patient_name,
+          hrp.member_id,
+          hrp.risk_score::numeric as risk_score,
+          hrp.risk_level,
+          hrp.total_claims,
+          hrp.flagged_claims,
+          hrp.total_amount::numeric as total_amount,
+          hrp.fwa_case_count,
+          hrp.primary_diagnosis,
+          hrp.reasons,
+          hrp.last_claim_date,
+          hrp.updated_at as hrp_updated_at,
+          pdr.rule_engine_score,
+          pdr.statistical_score,
+          pdr.unsupervised_score,
+          pdr.rag_llm_score,
+          pdr.semantic_score,
+          pdr.analyzed_at as last_detection_date,
+          ptl.trend_direction as timeline_trend_direction,
+          ptl.risk_score_change as timeline_risk_score_change
+        FROM fwa_high_risk_patients hrp
+        LEFT JOIN LATERAL (
+          SELECT rule_engine_score, statistical_score, unsupervised_score,
+                 rag_llm_score, semantic_score, analyzed_at, primary_detection_method
+          FROM fwa_patient_detection_results
+          WHERE patient_id = hrp.patient_id
+          ORDER BY analyzed_at DESC LIMIT 1
+        ) pdr ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT trend_direction, risk_score_change
+          FROM fwa_patient_timeline
+          WHERE patient_id = hrp.patient_id
+          ORDER BY batch_date DESC NULLS LAST, created_at DESC NULLS LAST
+          LIMIT 1
+        ) ptl ON TRUE
+        ${whereClause}
+        ORDER BY ${orderColumn} ${sortOrder} NULLS LAST
         LIMIT ${pageSize} OFFSET ${offset}
       `));
 
@@ -3404,61 +3648,92 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         return Number.isFinite(num) ? num : fallback;
       };
 
-      // Saudi patient name mapping
-      const patientNames = [
-        'محمد أحمد الشمري (Mohammed Al Shammari)',
-        'فهد عبدالله القحطاني (Fahd Al Qahtani)',
-        'عبدالرحمن سعد الدوسري (Abdulrahman Al Dosari)',
-        'سلطان خالد العتيبي (Sultan Al Otaibi)',
-        'نورة محمد الغامدي (Noura Al Ghamdi)',
-        'سارة عبدالله الحربي (Sara Al Harbi)',
-        'أحمد فهد المطيري (Ahmed Al Mutairi)',
-        'خالد سعود الزهراني (Khaled Al Zahrani)',
-        'عايشة ناصر الشهري (Aisha Al Shehri)',
-        'منى صالح البلوي (Mona Al Balawi)'
-      ];
-
       const formattedPatients = patients.rows.map((p: any, idx: number) => {
         const patientId = p.patient_id?.trim() || `PAT-${idx + 1}`;
-        const avgRiskScore = safeNum(p.avg_risk_score, 0);
+        const riskScore = safeNum(p.risk_score, 0);
         const totalAmount = safeNum(p.total_amount, 0);
-        const highRiskCount = parseInt(p.high_risk_count) || 0;
-        const criticalCount = parseInt(p.critical_count) || 0;
         const totalClaims = parseInt(p.total_claims) || 0;
-        const uniqueProviders = parseInt(p.unique_providers) || 0;
+        const flaggedClaims = parseInt(p.flagged_claims) || 0;
+        const fwaCaseCount = parseInt(p.fwa_case_count) || 0;
 
-        const reasons: string[] = [];
-        if (uniqueProviders > 5) reasons.push("Doctor shopping pattern: Multiple providers visited");
-        else if (uniqueProviders > 3) reasons.push(`High provider diversity: ${uniqueProviders} different providers`);
-        if (criticalCount > 0) reasons.push(`${criticalCount} critical risk detections`);
-        if (highRiskCount > 0) reasons.push(`${highRiskCount} high-risk claims flagged`);
-        if (avgRiskScore >= 50) reasons.push(`Elevated average risk score: ${avgRiskScore.toFixed(1)}%`);
-        if (totalAmount > 100000) reasons.push(`High claim volume: SAR ${totalAmount.toLocaleString()}`);
-        if (reasons.length === 0) reasons.push("Routine monitoring - no significant concerns");
+        // Use seeded reasons if available; otherwise generate
+        let reasons: string[] = [];
+        if (p.reasons && Array.isArray(p.reasons) && p.reasons.length > 0) {
+          reasons = p.reasons;
+        } else if (p.reasons && typeof p.reasons === 'string') {
+          try { reasons = JSON.parse(p.reasons); } catch { reasons = [p.reasons]; }
+        }
+        if (reasons.length === 0) {
+          if (flaggedClaims > 0) reasons.push(`${flaggedClaims} flagged claims detected`);
+          if (riskScore >= 80) reasons.push(`High risk score: ${riskScore.toFixed(1)}%`);
+          if (totalAmount > 100000) reasons.push(`High claim volume: SAR ${totalAmount.toLocaleString()}`);
+          if (reasons.length === 0) reasons.push("Routine monitoring - no significant concerns");
+        }
+
+        const trend = deriveRiskTrend(p.timeline_trend_direction, p.timeline_risk_score_change, null);
 
         return {
           id: `pt${offset + idx + 1}`,
           patientId: patientId,
-          patientName: patientNames[idx % patientNames.length],
-          memberId: `MBR-${1000 + offset + idx}`,
-          riskScore: avgRiskScore.toFixed(2),
+          patientName: p.patient_name || `Patient ${patientId}`,
+          memberId: p.member_id || `MBR-${1000 + offset + idx}`,
+          riskScore: riskScore.toFixed(2),
           riskLevel: p.risk_level || "low",
           totalClaims: totalClaims,
-          flaggedClaims: highRiskCount,
+          flaggedClaims: flaggedClaims,
           totalAmount: totalAmount.toFixed(2),
-          fwaCaseCount: highRiskCount + criticalCount,
-          uniqueProviders: uniqueProviders,
-          primaryDiagnosis: "Various",
+          fwaCaseCount: fwaCaseCount,
+          uniqueProviders: 0,
+          primaryDiagnosis: p.primary_diagnosis || "Various",
           reasons: reasons,
-          lastClaimDate: p.last_detection_date || new Date(),
+          lastClaimDate: p.last_claim_date || p.last_detection_date || new Date(),
+          trendDirection: trend.direction,
+          riskScoreChange: trend.scoreChange,
+          trendSource: trend.source,
+          lastUpdatedAt: p.hrp_updated_at || null,
           createdAt: new Date(),
-          updatedAt: new Date()
+          updatedAt: p.hrp_updated_at || new Date()
         };
       });
 
       res.json({ data: formattedPatients, total, page, pageSize });
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/high-risk-patients", "fetch high-risk patients");
+    }
+  });
+
+  // GET /api/fwa/high-risk/patients/:patientId - Get a single high-risk patient by ID
+  app.get("/api/fwa/high-risk/patients/:patientId", async (req, res) => {
+    try {
+      const { patientId } = req.params;
+      const { db } = await import("../db");
+      const { sql } = await import("drizzle-orm");
+
+      const result = await db.execute(sql`
+        SELECT p.*
+        FROM fwa_high_risk_patients p
+        WHERE p.patient_id = ${patientId}
+        LIMIT 1
+      `);
+
+      if (!result.rows || result.rows.length === 0) {
+        return res.status(404).json({ error: "Patient not found" });
+      }
+
+      const row = result.rows[0] as any;
+      res.json({
+        patientId: row.patient_id,
+        patientName: row.patient_name,
+        primaryDiagnosis: row.primary_diagnosis,
+        riskScore: parseFloat(row.risk_score) || 0,
+        riskLevel: row.risk_level,
+        totalClaims: row.total_claims,
+        flaggedClaims: row.flagged_claims,
+        totalAmount: row.total_amount,
+        reasons: row.reasons,
+      });
+    } catch (error) {
+      handleRouteError(res, error, "/api/fwa/high-risk/patients/:patientId", "fetch single high-risk patient");
     }
   });
 
@@ -3570,89 +3845,108 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       const dateTo = (req.query.dateTo as string) || "";
       const detectionMethod = (req.query.detectionMethod as string) || "";
 
-      // Build WHERE conditions
-      const conditions: string[] = [
-        "d.doctor_id NOT LIKE 'biopsy%'",
-        "d.doctor_id NOT LIKE 'needle%'",
-        "d.doctor_id NOT LIKE 'excision%'",
-        "d.doctor_id !~ '^[a-z]+ [a-z]+$'"
-      ];
+      // Build WHERE conditions on the seeded fwa_high_risk_doctors table
+      const conditions: string[] = [];
       if (search) {
-        conditions.push(`(d.doctor_id ILIKE '%${search.replace(/'/g, "''")}%' OR d.doctor_name ILIKE '%${search.replace(/'/g, "''")}%')`);
+        conditions.push(`(hrd.doctor_id ILIKE '%${search.replace(/'/g, "''")}%' OR hrd.doctor_name ILIKE '%${search.replace(/'/g, "''")}%')`);
       }
       if (specialty) {
-        conditions.push(`d.specialty ILIKE '%${specialty.replace(/'/g, "''")}%'`);
+        conditions.push(`hrd.specialty ILIKE '%${specialty.replace(/'/g, "''")}%'`);
       }
       if (minScore > 0) {
-        conditions.push(`COALESCE(d.risk_score, 0) >= ${minScore}`);
+        conditions.push(`hrd.risk_score::numeric >= ${minScore}`);
       }
       if (maxScore < 100) {
-        conditions.push(`COALESCE(d.risk_score, 0) <= ${maxScore}`);
+        conditions.push(`hrd.risk_score::numeric <= ${maxScore}`);
       }
       if (dateFrom) {
-        conditions.push(`ddr.analyzed_at >= '${dateFrom.replace(/'/g, "''")}'::timestamp`);
+        conditions.push(`hrd.last_flagged_date >= '${dateFrom.replace(/'/g, "''")}'::timestamp`);
       }
       if (dateTo) {
-        conditions.push(`ddr.analyzed_at <= '${dateTo.replace(/'/g, "''")}'::timestamp + interval '1 day'`);
+        conditions.push(`hrd.last_flagged_date <= '${dateTo.replace(/'/g, "''")}'::timestamp + interval '1 day'`);
       }
       if (detectionMethod) {
         conditions.push(`ddr.primary_detection_method = '${detectionMethod.replace(/'/g, "''")}'`);
       }
       const riskTierConditions: Record<string, string> = {
-        critical: "COALESCE(d.risk_score, 0) >= 40",
-        high: "COALESCE(d.risk_score, 0) >= 30 AND COALESCE(d.risk_score, 0) < 40",
-        medium: "COALESCE(d.risk_score, 0) >= 20 AND COALESCE(d.risk_score, 0) < 30",
-        low: "COALESCE(d.risk_score, 0) >= 10 AND COALESCE(d.risk_score, 0) < 20",
-        minimal: "COALESCE(d.risk_score, 0) < 10",
+        critical: "hrd.risk_level = 'critical'",
+        high: "hrd.risk_level = 'high'",
+        medium: "hrd.risk_level = 'medium'",
+        low: "hrd.risk_level = 'low'",
+        minimal: "hrd.risk_level = 'minimal'",
       };
       if (riskTier && riskTierConditions[riskTier]) {
         conditions.push(riskTierConditions[riskTier]);
       }
-      const whereClause = `WHERE ${conditions.join(" AND ")}`;
+      const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
       // Map sortBy field to SQL column
       const sortColumns: Record<string, string> = {
-        riskScore: "d.risk_score",
-        totalExposure: "exposure_amount",
-        totalClaims: "(d.claims_summary->>'totalClaims')::int",
-        doctorId: "d.doctor_id",
-        specialty: "d.specialty",
+        riskScore: "hrd.risk_score::numeric",
+        totalExposure: "hrd.total_exposure::numeric",
+        totalClaims: "hrd.total_claims",
+        doctorId: "hrd.doctor_id",
+        specialty: "hrd.specialty",
       };
-      const orderColumn = sortColumns[sortBy] || "d.risk_score";
+      const orderColumn = sortColumns[sortBy] || "hrd.risk_score::numeric";
 
-      // Count query
+      // Count query — base is fwa_high_risk_doctors (authoritative seed table)
       const countResult = await db.execute(sql.raw(`
         SELECT COUNT(*) as total
-        FROM doctor_360 d
+        FROM fwa_high_risk_doctors hrd
+        LEFT JOIN LATERAL (
+          SELECT primary_detection_method FROM fwa_doctor_detection_results
+          WHERE doctor_id = hrd.doctor_id
+          ORDER BY analyzed_at DESC LIMIT 1
+        ) ddr ON TRUE
         ${whereClause}
       `));
       const total = parseInt((countResult.rows[0] as any)?.total) || 0;
 
-      // Main data query with pagination
+      // Main data query — fwa_high_risk_doctors as authoritative base (one row per entity),
+      // LATERAL JOIN ensures at most one detection result row per doctor (no count inflation)
       const doctors = await db.execute(sql.raw(`
         SELECT
-          d.doctor_id,
-          d.doctor_name,
-          d.specialty,
-          d.license_number,
-          d.primary_facility_name,
-          COALESCE(d.risk_score, 0) as risk_score,
-          d.risk_level,
-          d.claims_summary,
-          d.last_analyzed_at,
-          COALESCE((d.claims_summary->>'totalAmount')::numeric, 0) as exposure_amount,
-          (COALESCE(d.risk_score, 0) * 0.6) +
-          (LEAST(COALESCE((d.claims_summary->>'totalAmount')::numeric, 0) / 50000, 40) * 0.4) as priority_score
-        FROM doctor_360 d
+          hrd.doctor_id,
+          hrd.doctor_name,
+          hrd.specialty,
+          hrd.license_number,
+          hrd.organization,
+          hrd.risk_score::numeric as risk_score,
+          hrd.risk_level,
+          hrd.total_claims,
+          hrd.flagged_claims,
+          hrd.avg_claim_amount::numeric as avg_claim_amount,
+          hrd.total_exposure::numeric as total_exposure,
+          hrd.fwa_case_count,
+          hrd.reasons,
+          hrd.last_flagged_date,
+          hrd.updated_at as hrd_updated_at,
+          ddr.rule_engine_score,
+          ddr.statistical_score,
+          ddr.unsupervised_score,
+          ddr.rag_llm_score,
+          ddr.semantic_score,
+          ddr.analyzed_at as last_detection_date,
+          dtl.trend_direction as timeline_trend_direction,
+          dtl.risk_score_change as timeline_risk_score_change
+        FROM fwa_high_risk_doctors hrd
+        LEFT JOIN LATERAL (
+          SELECT rule_engine_score, statistical_score, unsupervised_score,
+                 rag_llm_score, semantic_score, analyzed_at, primary_detection_method
+          FROM fwa_doctor_detection_results
+          WHERE doctor_id = hrd.doctor_id
+          ORDER BY analyzed_at DESC LIMIT 1
+        ) ddr ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT trend_direction, risk_score_change
+          FROM fwa_doctor_timeline
+          WHERE doctor_id = hrd.doctor_id
+          ORDER BY batch_date DESC NULLS LAST, created_at DESC NULLS LAST
+          LIMIT 1
+        ) dtl ON TRUE
         ${whereClause}
-        ORDER BY
-          CASE
-            WHEN COALESCE(d.risk_score, 0) >= 40 THEN 1
-            WHEN COALESCE(d.risk_score, 0) >= 30 THEN 2
-            WHEN COALESCE(d.risk_score, 0) >= 20 THEN 3
-            ELSE 4
-          END,
-          ${orderColumn} ${sortOrder} NULLS LAST
+        ORDER BY ${orderColumn} ${sortOrder} NULLS LAST
         LIMIT ${pageSize} OFFSET ${offset}
       `));
 
@@ -3663,41 +3957,30 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         return Number.isFinite(num) ? num : fallback;
       };
 
-      // Dynamic risk level calculation from score
-      const calculateRiskLevel = (score: number): "critical" | "high" | "medium" | "low" | "minimal" => {
-        if (score >= 40) return "critical";
-        if (score >= 30) return "high";
-        if (score >= 20) return "medium";
-        if (score >= 10) return "low";
-        return "minimal";
-      };
-
       const formattedDoctors = doctors.rows.map((d: any, idx: number) => {
         const doctorId = d.doctor_id?.trim() || `DOC-${idx + 1}`;
         const riskScore = safeNum(d.risk_score, 0);
-        const claimsSummary = typeof d.claims_summary === 'string'
-          ? JSON.parse(d.claims_summary)
-          : (d.claims_summary || {});
+        const totalClaims = parseInt(d.total_claims) || 0;
+        const flaggedClaims = parseInt(d.flagged_claims) || 0;
+        const totalExposure = safeNum(d.total_exposure, 0);
+        const avgClaimAmount = safeNum(d.avg_claim_amount, 0);
+        const fwaCaseCount = parseInt(d.fwa_case_count) || 0;
 
-        const totalClaims = parseInt(claimsSummary.totalClaims) || 0;
-        const totalExposure = safeNum(claimsSummary.totalAmount, 0);
-        const uniquePatients = parseInt(claimsSummary.uniquePatients) || 0;
-        const avgClaimAmount = safeNum(claimsSummary.avgAmount, 0);
+        // Use seeded reasons if available; otherwise generate
+        let reasons: string[] = [];
+        if (d.reasons && Array.isArray(d.reasons) && d.reasons.length > 0) {
+          reasons = d.reasons;
+        } else if (d.reasons && typeof d.reasons === 'string') {
+          try { reasons = JSON.parse(d.reasons); } catch { reasons = [d.reasons]; }
+        }
+        if (reasons.length === 0) {
+          if (flaggedClaims > 0) reasons.push(`${flaggedClaims} flagged claims detected`);
+          if (riskScore >= 80) reasons.push(`High risk score: ${riskScore.toFixed(1)}%`);
+          if (totalExposure > 100000) reasons.push(`High exposure: SAR ${totalExposure.toLocaleString()}`);
+          if (reasons.length === 0) reasons.push("Routine monitoring - no significant concerns");
+        }
 
-        const riskLevel = calculateRiskLevel(riskScore);
-
-        const isHighRisk = riskLevel === 'high' || riskLevel === 'critical';
-        const isCritical = riskLevel === 'critical';
-        const flaggedClaims = isCritical ? 2 : (isHighRisk ? 1 : 0);
-
-        const reasons: string[] = [];
-        if (isCritical) reasons.push("Critical risk level detected");
-        if (isHighRisk) reasons.push("Elevated risk patterns identified");
-        if (riskScore >= 30) reasons.push(`Risk score: ${riskScore.toFixed(1)}%`);
-        if (totalExposure > 100000) reasons.push(`High exposure: SAR ${totalExposure.toLocaleString()}`);
-        if (totalClaims > 50) reasons.push(`High volume: ${totalClaims} claims`);
-        if (uniquePatients > 30) reasons.push(`High patient volume: ${uniquePatients} unique patients`);
-        if (reasons.length === 0) reasons.push("Routine monitoring - no significant concerns");
+        const trend = deriveRiskTrend(d.timeline_trend_direction, d.timeline_risk_score_change, null);
 
         return {
           id: `d${offset + idx + 1}`,
@@ -3705,25 +3988,286 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           doctorName: d.doctor_name || `Dr. ${doctorId}`,
           specialty: d.specialty || "General Practice",
           licenseNumber: d.license_number || doctorId,
-          organization: "Saudi Healthcare Network",
+          organization: d.organization || "Saudi Healthcare Network",
           riskScore: riskScore.toFixed(2),
-          riskLevel: riskLevel,
+          riskLevel: d.risk_level || "low",
           totalClaims: totalClaims,
           flaggedClaims: flaggedClaims,
           avgClaimAmount: avgClaimAmount.toFixed(2),
           totalExposure: totalExposure.toFixed(2),
-          uniquePatients: uniquePatients,
-          fwaCaseCount: flaggedClaims,
+          uniquePatients: 0,
+          fwaCaseCount: fwaCaseCount,
           reasons: reasons,
-          lastFlaggedDate: d.last_analyzed_at || new Date(),
+          lastFlaggedDate: d.last_flagged_date || d.last_detection_date || new Date(),
+          trendDirection: trend.direction,
+          riskScoreChange: trend.scoreChange,
+          trendSource: trend.source,
+          lastUpdatedAt: d.hrd_updated_at || null,
           createdAt: new Date(),
-          updatedAt: new Date()
+          updatedAt: d.hrd_updated_at || new Date()
         };
       });
 
       res.json({ data: formattedDoctors, total, page, pageSize });
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/high-risk-doctors", "fetch high-risk doctors");
+    }
+  });
+
+  // GET /api/fwa/high-risk/doctors/:doctorId - Get a single high-risk doctor by ID
+  app.get("/api/fwa/high-risk/doctors/:doctorId", async (req, res) => {
+    try {
+      const { doctorId } = req.params;
+      const { db } = await import("../db");
+      const { sql } = await import("drizzle-orm");
+
+      const result = await db.execute(sql`
+        SELECT d.*
+        FROM fwa_high_risk_doctors d
+        WHERE d.doctor_id = ${doctorId}
+        LIMIT 1
+      `);
+
+      if (!result.rows || result.rows.length === 0) {
+        return res.status(404).json({ error: "Doctor not found" });
+      }
+
+      const row = result.rows[0] as any;
+      res.json({
+        doctorId: row.doctor_id,
+        doctorName: row.doctor_name,
+        specialty: row.specialty,
+        organization: row.organization,
+        riskScore: parseFloat(row.risk_score) || 0,
+        riskLevel: row.risk_level,
+        totalClaims: row.total_claims,
+        flaggedClaims: row.flagged_claims,
+        totalExposure: row.total_exposure,
+        avgClaimAmount: row.avg_claim_amount,
+        reasons: row.reasons,
+      });
+    } catch (error) {
+      handleRouteError(res, error, "/api/fwa/high-risk/doctors/:doctorId", "fetch single high-risk doctor");
+    }
+  });
+
+  // POST /api/fwa/high-risk-entities/recompute - Manually trigger the
+  // background high-risk entity recompute job. Accepts an optional ingestion
+  // jobId or an explicit time window (since/until). Returns the recompute
+  // summary (counts, durations, errors) so the caller can confirm the run.
+  app.post("/api/fwa/high-risk-entities/recompute", async (req, res) => {
+    try {
+      const dateField = z.preprocess((val) => {
+        if (val === undefined || val === null || val === "") return undefined;
+        if (val instanceof Date) return val;
+        if (typeof val === "string" || typeof val === "number") {
+          const d = new Date(val);
+          return Number.isNaN(d.getTime()) ? val : d;
+        }
+        return val;
+      }, z.date({ invalid_type_error: "Expected a valid ISO date string" }).optional());
+
+      const bodySchema = z.object({
+        jobId: z.string().min(1).optional(),
+        since: dateField,
+        until: dateField,
+        batchId: z.string().min(1).optional(),
+      }).strict();
+      const parsed = bodySchema.safeParse(req.body ?? {});
+      if (!parsed.success) {
+        return res.status(400).json({
+          error: "Invalid request body",
+          details: parsed.error.errors,
+        });
+      }
+      const { recomputeHighRiskEntities } = await import("../services/high-risk-recompute-service");
+      const result = await recomputeHighRiskEntities({
+        jobId: parsed.data.jobId ?? null,
+        since: parsed.data.since ?? null,
+        until: parsed.data.until ?? null,
+        batchId: parsed.data.batchId ?? null,
+      });
+      res.json(result);
+    } catch (error) {
+      handleRouteError(res, error, "/api/fwa/high-risk-entities/recompute", "trigger high-risk recompute");
+    }
+  });
+
+  // GET /api/fwa/high-risk-payers - List high-risk payers (insurers) with
+  // pagination, sorting, and filters. Mirrors the high-risk providers
+  // endpoint shape so the frontend can render payers in the same table.
+  app.get("/api/fwa/high-risk-payers", async (req, res) => {
+    try {
+      const { db } = await import("../db");
+      const { sql } = await import("drizzle-orm");
+
+      const page = Math.max(1, parseInt(String(req.query.page ?? "1")) || 1);
+      const pageSize = Math.min(200, Math.max(1, parseInt(String(req.query.pageSize ?? "20")) || 20));
+      const offset = (page - 1) * pageSize;
+      const sortBy = String(req.query.sortBy ?? "riskScore");
+      const sortOrder = String(req.query.sortOrder ?? "desc").toUpperCase() === "ASC" ? "ASC" : "DESC";
+      const search = req.query.search ? String(req.query.search) : null;
+      const riskFilter = req.query.risk ? String(req.query.risk) : null;
+      const minScore = req.query.minScore ? parseFloat(String(req.query.minScore)) : null;
+      const maxScore = req.query.maxScore ? parseFloat(String(req.query.maxScore)) : null;
+
+      const conditions: string[] = [];
+      if (search) {
+        conditions.push(`(hrp.payer_id ILIKE '%${search.replace(/'/g, "''")}%' OR hrp.payer_name ILIKE '%${search.replace(/'/g, "''")}%')`);
+      }
+      if (minScore !== null && Number.isFinite(minScore)) {
+        conditions.push(`hrp.risk_score::numeric >= ${minScore}`);
+      }
+      if (maxScore !== null && Number.isFinite(maxScore)) {
+        conditions.push(`hrp.risk_score::numeric <= ${maxScore}`);
+      }
+      if (riskFilter && ["critical", "high", "medium", "low"].includes(riskFilter)) {
+        conditions.push(`hrp.risk_level = '${riskFilter}'`);
+      }
+      const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+
+      const sortColumns: Record<string, string> = {
+        riskScore: "hrp.risk_score::numeric",
+        totalExposure: "hrp.total_exposure::numeric",
+        totalClaims: "hrp.total_claims",
+        payerId: "hrp.payer_id",
+        denialRate: "hrp.denial_rate::numeric",
+      };
+      const orderColumn = sortColumns[sortBy] || "hrp.risk_score::numeric";
+
+      const countResult = await db.execute(sql.raw(`
+        SELECT COUNT(*) as total FROM fwa_high_risk_payers hrp ${whereClause}
+      `));
+      const total = parseInt((countResult.rows[0] as any)?.total) || 0;
+
+      const payers = await db.execute(sql.raw(`
+        SELECT
+          hrp.payer_id,
+          hrp.payer_name,
+          hrp.payer_type,
+          hrp.risk_score::numeric as risk_score,
+          hrp.risk_level,
+          hrp.total_claims,
+          hrp.flagged_claims,
+          hrp.denial_rate::numeric as denial_rate,
+          hrp.avg_claim_amount::numeric as avg_claim_amount,
+          hrp.total_amount::numeric as total_amount,
+          hrp.total_exposure::numeric as total_exposure,
+          hrp.unique_providers,
+          hrp.unique_members,
+          hrp.fwa_case_count,
+          hrp.reasons,
+          hrp.last_flagged_date,
+          hrp.updated_at as hrp_updated_at,
+          ptl.trend_direction as timeline_trend_direction,
+          ptl.risk_score_change as timeline_risk_score_change
+        FROM fwa_high_risk_payers hrp
+        LEFT JOIN LATERAL (
+          SELECT trend_direction, risk_score_change
+          FROM fwa_payer_timeline
+          WHERE payer_id = hrp.payer_id
+          ORDER BY batch_date DESC NULLS LAST, created_at DESC NULLS LAST
+          LIMIT 1
+        ) ptl ON TRUE
+        ${whereClause}
+        ORDER BY ${orderColumn} ${sortOrder} NULLS LAST
+        LIMIT ${pageSize} OFFSET ${offset}
+      `));
+
+      const safeNum = (val: any, fallback: number = 0): number => {
+        if (val === null || val === undefined) return fallback;
+        const num = parseFloat(String(val));
+        return Number.isFinite(num) ? num : fallback;
+      };
+
+      const formattedPayers = payers.rows.map((p: any, idx: number) => {
+        const payerId = p.payer_id?.trim() || `PAY-${idx + 1}`;
+        const riskScore = safeNum(p.risk_score, 0);
+        const totalClaims = parseInt(p.total_claims) || 0;
+        const flaggedClaims = parseInt(p.flagged_claims) || 0;
+        const totalAmount = safeNum(p.total_amount, 0);
+        const totalExposure = safeNum(p.total_exposure, 0);
+
+        let reasons: string[] = [];
+        if (p.reasons && Array.isArray(p.reasons) && p.reasons.length > 0) {
+          reasons = p.reasons;
+        } else if (p.reasons && typeof p.reasons === 'string') {
+          try { reasons = JSON.parse(p.reasons); } catch { reasons = [p.reasons]; }
+        }
+        if (reasons.length === 0) {
+          if (flaggedClaims > 0) reasons.push(`${flaggedClaims} flagged claims across network`);
+          if (riskScore >= 40) reasons.push(`Aggregate risk score: ${riskScore.toFixed(1)}%`);
+          if (totalAmount > 1000000) reasons.push(`High exposure: SAR ${totalAmount.toLocaleString()}`);
+          if (reasons.length === 0) reasons.push("Routine monitoring - no significant concerns");
+        }
+
+        const trend = deriveRiskTrend(p.timeline_trend_direction, p.timeline_risk_score_change, null);
+
+        return {
+          id: `py${offset + idx + 1}`,
+          payerId,
+          payerName: p.payer_name || payerId,
+          payerType: p.payer_type || "insurer",
+          riskScore: riskScore.toFixed(2),
+          riskLevel: p.risk_level || "low",
+          totalClaims,
+          flaggedClaims,
+          denialRate: p.denial_rate ? safeNum(p.denial_rate, 0).toFixed(2) : "0.00",
+          avgClaimAmount: safeNum(p.avg_claim_amount, 0).toFixed(2),
+          totalAmount: totalAmount.toFixed(2),
+          totalExposure: totalExposure.toFixed(2),
+          uniqueProviders: parseInt(p.unique_providers) || 0,
+          uniqueMembers: parseInt(p.unique_members) || 0,
+          fwaCaseCount: parseInt(p.fwa_case_count) || 0,
+          reasons,
+          lastFlaggedDate: p.last_flagged_date || null,
+          trendDirection: trend.direction,
+          riskScoreChange: trend.scoreChange,
+          trendSource: trend.source,
+          lastUpdatedAt: p.hrp_updated_at || null,
+          createdAt: new Date(),
+          updatedAt: p.hrp_updated_at || new Date(),
+        };
+      });
+
+      res.json({ data: formattedPayers, total, page, pageSize });
+    } catch (error) {
+      handleRouteError(res, error, "/api/fwa/high-risk-payers", "fetch high-risk payers");
+    }
+  });
+
+  // GET /api/fwa/high-risk/payers/:payerId - Get a single high-risk payer by ID
+  app.get("/api/fwa/high-risk/payers/:payerId", async (req, res) => {
+    try {
+      const { payerId } = req.params;
+      const { db } = await import("../db");
+      const { sql } = await import("drizzle-orm");
+      const result = await db.execute(sql`
+        SELECT * FROM fwa_high_risk_payers WHERE payer_id = ${payerId} LIMIT 1
+      `);
+      const row = result.rows[0] as any;
+      if (!row) return res.status(404).json({ error: "Payer not found" });
+      res.json({
+        payerId: row.payer_id,
+        payerName: row.payer_name,
+        payerType: row.payer_type,
+        riskScore: row.risk_score,
+        riskLevel: row.risk_level,
+        totalClaims: row.total_claims,
+        flaggedClaims: row.flagged_claims,
+        denialRate: row.denial_rate,
+        avgClaimAmount: row.avg_claim_amount,
+        totalAmount: row.total_amount,
+        totalExposure: row.total_exposure,
+        uniqueProviders: row.unique_providers,
+        uniqueMembers: row.unique_members,
+        fwaCaseCount: row.fwa_case_count,
+        reasons: row.reasons,
+        lastFlaggedDate: row.last_flagged_date,
+        lastUpdatedAt: row.updated_at,
+      });
+    } catch (error) {
+      handleRouteError(res, error, "/api/fwa/high-risk/payers/:payerId", "fetch single high-risk payer");
     }
   });
 
@@ -4435,20 +4979,42 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
   app.post("/api/fwa/chi/online-listening/fetch", async (req, res) => {
     try {
       const validatedData = newsSearchSchema.parse(req.body);
-      const { keywords } = validatedData;
+      const { keywords: clientKeywords, providers: clientProviders = [] } = validatedData;
 
       const newsApiKey = process.env.NEWS_API_KEY;
       if (!newsApiKey) {
         return res.status(400).json({
-          error: "NewsAPI key not configured",
-          message: "Please add NEWS_API_KEY to your environment secrets"
+          error: "NEWS_API_KEY_MISSING",
+          message: "NewsAPI key is not configured. Add NEWS_API_KEY to environment secrets.",
+          mentions: [],
+          totalFetched: 0,
+          totalRelevant: 0,
+          saved: 0,
+          duplicates: 0,
+          sourcesTried: [],
         });
       }
 
-      console.log("[Online Listening] Fetching news with keywords:", keywords);
+      // Combine client keywords + provider names into the actual search queries
+      const userQueries: string[] = Array.from(new Set([
+        ...clientKeywords.map(k => k.trim()).filter(Boolean),
+        ...clientProviders.map(p => p.trim()).filter(Boolean),
+      ])).slice(0, 10);
+
+      // Default Arabic Saudi healthcare query list (only used if client sent nothing)
+      const defaultQueries = [
+        "السعودية مستشفى",
+        "صحة السعودية",
+        "تأمين صحي سعودي",
+        "وزارة الصحة السعودية",
+      ];
+      const queries = userQueries.length > 0 ? userQueries : defaultQueries;
+
+      console.log("[Online Listening] Fetching news with queries:", queries);
 
       const results: any[] = [];
-      const errors: string[] = [];
+      const sourcesTried: Array<{ source: string; query?: string; status: string; count: number; httpCode?: number }> = [];
+      let hardFailure: { code: string; message: string; httpCode: number } | null = null;
 
       // Get enabled sources from database configuration
       const enabledConfigs = await storage.getListeningSourceConfigs();
@@ -4468,37 +5034,135 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         alwatan: "alwatan.com.sa",
       };
 
-      // Build domains list from enabled sources only
-      const saudiDomains = enabledSources
+      // Build list of enabled Saudi domains for site-scoped RSS fallback
+      const enabledSaudiDomains = enabledSources
         .map(s => sourceDomainMap[s.sourceId])
-        .filter(d => d)
-        .join(",");
+        .filter(d => d);
 
-      console.log("[Online Listening] Using domains:", saudiDomains || "none configured");
+      console.log("[Online Listening] Enabled Saudi domains:", enabledSaudiDomains.join(",") || "none configured");
 
-      // 1. Search Arabic healthcare news (broader search - NewsAPI has limited Saudi coverage)
-      const arabicKeywords = ["السعودية مستشفى", "صحة السعودية", "تأمين صحي سعودي", "وزارة الصحة السعودية"];
-      for (const keyword of arabicKeywords.slice(0, 3)) {
+      // Helper: classify a NewsAPI HTTP error as missing/invalid/rate-limited
+      const classifyNewsApiError = (status: number): { code: string; message: string } | null => {
+        if (status === 401) return { code: "NEWS_API_KEY_INVALID", message: "NewsAPI rejected the API key as invalid (HTTP 401). Verify NEWS_API_KEY in environment secrets." };
+        if (status === 429) return { code: "NEWS_API_RATE_LIMITED", message: "NewsAPI rate limit reached (HTTP 429). Try again later or upgrade your NewsAPI plan." };
+        if (status === 426) return { code: "NEWS_API_UPGRADE_REQUIRED", message: "NewsAPI requires a paid plan for this query (HTTP 426). The free tier has limited capabilities." };
+        return null;
+      };
+
+      // Helper: parse Google News RSS XML into article shape
+      const parseGoogleNewsRss = (xml: string, searchKeyword: string): any[] => {
+        const items: any[] = [];
+        const itemRegex = /<item>([\s\S]*?)<\/item>/g;
+        const stripCdata = (s: string) => s.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1").trim();
+        const getTag = (block: string, tag: string): string => {
+          const m = new RegExp(`<${tag}[^>]*>([\\s\\S]*?)</${tag}>`).exec(block);
+          return m ? stripCdata(m[1]) : "";
+        };
+        let match;
+        while ((match = itemRegex.exec(xml)) !== null) {
+          const block = match[1];
+          const title = getTag(block, "title");
+          const link = getTag(block, "link");
+          const pubDate = getTag(block, "pubDate");
+          const description = getTag(block, "description").replace(/<[^>]+>/g, "").trim();
+          const sourceMatch = /<source[^>]*>([\s\S]*?)<\/source>/.exec(block);
+          const sourceName = sourceMatch ? stripCdata(sourceMatch[1]) : "Google News";
+          if (!title || !link) continue;
+          let publishedIso = new Date().toISOString();
+          if (pubDate) {
+            const d = new Date(pubDate);
+            if (!isNaN(d.getTime())) publishedIso = d.toISOString();
+          }
+          items.push({
+            title,
+            url: link,
+            description,
+            publishedAt: publishedIso,
+            author: null,
+            source: { name: sourceName },
+            searchKeyword,
+            sourceType: "google_news_rss",
+            userRequested: true,
+          });
+        }
+        return items;
+      };
+
+      // 1. NewsAPI /everything — one call per user query (Arabic-first; English implicitly via 'q')
+      for (const query of queries) {
+        if (hardFailure) break;
         try {
-          const url = `https://newsapi.org/v2/everything?q=${encodeURIComponent(keyword)}&language=ar&sortBy=publishedAt&pageSize=15`;
-          console.log("[Online Listening] Fetching Arabic news for:", keyword);
+          const url = `https://newsapi.org/v2/everything?q=${encodeURIComponent(query)}&sortBy=publishedAt&pageSize=15`;
           const response = await fetch(url, { headers: { "X-Api-Key": newsApiKey } });
           if (response.ok) {
             const data = await response.json();
-            console.log(`[Online Listening] Arabic results for "${keyword}": ${data.totalResults} total`);
-            if (data.articles?.length > 0) {
-              results.push(...data.articles.map((a: any) => ({ ...a, searchKeyword: keyword, sourceType: 'arabic_news' })));
+            const count = data.articles?.length || 0;
+            console.log(`[Online Listening] NewsAPI /everything "${query}": ${count} articles (totalResults=${data.totalResults})`);
+            sourcesTried.push({ source: "newsapi_everything", query, status: "ok", count, httpCode: 200 });
+            if (count > 0) {
+              results.push(...data.articles.map((a: any) => ({
+                ...a,
+                searchKeyword: query,
+                sourceType: "newsapi_everything",
+                userRequested: true,
+              })));
             }
           } else {
             const errText = await response.text();
-            console.log(`[Online Listening] API error for "${keyword}":`, errText);
+            console.log(`[Online Listening] NewsAPI /everything "${query}" HTTP ${response.status}: ${errText.substring(0, 200)}`);
+            sourcesTried.push({ source: "newsapi_everything", query, status: "error", count: 0, httpCode: response.status });
+            const classified = classifyNewsApiError(response.status);
+            if (classified) hardFailure = { ...classified, httpCode: response.status };
           }
         } catch (e: any) {
-          console.log("[Online Listening] Fetch error:", e.message);
+          console.log(`[Online Listening] NewsAPI /everything "${query}" fetch error:`, e.message);
+          sourcesTried.push({ source: "newsapi_everything", query, status: "error", count: 0 });
         }
       }
 
-      // 2. Saudi Arabia top headlines (general - health category often empty)
+      // Short-circuit on auth/quota failures so the user gets a specific error
+      if (hardFailure) {
+        return res.status(502).json({
+          error: hardFailure.code,
+          message: hardFailure.message,
+          mentions: [],
+          totalFetched: 0,
+          totalRelevant: 0,
+          saved: 0,
+          duplicates: 0,
+          sourcesTried,
+        });
+      }
+
+      // 2. Google News RSS fallback — broader Saudi coverage, including site-scoped queries on enabled domains
+      for (const query of queries) {
+        const siteScope = enabledSaudiDomains.length > 0
+          ? ` (${enabledSaudiDomains.map(d => `site:${d}`).join(" OR ")})`
+          : "";
+        const rssQ = `${query}${siteScope}`;
+        try {
+          const rssUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(rssQ)}&hl=ar&gl=SA&ceid=SA:ar`;
+          const rssResponse = await fetch(rssUrl, {
+            headers: { "User-Agent": "Mozilla/5.0 TachyHealth/1.0" },
+          });
+          if (rssResponse.ok) {
+            const xml = await rssResponse.text();
+            const items = parseGoogleNewsRss(xml, query);
+            console.log(`[Online Listening] Google News RSS "${query}": ${items.length} items`);
+            sourcesTried.push({ source: "google_news_rss", query, status: "ok", count: items.length, httpCode: 200 });
+            results.push(...items);
+          } else {
+            const errBody = await rssResponse.text().catch(() => "");
+            console.log(`[Online Listening] Google News RSS "${query}" HTTP ${rssResponse.status}: ${errBody.substring(0, 200)}`);
+            sourcesTried.push({ source: "google_news_rss", query, status: "error", count: 0, httpCode: rssResponse.status });
+          }
+        } catch (e: any) {
+          console.log(`[Online Listening] Google News RSS "${query}" fetch error:`, e.message);
+          sourcesTried.push({ source: "google_news_rss", query, status: "error", count: 0 });
+        }
+      }
+
+      // 3. NewsAPI /top-headlines (broad SA fallback, strict-filtered below)
       try {
         const saResponse = await fetch(
           `https://newsapi.org/v2/top-headlines?country=sa&pageSize=20`,
@@ -4506,36 +5170,52 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         );
         if (saResponse.ok) {
           const saData = await saResponse.json();
-          console.log(`[Online Listening] SA headlines: ${saData.totalResults} total`);
-          // Filter for healthcare-related content
-          const healthArticles = (saData.articles || []).filter((a: any) => {
-            const text = `${a.title || ""} ${a.description || ""}`.toLowerCase();
-            return text.includes("صح") || text.includes("مستشف") || text.includes("طب") ||
-              text.includes("health") || text.includes("hospital") || text.includes("medical");
-          });
-          results.push(...healthArticles.map((a: any) => ({ ...a, sourceType: 'sa_headlines' })));
+          const count = saData.articles?.length || 0;
+          console.log(`[Online Listening] NewsAPI /top-headlines SA: ${count} articles`);
+          sourcesTried.push({ source: "newsapi_top_headlines_sa", status: "ok", count, httpCode: 200 });
+          results.push(...(saData.articles || []).map((a: any) => ({
+            ...a,
+            sourceType: "newsapi_top_headlines_sa",
+            userRequested: false,
+          })));
+        } else {
+          const errText = await saResponse.text();
+          console.log(`[Online Listening] NewsAPI /top-headlines SA HTTP ${saResponse.status}: ${errText.substring(0, 200)}`);
+          sourcesTried.push({ source: "newsapi_top_headlines_sa", status: "error", count: 0, httpCode: saResponse.status });
+          const classified = classifyNewsApiError(saResponse.status);
+          if (classified) hardFailure = { ...classified, httpCode: saResponse.status };
         }
       } catch (e: any) {
-        console.log("[Online Listening] SA headlines error:", e.message);
+        console.log("[Online Listening] NewsAPI /top-headlines SA fetch error:", e.message);
+        sourcesTried.push({ source: "newsapi_top_headlines_sa", status: "error", count: 0 });
       }
 
-      // 3. English healthcare news about Saudi Arabia
-      try {
-        const enUrl = `https://newsapi.org/v2/everything?q=${encodeURIComponent("Saudi Arabia healthcare OR Saudi hospital OR Saudi health ministry")}&language=en&sortBy=publishedAt&pageSize=10`;
-        const enResponse = await fetch(enUrl, { headers: { "X-Api-Key": newsApiKey } });
-        if (enResponse.ok) {
-          const enData = await enResponse.json();
-          console.log(`[Online Listening] English SA healthcare results: ${enData.totalResults} total`);
-          if (enData.articles?.length > 0) {
-            results.push(...enData.articles.map((a: any) => ({ ...a, sourceType: 'english_news' })));
-          }
-        }
-      } catch (e: any) {
-        console.log("[Online Listening] English news error:", e.message);
+      // Re-check hard failure after top-headlines (if /everything skipped due to no queries, this could be the first NewsAPI call)
+      if (hardFailure) {
+        return res.status(502).json({
+          error: hardFailure.code,
+          message: hardFailure.message,
+          mentions: [],
+          totalFetched: 0,
+          totalRelevant: 0,
+          saved: 0,
+          duplicates: 0,
+          sourcesTried,
+        });
       }
 
-      // Deduplicate by URL and filter for Saudi healthcare relevance
+      const totalFetched = results.length;
+
+      // Dedup by URL
       const seenUrls = new Set<string>();
+      const deduped = results.filter(a => {
+        if (!a?.url || seenUrls.has(a.url)) return false;
+        seenUrls.add(a.url);
+        return true;
+      });
+
+      // Strict double-regex relevance filter — applied ONLY to broad fallback results.
+      // Anything that came from a query the user explicitly requested (or a Saudi-domain RSS feed) is treated as relevant.
       const saudiHealthKeywords = [
         /سعود|saudi|riyadh|الرياض|جدة|jeddah|مكة|mecca|المملكة/i,
         /مستشفى|hospital|صحة|health|طبي|medical|علاج|treatment/i,
@@ -4543,31 +5223,31 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         /الحبيب|المواساة|السعودي الألماني|دله|فيصل التخصصي/i,
       ];
 
-      const articles = results.filter(article => {
-        if (!article?.url || seenUrls.has(article.url)) return false;
-        seenUrls.add(article.url);
-
-        // Check if article is relevant to Saudi healthcare
+      const articles = deduped.filter(article => {
+        if (article.userRequested) return true;
         const content = `${article.title || ""} ${article.description || ""}`.toLowerCase();
         const isSaudiRelated = saudiHealthKeywords[0].test(content);
         const isHealthRelated = saudiHealthKeywords[1].test(content) || saudiHealthKeywords[2].test(content);
         const isProviderMentioned = saudiHealthKeywords[3].test(content);
-
-        // Must be Saudi-related AND (health-related OR mention a provider)
         const isRelevant = isSaudiRelated && (isHealthRelated || isProviderMentioned);
         if (!isRelevant) {
-          console.log(`[Online Listening] Filtering out irrelevant: ${article.title?.substring(0, 40)}...`);
+          console.log(`[Online Listening] Filtering out irrelevant fallback: ${article.title?.substring(0, 40)}...`);
         }
         return isRelevant;
       });
 
-      console.log(`[Online Listening] Total relevant articles after dedup: ${articles.length}`);
+      const totalRelevant = articles.length;
+      console.log(`[Online Listening] totalFetched=${totalFetched}, deduped=${deduped.length}, totalRelevant=${totalRelevant}`);
 
       if (articles.length === 0) {
         return res.json({
           mentions: [],
-          message: "No articles found for the given keywords",
-          errors: errors.length > 0 ? errors : undefined
+          totalFetched,
+          totalRelevant: 0,
+          saved: 0,
+          duplicates: 0,
+          message: "No Saudi healthcare articles were found in the upstream sources for the given keywords.",
+          sourcesTried,
         });
       }
 
@@ -4600,10 +5280,36 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         return null;
       };
 
-      // Store articles directly first (fast) - no waiting for AI analysis
-      const savedMentions = [];
+      // Cap at 30 articles to save
+      const toConsider = articles.slice(0, 30);
 
-      for (const article of articles.slice(0, 30)) { // Save up to 30 articles
+      // Pre-check duplicates by URL against the DB so we can return honest counts
+      let existingUrls = new Set<string>();
+      try {
+        const candidateUrls = toConsider.map(a => a.url).filter(Boolean) as string[];
+        if (candidateUrls.length > 0) {
+          const { db } = await import("../db");
+          const { onlineListeningMentions } = await import("@shared/schema");
+          const { inArray } = await import("drizzle-orm");
+          const rows = await db
+            .select({ url: onlineListeningMentions.sourceUrl })
+            .from(onlineListeningMentions)
+            .where(inArray(onlineListeningMentions.sourceUrl, candidateUrls));
+          existingUrls = new Set(rows.map(r => r.url).filter((u): u is string => !!u));
+        }
+      } catch (e: any) {
+        console.log("[Online Listening] Duplicate pre-check error (continuing):", e.message);
+      }
+
+      // Store articles directly first (fast) - no waiting for AI analysis
+      const savedMentions: any[] = [];
+      let duplicates = 0;
+
+      for (const article of toConsider) {
+        if (article.url && existingUrls.has(article.url)) {
+          duplicates++;
+          continue;
+        }
         try {
           // Detect if content contains Arabic characters
           const content = article.title + (article.description ? ` - ${article.description}` : "");
@@ -4636,6 +5342,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
               language: detectedLanguage,
               searchKeyword: article.searchKeyword,
               providerNameEn: extractedProvider?.nameEn || null,
+              upstreamSourceType: article.sourceType,
               needsAnalysis: true
             },
             createdAt: new Date()
@@ -4644,22 +5351,27 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           // Save to database
           await storage.createOnlineListeningMention(mention);
           savedMentions.push(mention);
+          if (article.url) existingUrls.add(article.url);
           console.log(`[Online Listening] Saved article [${detectedLanguage}]: ${article.title?.substring(0, 50)}...`);
         } catch (saveError: any) {
-          // Skip duplicates silently
-          if (!saveError.message?.includes('duplicate')) {
+          if (saveError.message?.toLowerCase().includes('duplicate') || saveError.code === '23505') {
+            duplicates++;
+          } else {
             console.error("Error saving article:", saveError.message);
           }
         }
       }
 
-      console.log(`[Online Listening] Saved ${savedMentions.length} new mentions to database`);
+      console.log(`[Online Listening] Saved=${savedMentions.length} duplicates=${duplicates} totalFetched=${totalFetched} totalRelevant=${totalRelevant}`);
 
       res.json({
         mentions: savedMentions,
-        totalFetched: articles.length,
+        totalFetched,
+        totalRelevant,
         saved: savedMentions.length,
-        message: `Found ${articles.length} articles, saved ${savedMentions.length} new mentions`
+        duplicates,
+        message: `Fetched ${totalFetched} articles, saved ${savedMentions.length} new mentions (${duplicates} duplicates)`,
+        sourcesTried,
       });
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/chi/online-listening/fetch", "fetch online mentions");
@@ -5580,7 +6292,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
   app.post("/api/fwa/chi/circulars/:id/send", async (req, res) => {
     try {
       // Admin authorization required for sending mass emails
-      const authToken = req.headers["x-admin-token"] || req.query.token;
+      const authToken = req.headers["x-admin-token"];
       const expectedToken = process.env.ADMIN_SEED_TOKEN;
 
       if (!expectedToken || authToken !== expectedToken) {
@@ -5652,7 +6364,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
   app.post("/api/fwa/chi/test-email", async (req, res) => {
     try {
       // Admin authorization required
-      const authToken = req.headers["x-admin-token"] || req.query.token;
+      const authToken = req.headers["x-admin-token"];
       const expectedToken = process.env.ADMIN_SEED_TOKEN;
 
       if (!expectedToken || authToken !== expectedToken) {
@@ -8003,7 +8715,12 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       const claimsResult = await db.select().from(claims).limit(100);
 
       if (claimsResult.length === 0) {
-        return res.status(404).json({ error: "No claims found in database" });
+        const synthetic = buildSyntheticSampleClaim();
+        return res.json({
+          ...synthetic,
+          claimServices: generateMockServices(synthetic),
+          isSyntheticSample: true,
+        });
       }
 
       const randomClaim = claimsResult[Math.floor(Math.random() * claimsResult.length)];
@@ -8014,7 +8731,8 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
 
       res.json({
         ...randomClaim,
-        claimServices: servicesResult.length > 0 ? servicesResult : generateMockServices(randomClaim)
+        claimServices: servicesResult.length > 0 ? servicesResult : generateMockServices(randomClaim),
+        isSyntheticSample: false,
       });
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/random-claim", "get random claim");
@@ -9255,7 +9973,7 @@ Available claim fields: amount, procedureCode, diagnosisCode, providerId, patien
 Respond ONLY with valid JSON, no markdown or explanations.`;
 
       const response = await withRetry(async () => {
-        return openai.chat.completions.create({
+        return getOpenAI().chat.completions.create({
           model: "gpt-4o",
           messages: [
             { role: "system", content: systemPrompt },
@@ -9372,7 +10090,7 @@ Respond with JSON:
 }`;
 
       const response = await withRetry(async () => {
-        return openai.chat.completions.create({
+        return getOpenAI().chat.completions.create({
           model: "gpt-4o",
           messages: [
             { role: "system", content: systemPrompt },
@@ -9419,14 +10137,83 @@ Respond with JSON:
   });
 
   // ── Flagged Claims (DB-backed Saudi healthcare claims) ──
-  app.get("/api/fwa/flagged-claims", async (_req, res) => {
+  // Optional entity filters: ?provider=PRV-XX&patient=(PAT-XX|MBR-XX)&doctor=DOC-XX
+  // Optional date window:    ?from=ISO&to=ISO  (carried from the Saudi heatmap)
+  // Note: claims.memberId stores MBR-* IDs. When the UI sends a PAT-* ID we
+  // resolve it to its memberId via fwa_high_risk_patients before filtering.
+  // Doctor DOC-* IDs map directly to claims.practitionerId.
+  app.get("/api/fwa/flagged-claims", async (req, res) => {
     try {
-      const flaggedClaims = await db
-        .select()
+      const { fwaHighRiskPatients } = await import("@shared/schema");
+
+      const provider = typeof req.query.provider === "string" ? req.query.provider.trim() : "";
+      const patientRaw = typeof req.query.patient === "string" ? req.query.patient.trim() : "";
+      const doctor = typeof req.query.doctor === "string" ? req.query.doctor.trim() : "";
+
+      // Optional date-window filter (ISO strings) so the table stays in sync
+      // with the same window selected on the Saudi heatmap.
+      const fromParam = typeof req.query.from === "string" ? req.query.from : null;
+      const toParam = typeof req.query.to === "string" ? req.query.to : null;
+      const fromDate = fromParam ? new Date(fromParam) : null;
+      const toDate = toParam ? new Date(toParam) : null;
+      const fromValid = fromDate && !isNaN(fromDate.getTime()) ? fromDate : null;
+      const toValid = toDate && !isNaN(toDate.getTime()) ? toDate : null;
+
+      // Resolve PAT-* → MBR-* via the high-risk patients table.
+      let patientMemberId = "";
+      let patientUnresolved = false;
+      if (patientRaw) {
+        if (patientRaw.startsWith("PAT-")) {
+          const lookup = await db
+            .select({ memberId: fwaHighRiskPatients.memberId })
+            .from(fwaHighRiskPatients)
+            .where(eq(fwaHighRiskPatients.patientId, patientRaw))
+            .limit(1);
+          if (lookup[0]?.memberId) {
+            patientMemberId = lookup[0].memberId;
+          } else {
+            patientUnresolved = true;
+          }
+        } else {
+          // Assume already a member ID (MBR-*)
+          patientMemberId = patientRaw;
+        }
+      }
+
+      // If a PAT-* was passed but we couldn't resolve it, return empty rather
+      // than silently dropping the filter.
+      if (patientUnresolved) {
+        return res.json({
+          claims: [],
+          summary: { totalFlagged: 0, totalExposure: 0, confirmedFraud: 0, underReview: 0 },
+          filters: { provider: provider || null, patient: patientRaw, doctor: doctor || null },
+        });
+      }
+
+      const conditions = [eq(claims.flagged, true)];
+      if (provider) conditions.push(eq(claims.providerId, provider));
+      if (patientMemberId) conditions.push(eq(claims.memberId, patientMemberId));
+      if (doctor) conditions.push(eq(claims.practitionerId, doctor));
+      if (fromValid) conditions.push(gte(claims.registrationDate, fromValid));
+      if (toValid) conditions.push(lte(claims.registrationDate, toValid));
+
+      // Join providers so each claim carries the region code (e.g. "RIY"),
+      // which the dashboard uses to drill down from the Saudi heatmap.
+      const rows = await db
+        .select({
+          claim: claims,
+          providerRegion: providers.region,
+        })
         .from(claims)
-        .where(eq(claims.flagged, true))
+        .leftJoin(providers, eq(claims.providerId, providers.id))
+        .where(conditions.length === 1 ? conditions[0] : and(...conditions))
         .orderBy(desc(claims.registrationDate))
-        .limit(100);
+        .limit(500);
+
+      const flaggedClaims = rows.map((r) => ({
+        ...r.claim,
+        providerRegion: r.providerRegion ?? null,
+      }));
 
       const summary = {
         totalFlagged: flaggedClaims.length,
@@ -9435,10 +10222,216 @@ Respond with JSON:
         underReview: flaggedClaims.filter(c => c.status === "under_review").length,
       };
 
-      res.json({ claims: flaggedClaims, summary });
+      res.json({
+        claims: flaggedClaims,
+        summary,
+        filters: { provider: provider || null, patient: patientRaw || null, doctor: doctor || null },
+      });
     } catch (error) {
       console.error("[FWA] Error fetching flagged claims:", error);
       res.status(500).json({ error: "Failed to fetch flagged claims" });
+    }
+  });
+
+  // ── Flagged Claims Export (CSV / Excel) ──
+  // Mirrors the filters supported by /api/fwa/flagged-claims plus the in-page
+  // text/category/status/region filters so the downloaded file matches what
+  // the investigator currently sees on /fwa/flagged-claims.
+  // Query params: format=csv|xlsx, provider, patient, doctor, region,
+  //               search, category, status
+  app.get("/api/fwa/flagged-claims/export", async (req, res) => {
+    try {
+      const { and } = await import("drizzle-orm");
+      const { fwaHighRiskPatients } = await import("@shared/schema");
+      const XLSX = await import("xlsx");
+
+      const provider = typeof req.query.provider === "string" ? req.query.provider.trim() : "";
+      const patientRaw = typeof req.query.patient === "string" ? req.query.patient.trim() : "";
+      const doctor = typeof req.query.doctor === "string" ? req.query.doctor.trim() : "";
+      const region = typeof req.query.region === "string" ? req.query.region.trim().toUpperCase() : "";
+      const search = typeof req.query.search === "string" ? req.query.search.trim().toLowerCase() : "";
+      const category = typeof req.query.category === "string" ? req.query.category.trim() : "";
+      const status = typeof req.query.status === "string" ? req.query.status.trim() : "";
+      const format = (typeof req.query.format === "string" ? req.query.format : "csv").toLowerCase() === "xlsx"
+        ? "xlsx"
+        : "csv";
+
+      // Resolve PAT-* → MBR-* via the high-risk patients table.
+      let patientMemberId = "";
+      let patientUnresolved = false;
+      if (patientRaw) {
+        if (patientRaw.startsWith("PAT-")) {
+          const lookup = await db
+            .select({ memberId: fwaHighRiskPatients.memberId })
+            .from(fwaHighRiskPatients)
+            .where(eq(fwaHighRiskPatients.patientId, patientRaw))
+            .limit(1);
+          if (lookup[0]?.memberId) {
+            patientMemberId = lookup[0].memberId;
+          } else {
+            patientUnresolved = true;
+          }
+        } else {
+          patientMemberId = patientRaw;
+        }
+      }
+
+      let flaggedRows: Array<{ claim: typeof claims.$inferSelect; providerRegion: string | null }> = [];
+      if (!patientUnresolved) {
+        const conditions = [eq(claims.flagged, true)];
+        if (provider) conditions.push(eq(claims.providerId, provider));
+        if (patientMemberId) conditions.push(eq(claims.memberId, patientMemberId));
+        if (doctor) conditions.push(eq(claims.practitionerId, doctor));
+
+        flaggedRows = await db
+          .select({
+            claim: claims,
+            providerRegion: providers.region,
+          })
+          .from(claims)
+          .leftJoin(providers, eq(claims.providerId, providers.id))
+          .where(conditions.length === 1 ? conditions[0] : and(...conditions))
+          .orderBy(desc(claims.registrationDate))
+          .limit(500);
+      }
+
+      // Apply the same in-page filters the UI uses, so the file matches the
+      // table on screen exactly. The page's text search inspects fields that
+      // aren't on the claims_v2 row (providerName/patientName/icd are merged
+      // in client-side from joined sources), so for parity we only match the
+      // fields actually present on the claim record here.
+      const filtered = flaggedRows
+        .map((r) => ({ ...r.claim, providerRegion: r.providerRegion ?? null }))
+        .filter((c) => {
+          if (region && (c.providerRegion || "").toUpperCase() !== region) return false;
+          if (category && c.category !== category) return false;
+          if (status && c.status !== status) return false;
+          if (search) {
+            // Mirror the page's effective search behavior. The UI also lists
+            // providerName/patientName/icd in its haystack but those fields
+            // are not present on claims_v2 rows (always undefined), so they
+            // never contribute. Matching only claimNumber + flagReason keeps
+            // the export and the on-screen table in lockstep.
+            const hay = [c.claimNumber, c.flagReason]
+              .filter((v): v is string => typeof v === "string" && v.length > 0)
+              .join(" ")
+              .toLowerCase();
+            if (!hay.includes(search)) return false;
+          }
+          return true;
+        });
+
+      const formatDate = (d: Date | string | null | undefined): string => {
+        if (!d) return "";
+        const dt = typeof d === "string" ? new Date(d) : d;
+        if (isNaN(dt.getTime())) return "";
+        return dt.toISOString().slice(0, 10);
+      };
+
+      const sheetRows = filtered.map((c) => ({
+        "Claim Number": c.claimNumber,
+        "Registration Date": formatDate(c.registrationDate),
+        "Service Date": formatDate(c.serviceDate),
+        "Amount (SAR)": Number(c.amount || 0),
+        "Primary Diagnosis": c.primaryDiagnosis ?? "",
+        "ICD Codes": Array.isArray(c.icdCodes) ? c.icdCodes.join("; ") : "",
+        "CPT Codes": Array.isArray(c.cptCodes) ? c.cptCodes.join("; ") : "",
+        "Status": c.status ?? "",
+        "Category": c.category ?? "",
+        "Flag Reason": c.flagReason ?? "",
+        "Risk Score": Math.round(Number(c.outlierScore || 0) * 100),
+        "Provider ID": c.providerId,
+        "Provider Region": c.providerRegion ?? "",
+        "Specialty": c.specialty ?? "",
+        "City": c.city ?? "",
+        "Member ID": c.memberId,
+        "Practitioner ID": c.practitionerId ?? "",
+        "Policy ID": c.policyId ?? "",
+        "Hospital": c.hospital ?? "",
+        "Claim Type": c.claimType,
+      }));
+
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.json_to_sheet(sheetRows);
+      XLSX.utils.book_append_sheet(wb, ws, "Flagged Claims");
+
+      const stamp = new Date().toISOString().slice(0, 10);
+      const baseName = `flagged-claims-${stamp}`;
+
+      if (format === "xlsx") {
+        const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+        res.setHeader(
+          "Content-Type",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        );
+        res.setHeader("Content-Disposition", `attachment; filename="${baseName}.xlsx"`);
+        res.send(Buffer.from(buf));
+      } else {
+        const csv = XLSX.utils.sheet_to_csv(ws);
+        res.setHeader("Content-Type", "text/csv; charset=utf-8");
+        res.setHeader("Content-Disposition", `attachment; filename="${baseName}.csv"`);
+        // BOM so Excel opens UTF-8 (Arabic names) correctly.
+        res.send("\uFEFF" + csv);
+      }
+    } catch (error) {
+      console.error("[FWA] Error exporting flagged claims:", error);
+      res.status(500).json({ error: "Failed to export flagged claims" });
+    }
+  });
+
+  // ── Single Claim Detail (claim header + service lines) ──
+  // Looks up by either the synthetic id (CLM-...) or the claim_number — both
+  // are unique. Returns claim, services, and lookup names for provider/patient/doctor.
+  app.get("/api/fwa/flagged-claims/:idOrNumber", async (req, res) => {
+    try {
+      const { or } = await import("drizzle-orm");
+      const {
+        fwaClaimServices,
+        members,
+        providers,
+        practitioners,
+      } = await import("@shared/schema");
+
+      const idOrNumber = req.params.idOrNumber;
+
+      const claimRows = await db
+        .select()
+        .from(claims)
+        .where(or(eq(claims.id, idOrNumber), eq(claims.claimNumber, idOrNumber)))
+        .limit(1);
+      if (claimRows.length === 0) {
+        return res.status(404).json({ error: "Claim not found" });
+      }
+      const claim = claimRows[0];
+
+      // Service lines for this claim (ordered by line number)
+      const services = await db
+        .select()
+        .from(fwaClaimServices)
+        .where(eq(fwaClaimServices.claimId, claim.id))
+        .orderBy(fwaClaimServices.lineNumber);
+
+      // Resolve human names for provider / patient / practitioner
+      const [providerRow] = claim.providerId
+        ? await db.select({ name: providers.name }).from(providers).where(eq(providers.id, claim.providerId)).limit(1)
+        : [undefined];
+      const [memberRow] = claim.memberId
+        ? await db.select({ name: members.name }).from(members).where(eq(members.id, claim.memberId)).limit(1)
+        : [undefined];
+      const [practitionerRow] = claim.practitionerId
+        ? await db.select({ name: practitioners.name }).from(practitioners).where(eq(practitioners.id, claim.practitionerId)).limit(1)
+        : [undefined];
+
+      res.json({
+        claim,
+        services,
+        providerName: providerRow?.name ?? null,
+        patientName: memberRow?.name ?? null,
+        practitionerName: practitionerRow?.name ?? null,
+      });
+    } catch (error) {
+      console.error("[FWA] Error fetching claim detail:", error);
+      res.status(500).json({ error: "Failed to fetch claim detail" });
     }
   });
 
@@ -9610,7 +10603,7 @@ Respond with JSON:
   // ---------------------------------------------------------------------------
   // GET /api/fwa/heatmap — Regional FWA risk data for the Saudi Arabia heatmap
   // ---------------------------------------------------------------------------
-  app.get("/api/fwa/heatmap", async (_req, res) => {
+  app.get("/api/fwa/heatmap", async (req, res) => {
     try {
       const REGION_CODE_MAP: Record<string, string> = {
         "Riyadh": "RIY",
@@ -9627,6 +10620,16 @@ Respond with JSON:
         "Al Jouf": "JOF",
         "Northern Borders": "NBR",
       };
+
+      // Optional date-window filter (ISO strings) so investigators can ask
+      // "what changed in the last 7/30/90 days?" instead of seeing the
+      // all-time aggregate.
+      const fromParam = typeof req.query.from === "string" ? req.query.from : null;
+      const toParam = typeof req.query.to === "string" ? req.query.to : null;
+      const fromDate = fromParam ? new Date(fromParam) : null;
+      const toDate = toParam ? new Date(toParam) : null;
+      const fromValid = fromDate && !isNaN(fromDate.getTime()) ? fromDate : null;
+      const toValid = toDate && !isNaN(toDate.getTime()) ? toDate : null;
 
       // Use provider detection results (populated by auto-seeder) instead of
       // fwaHighRiskProviders (only populated by manual seed script).
@@ -9649,14 +10652,27 @@ Respond with JSON:
         CODE_TO_NAME[code] = name;
       }
 
-      // Get detection results with risk levels
-      const detections = await db
+      // Get detection results with risk levels — optionally restricted to the
+      // requested date window using analyzedAt.
+      const dateConditions = [];
+      if (fromValid) {
+        dateConditions.push(gte(fwaProviderDetectionResults.analyzedAt, fromValid));
+      }
+      if (toValid) {
+        dateConditions.push(lte(fwaProviderDetectionResults.analyzedAt, toValid));
+      }
+      const detectionQuery = db
         .select({
           providerId: fwaProviderDetectionResults.providerId,
           riskLevel: fwaProviderDetectionResults.riskLevel,
           compositeScore: fwaProviderDetectionResults.compositeScore,
         })
         .from(fwaProviderDetectionResults);
+      const detections = dateConditions.length > 0
+        ? await detectionQuery.where(
+            dateConditions.length === 1 ? dateConditions[0] : and(...dateConditions),
+          )
+        : await detectionQuery;
 
       // Distribute detections across regions deterministically
       const regionNames = regionDist
@@ -10086,6 +11102,81 @@ Respond with JSON:
       handleRouteError(res, error, "/api/fwa/phase-a3/actions", "get phase A3 actions");
     }
   });
+}
+
+function buildSyntheticSampleClaim(): any {
+  const now = new Date();
+  const claimNumber = `CLM-SAMPLE-${now.getFullYear()}-${Math.floor(Math.random() * 100000)
+    .toString()
+    .padStart(5, "0")}`;
+  return {
+    id: `sample-${Date.now()}`,
+    claimNumber,
+    policyId: null,
+    memberId: `MEM-SAMPLE-${Math.floor(Math.random() * 10000)}`,
+    providerId: "PRV-KSA-001",
+    practitionerId: null,
+    claimType: "Inpatient",
+    registrationDate: now,
+    serviceDate: now,
+    amount: "50000",
+    approvedAmount: null,
+    denialReason: null,
+    status: "pending",
+    primaryDiagnosis: "I21.0",
+    icdCodes: ["I21.0", "I10", "E11.9"],
+    cptCodes: ["92928", "93458", "99223"],
+    description:
+      "Synthetic sample claim used because the claims table is currently empty in this environment.",
+    specialty: "Cardiology",
+    hospital: "King Faisal Specialist Hospital",
+    hasSurgery: true,
+    surgeryFee: "45000",
+    hasIcu: true,
+    lengthOfStay: 3,
+    preAuthRef: `PA-${Math.floor(Math.random() * 100000)}`,
+    category: "Surgery",
+    insurerId: null,
+    facilityId: null,
+    isNewborn: false,
+    isChronic: true,
+    isPreExisting: false,
+    isPreAuthorized: true,
+    isMaternity: false,
+    groupNo: null,
+    city: "Riyadh",
+    providerType: "hospital",
+    coverageRelationship: null,
+    providerShare: null,
+    onAdmissionDiagnosis: ["I21.0"],
+    dischargeDiagnosis: ["I21.0"],
+    policyEffectiveDate: "2024-01-01",
+    policyExpiryDate: "2024-12-31",
+    mdgfClaimNumber: null,
+    hcpCode: null,
+    occurrenceDate: null,
+    source: "synthetic-sample",
+    resubmission: false,
+    dischargeDisposition: null,
+    admissionDate: now,
+    dischargeDate: null,
+    preAuthStatus: "approved",
+    preAuthIcd10s: ["I21.0"],
+    netPayableAmount: null,
+    patientShare: null,
+    aiStatus: null,
+    validationResults: null,
+    flagged: false,
+    flagReason: null,
+    outlierScore: null,
+    createdAt: now,
+    updatedAt: now,
+    patientId: `PAT-KSA-${Math.floor(Math.random() * 10000)}`,
+    policyNumber: "POL-KSA-GOV-BASIC-2024-004",
+    batchNumber: `BATCH-${Math.floor(Math.random() * 1000)}`,
+    procedureCode: "92928",
+    diagnosisCodes: ["I10", "E11.9"],
+  };
 }
 
 function generateMockServices(claim: any): any[] {

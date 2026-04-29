@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, decimal, integer, timestamp, boolean, jsonb, pgEnum, serial, vector, index, date } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, decimal, integer, timestamp, boolean, jsonb, pgEnum, serial, vector, index, date, unique } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -37,6 +37,19 @@ export const insertUserSchema = createInsertSchema(users).pick({
 
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
+
+// Session table for connect-pg-simple. Declared here so drizzle-kit push --force
+// (run by scripts/post-merge.sh after every task merge) recognizes it as a
+// known table and does NOT drop it. Shape MUST match what connect-pg-simple
+// expects and the raw-SQL fallback in server/db-indexes.ts. Not used by
+// application code, so no Zod insert/select types are exported.
+export const userSessions = pgTable("user_sessions", {
+  sid: varchar("sid").primaryKey().notNull(),
+  sess: jsonb("sess").notNull(),
+  expire: timestamp("expire", { precision: 6 }).notNull(),
+}, (table) => [
+  index("IDX_user_sessions_expire").on(table.expire),
+]);
 
 // Audit log for HIPAA compliance
 export const auditLogs = pgTable("audit_logs", {
@@ -198,7 +211,7 @@ export const preAuthSignals = pgTable("pre_auth_signals", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   claimId: varchar("claim_id").references(() => preAuthClaims.id).notNull(),
   detector: preAuthSignalTypeEnum("detector").notNull(),
-  signalId: text("signal_id").notNull(),
+  signalId: text("signal_id").notNull().unique(),
   riskFlag: boolean("risk_flag").default(false),
   severity: preAuthSeverityEnum("severity"),
   confidence: decimal("confidence", { precision: 5, scale: 4 }),
@@ -226,7 +239,7 @@ export type PreAuthSignal = typeof preAuthSignals.$inferSelect;
 // Pre-Auth Decisions table
 export const preAuthDecisions = pgTable("pre_auth_decisions", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  claimId: varchar("claim_id").references(() => preAuthClaims.id).notNull(),
+  claimId: varchar("claim_id").references(() => preAuthClaims.id).notNull().unique(),
   aggregatedScore: decimal("aggregated_score", { precision: 5, scale: 4 }),
   riskLevel: preAuthSeverityEnum("risk_level"),
   hasHardStop: boolean("has_hard_stop").default(false),
@@ -512,7 +525,9 @@ export const fwaAnalysisFindings = pgTable("fwa_analysis_findings", {
   severity: fwaPriorityEnum("severity").notNull(),
   evidence: jsonb("evidence").$type<Record<string, any>>().default({}),
   createdAt: timestamp("created_at").defaultNow()
-});
+}, (t) => ({
+  caseIdFindingTypeSourceUnique: unique("fwa_analysis_findings_case_type_source_unique").on(t.caseId, t.findingType, t.source),
+}));
 
 export const insertFwaAnalysisFindingSchema = createInsertSchema(fwaAnalysisFindings).omit({
   id: true,
@@ -532,7 +547,9 @@ export const fwaCategories = pgTable("fwa_categories", {
   severityScore: decimal("severity_score", { precision: 5, scale: 2 }).notNull(),
   recommendedActions: text("recommended_actions").array().default([]),
   createdAt: timestamp("created_at").defaultNow()
-});
+}, (t) => ({
+  caseIdCategoryTypeUnique: unique("fwa_categories_case_category_unique").on(t.caseId, t.categoryType),
+}));
 
 export const insertFwaCategorySchema = createInsertSchema(fwaCategories).omit({
   id: true,
@@ -556,7 +573,9 @@ export const fwaActions = pgTable("fwa_actions", {
   executedBy: text("executed_by").notNull(),
   executedAt: timestamp("executed_at"),
   createdAt: timestamp("created_at").defaultNow()
-});
+}, (t) => ({
+  caseIdActionTypeTrackUnique: unique("fwa_actions_case_type_track_unique").on(t.caseId, t.actionType, t.actionTrack),
+}));
 
 export const insertFwaActionSchema = createInsertSchema(fwaActions).omit({
   id: true,
@@ -1163,6 +1182,15 @@ export const insertFwaHighRiskProviderSchema = createInsertSchema(fwaHighRiskPro
 export type InsertFwaHighRiskProvider = z.infer<typeof insertFwaHighRiskProviderSchema>;
 export type FwaHighRiskProvider = typeof fwaHighRiskProviders.$inferSelect;
 
+export type FwaRiskTrendDirection = "up" | "down" | "stable";
+export type FwaRiskTrendSource = "timeline" | "fallback" | "none";
+export interface FwaRiskTrendFields {
+  trendDirection: FwaRiskTrendDirection | null;
+  riskScoreChange: number | null;
+  trendSource: FwaRiskTrendSource;
+}
+export type FwaHighRiskProviderWithTrend = FwaHighRiskProvider & FwaRiskTrendFields;
+
 // FWA High-Risk Patients
 export const fwaHighRiskPatients = pgTable("fwa_high_risk_patients", {
   id: text("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -1189,6 +1217,7 @@ export const insertFwaHighRiskPatientSchema = createInsertSchema(fwaHighRiskPati
 });
 export type InsertFwaHighRiskPatient = z.infer<typeof insertFwaHighRiskPatientSchema>;
 export type FwaHighRiskPatient = typeof fwaHighRiskPatients.$inferSelect;
+export type FwaHighRiskPatientWithTrend = FwaHighRiskPatient & FwaRiskTrendFields;
 
 // FWA High-Risk Doctors
 export const fwaHighRiskDoctors = pgTable("fwa_high_risk_doctors", {
@@ -1218,6 +1247,41 @@ export const insertFwaHighRiskDoctorSchema = createInsertSchema(fwaHighRiskDocto
 });
 export type InsertFwaHighRiskDoctor = z.infer<typeof insertFwaHighRiskDoctorSchema>;
 export type FwaHighRiskDoctor = typeof fwaHighRiskDoctors.$inferSelect;
+export type FwaHighRiskDoctorWithTrend = FwaHighRiskDoctor & FwaRiskTrendFields;
+
+// FWA High-Risk Payers
+// Mirrors the provider/doctor/patient high-risk model for payers (insurers).
+// Populated by the high-risk recompute job after every ingestion.
+export const fwaHighRiskPayers = pgTable("fwa_high_risk_payers", {
+  id: text("id").primaryKey().default(sql`gen_random_uuid()`),
+  payerId: text("payer_id").notNull().unique(),
+  payerName: text("payer_name").notNull(),
+  payerType: text("payer_type"),
+  riskScore: decimal("risk_score", { precision: 5, scale: 2 }).notNull(),
+  riskLevel: reconciliationRiskLevelEnum("risk_level").default("medium"),
+  totalClaims: integer("total_claims").default(0),
+  flaggedClaims: integer("flagged_claims").default(0),
+  denialRate: decimal("denial_rate", { precision: 5, scale: 2 }),
+  avgClaimAmount: decimal("avg_claim_amount", { precision: 12, scale: 2 }),
+  totalAmount: decimal("total_amount", { precision: 12, scale: 2 }),
+  totalExposure: decimal("total_exposure", { precision: 12, scale: 2 }),
+  uniqueProviders: integer("unique_providers").default(0),
+  uniqueMembers: integer("unique_members").default(0),
+  fwaCaseCount: integer("fwa_case_count").default(0),
+  reasons: text("reasons").array().default([]),
+  lastFlaggedDate: timestamp("last_flagged_date"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow()
+});
+
+export const insertFwaHighRiskPayerSchema = createInsertSchema(fwaHighRiskPayers).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true
+});
+export type InsertFwaHighRiskPayer = z.infer<typeof insertFwaHighRiskPayerSchema>;
+export type FwaHighRiskPayer = typeof fwaHighRiskPayers.$inferSelect;
+export type FwaHighRiskPayerWithTrend = FwaHighRiskPayer & FwaRiskTrendFields;
 
 // FWA Work Queue Claims
 export const fwaWorkQueueClaims = pgTable("fwa_work_queue_claims", {
@@ -1325,6 +1389,24 @@ export const fwaClaimServices = pgTable("fwa_claim_services", {
   denialReason: text("denial_reason"),
   modifiers: text("modifiers").array().default([]),
   diagnosisPointers: text("diagnosis_pointers").array().default([]),
+  // CHI sample-aligned fields
+  activityType: text("activity_type"),
+  internalServiceCode: text("internal_service_code"),
+  providerServiceDescription: text("provider_service_description"),
+  specialtyCode: text("specialty_code"),
+  practitionerId: text("practitioner_id"),
+  patientShareAmount: decimal("patient_share_amount", { precision: 12, scale: 2 }),
+  payerShareAmount: decimal("payer_share_amount", { precision: 12, scale: 2 }),
+  netAmount: decimal("net_amount", { precision: 12, scale: 2 }),
+  validationEngines: jsonb("validation_engines").$type<Array<{
+    engine: string;
+    status: string;
+    qaListedServiceCode?: string;
+    qaThServiceDesc?: string;
+    qaTachyActivityType?: string;
+    aiStatus?: string;
+    notes?: string;
+  }>>().default([]),
   createdAt: timestamp("created_at").defaultNow()
 });
 
@@ -3226,7 +3308,7 @@ export type FwaDetectionConfig = typeof fwaDetectionConfigs.$inferSelect;
 // Detection Results - Stores scores from each detection method per claim
 export const fwaDetectionResults = pgTable("fwa_detection_results", {
   id: text("id").primaryKey().default(sql`gen_random_uuid()`),
-  claimId: text("claim_id").notNull(),
+  claimId: text("claim_id").notNull().unique(),
   caseId: text("case_id"),
   providerId: text("provider_id"),
   patientId: text("patient_id"),
@@ -3278,7 +3360,16 @@ export const fwaDetectionResults = pgTable("fwa_detection_results", {
     recommendation: string;
     confidence: number;
   }>().default({ contextualAnalysis: "", similarCases: [], knowledgeBaseMatches: [], recommendation: "", confidence: 0 }),
-  
+
+  semanticScore: decimal("semantic_score", { precision: 5, scale: 2 }),
+  semanticFindings: jsonb("semantic_findings").$type<{
+    diagnosisChapter: string;
+    serviceCategory: string;
+    alignmentScore: number;
+    mismatchReasons: string[];
+    flaggedTerms: string[];
+  }>().default({ diagnosisChapter: "", serviceCategory: "", alignmentScore: 0, mismatchReasons: [], flaggedTerms: [] }),
+
   // Overall assessment
   primaryDetectionMethod: fwaDetectionMethodEnum("primary_detection_method"), // Which method contributed most
   detectionSummary: text("detection_summary"),
@@ -3559,6 +3650,23 @@ export const claims = pgTable("claims_v2", {
   flagged: boolean("flagged").default(false),
   flagReason: text("flag_reason"),
   outlierScore: decimal("outlier_score", { precision: 5, scale: 4 }),
+  // CHI sample-aligned fields
+  providerLicense: text("provider_license"),
+  secondaryDiagnosis: text("secondary_diagnosis"),
+  otherDiagnosis: text("other_diagnosis"),
+  serviceDuration: integer("service_duration"),
+  encounterStart: timestamp("encounter_start"),
+  encounterEnd: timestamp("encounter_end"),
+  // Multi-engine validation results (CHI / Tachy AI / second AI engine)
+  validationEngines: jsonb("validation_engines").$type<Array<{
+    engine: string;            // e.g. "CHI", "Tachy-AI", "AI-2"
+    status: string;            // "Accepted" | "Rejected" | "Partial Approved"
+    validationResults?: string;
+    aiStatus?: string;
+    aiValidationResults?: string;
+    llmDiagnosisDesc?: string;
+    icd10Descriptions?: string;
+  }>>().default([]),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -4927,6 +5035,91 @@ export const insertFwaPatientTimelineSchema = createInsertSchema(fwaPatientTimel
 export type InsertFwaPatientTimeline = z.infer<typeof insertFwaPatientTimelineSchema>;
 export type FwaPatientTimeline = typeof fwaPatientTimeline.$inferSelect;
 
+// Payer Entity Detection Results
+// Mirrors fwaProviderDetectionResults so the high-risk recompute can persist
+// per-payer aggregated detection scores and evidence.
+export const fwaPayerDetectionResults = pgTable("fwa_payer_detection_results", {
+  id: text("id").primaryKey().default(sql`gen_random_uuid()`),
+  payerId: text("payer_id").notNull(),
+  batchId: text("batch_id"),
+  runId: text("run_id"),
+
+  compositeScore: decimal("composite_score", { precision: 5, scale: 2 }).notNull(),
+  riskLevel: entityRiskLevelEnum("risk_level").default("low"),
+
+  ruleEngineScore: decimal("rule_engine_score", { precision: 5, scale: 2 }),
+  statisticalScore: decimal("statistical_score", { precision: 5, scale: 2 }),
+  unsupervisedScore: decimal("unsupervised_score", { precision: 5, scale: 2 }),
+  ragLlmScore: decimal("rag_llm_score", { precision: 5, scale: 2 }),
+  semanticScore: decimal("semantic_score", { precision: 5, scale: 2 }),
+
+  // Aggregated metrics for the payer derived from claims_v2 + detection results
+  aggregatedMetrics: jsonb("aggregated_metrics").$type<{
+    totalClaims: number;
+    totalAmount: number;
+    avgClaimAmount: number;
+    uniqueProviders: number;
+    uniqueMembers: number;
+    flaggedClaimsCount: number;
+    flaggedClaimsPercent: number;
+    highRiskClaimsCount: number;
+    deniedClaimsCount: number;
+    denialRate: number;
+  }>(),
+
+  primaryDetectionMethod: fwaDetectionMethodEnum("primary_detection_method"),
+  detectionSummary: text("detection_summary"),
+  recommendedAction: text("recommended_action"),
+
+  analyzedAt: timestamp("analyzed_at").defaultNow(),
+  processingTimeMs: integer("processing_time_ms"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow()
+});
+
+export const insertFwaPayerDetectionResultSchema = createInsertSchema(fwaPayerDetectionResults).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true
+});
+export type InsertFwaPayerDetectionResult = z.infer<typeof insertFwaPayerDetectionResultSchema>;
+export type FwaPayerDetectionResult = typeof fwaPayerDetectionResults.$inferSelect;
+
+// Payer Timeline - mirrors fwaProviderTimeline; one row per (payerId, batchId)
+export const fwaPayerTimeline = pgTable("fwa_payer_timeline", {
+  id: text("id").primaryKey().default(sql`gen_random_uuid()`),
+  payerId: text("payer_id").notNull(),
+  batchId: text("batch_id").notNull(),
+  batchDate: timestamp("batch_date"),
+
+  claimCount: integer("claim_count").default(0),
+  totalAmount: decimal("total_amount", { precision: 15, scale: 2 }).default("0"),
+  avgClaimAmount: decimal("avg_claim_amount", { precision: 10, scale: 2 }),
+  uniqueProviders: integer("unique_providers").default(0),
+  uniqueMembers: integer("unique_members").default(0),
+
+  flaggedClaimsCount: integer("flagged_claims_count").default(0),
+  highRiskClaimsCount: integer("high_risk_claims_count").default(0),
+  avgRiskScore: decimal("avg_risk_score", { precision: 5, scale: 2 }),
+
+  claimCountChange: decimal("claim_count_change", { precision: 8, scale: 2 }),
+  amountChange: decimal("amount_change", { precision: 8, scale: 2 }),
+  riskScoreChange: decimal("risk_score_change", { precision: 5, scale: 2 }),
+  trendDirection: text("trend_direction"),
+
+  topProcedures: jsonb("top_procedures").$type<Array<{ code: string; count: number; amount: number }>>().default([]),
+  topDiagnoses: jsonb("top_diagnoses").$type<Array<{ code: string; count: number }>>().default([]),
+
+  createdAt: timestamp("created_at").defaultNow()
+});
+
+export const insertFwaPayerTimelineSchema = createInsertSchema(fwaPayerTimeline).omit({
+  id: true,
+  createdAt: true
+});
+export type InsertFwaPayerTimeline = z.infer<typeof insertFwaPayerTimelineSchema>;
+export type FwaPayerTimeline = typeof fwaPayerTimeline.$inferSelect;
+
 // Detection Thresholds Configuration
 // Stores configurable thresholds for the 4-method detection engine
 export const detectionThresholds = pgTable("detection_thresholds", {
@@ -5197,7 +5390,9 @@ export const providerScorecards = pgTable("provider_scorecards", {
   peerRankPercentile: integer("peer_rank_percentile"),
   trend: text("trend"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+}, (t) => ({
+  providerMonthUnique: unique("provider_scorecards_provider_month_unique").on(t.providerCode, t.month),
+}));
 
 export type ProviderScorecard = typeof providerScorecards.$inferSelect;
 export type InsertProviderScorecard = typeof providerScorecards.$inferInsert;
@@ -5205,7 +5400,7 @@ export type InsertProviderScorecard = typeof providerScorecards.$inferInsert;
 export const providerRejections = pgTable("provider_rejections", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   providerCode: varchar("provider_code", { length: 20 }).notNull(),
-  claimRef: varchar("claim_ref", { length: 30 }).notNull(),
+  claimRef: varchar("claim_ref", { length: 30 }).notNull().unique(),
   patientMrn: varchar("patient_mrn", { length: 20 }),
   icdCode: varchar("icd_code", { length: 15 }).notNull(),
   icdDescription: text("icd_description"),
@@ -5235,7 +5430,9 @@ export const providerDrgAssessments = pgTable("provider_drg_assessments", {
   peerCompletionRate: decimal("peer_completion_rate", { precision: 5, scale: 2 }),
   sortOrder: integer("sort_order").default(0),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+}, (t) => ({
+  providerCriteriaUnique: unique("provider_drg_assessments_provider_criteria_unique").on(t.providerCode, t.criteriaName),
+}));
 
 export type ProviderDrgAssessment = typeof providerDrgAssessments.$inferSelect;
 export type InsertProviderDrgAssessment = typeof providerDrgAssessments.$inferInsert;
@@ -5295,7 +5492,9 @@ export const employerPolicies = pgTable("employer_policies", {
   dependentsCount: integer("dependents_count").default(0),
   renewalDaysRemaining: integer("renewal_days_remaining"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+}, (t) => ({
+  employerInsurerUnique: unique("employer_policies_employer_insurer_unique").on(t.employerCode, t.insurerCode),
+}));
 
 export type EmployerPolicy = typeof employerPolicies.$inferSelect;
 export type InsertEmployerPolicy = typeof employerPolicies.$inferInsert;
@@ -5326,6 +5525,7 @@ export type InsertWorkforceHealthProfile = typeof workforceHealthProfiles.$infer
 
 export const employerViolations = pgTable("employer_violations", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  violationRef: varchar("violation_ref", { length: 30 }).unique(),
   employerCode: varchar("employer_code", { length: 20 }).notNull(),
   violationType: text("violation_type").notNull(),
   description: text("description"),
@@ -5403,7 +5603,9 @@ export const memberCoverage = pgTable("member_coverage", {
   noteAr: text("note_ar"),
   sortOrder: integer("sort_order").default(0),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+}, (t) => ({
+  memberBenefitUnique: unique("member_coverage_member_benefit_unique").on(t.memberCode, t.benefitCategory),
+}));
 
 export type MemberCoverage = typeof memberCoverage.$inferSelect;
 export type InsertMemberCoverage = typeof memberCoverage.$inferInsert;
@@ -5462,3 +5664,139 @@ export const fwaEntityInvestigationNotes = pgTable("fwa_entity_investigation_not
 export type FwaEntityInvestigationNote = typeof fwaEntityInvestigationNotes.$inferSelect;
 export type InsertFwaEntityInvestigationNote = typeof fwaEntityInvestigationNotes.$inferInsert;
 export const insertFwaEntityInvestigationNoteSchema = createInsertSchema(fwaEntityInvestigationNotes);
+
+// ============================================================================
+// FWA Smart Batch Ingestion Pipeline (Task #41)
+// ============================================================================
+
+export const fwaIngestJobStatusEnum = pgEnum("fwa_ingest_job_status", [
+  "queued",
+  "parsing",
+  "mapping",
+  "awaiting_confirmation",
+  "normalizing",
+  "persisting",
+  "detecting",
+  "completed",
+  "failed",
+  "cancelled",
+]);
+
+export const fwaIngestJobs = pgTable("fwa_ingest_jobs", {
+  id: text("id").primaryKey().default(sql`gen_random_uuid()`),
+  jobName: text("job_name"),
+  sourceType: text("source_type").notNull(),
+  sourceFileName: text("source_file_name"),
+  sourceFilePath: text("source_file_path"),
+  sourceFormat: text("source_format").notNull(),
+  sourceSizeBytes: integer("source_size_bytes"),
+  skipRagLlm: boolean("skip_rag_llm").notNull().default(false),
+  // When true, the worker pauses at status="awaiting_confirmation" after
+  // auto-mapping until POST /api/fwa/ingest/:jobId/confirm is called. This
+  // intent must be persisted so that crash/restart recovery
+  // (recoverInFlightJobs) honors the two-phase contract instead of
+  // continuing straight through to detection on resume.
+  requireConfirmation: boolean("require_confirmation").notNull().default(false),
+  status: fwaIngestJobStatusEnum("status").notNull().default("queued"),
+  progressPct: integer("progress_pct").notNull().default(0),
+  currentStage: text("current_stage").notNull().default("queued"),
+  detectedHeaders: text("detected_headers").array(),
+  columnMapping: jsonb("column_mapping").$type<{
+    confidence: number;
+    overallConfidence?: number;
+    mappings: Array<{
+      schemaField: string;
+      sourceColumn: string | null;
+      confidence: number;
+      reason?: string;
+      required: boolean;
+      needsConfirmation?: boolean;
+    }>;
+    unmappedColumns?: string[];
+    warnings?: string[];
+    autoMapped: boolean;
+    overrides?: Record<string, string>;
+  }>(),
+  totalRows: integer("total_rows").notNull().default(0),
+  rowsParsed: integer("rows_parsed").notNull().default(0),
+  rowsNormalized: integer("rows_normalized").notNull().default(0),
+  rowsPersisted: integer("rows_persisted").notNull().default(0),
+  rowsDetected: integer("rows_detected").notNull().default(0),
+  rowsSkipped: integer("rows_skipped").notNull().default(0),
+  rowsFailed: integer("rows_failed").notNull().default(0),
+  summary: jsonb("summary").$type<{
+    durationMs?: number;
+    riskBuckets?: { critical: number; high: number; medium: number; low: number };
+    enginesRun?: { rule: number; statistical: number; unsupervised: number; ragLlm: number; semantic: number };
+    enginesSkipped?: { rule: number; statistical: number; unsupervised: number; ragLlm: number; semantic: number };
+    avgCompositeScore?: number;
+    topReasons?: string[];
+  }>(),
+  errorLog: jsonb("error_log").$type<Array<{
+    rowIndex?: number;
+    stage: string;
+    message: string;
+    at: string;
+  }>>().default([]),
+  errorMessage: text("error_message"),
+  createdBy: text("created_by"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  startedAt: timestamp("started_at"),
+  completedAt: timestamp("completed_at"),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const insertFwaIngestJobSchema = createInsertSchema(fwaIngestJobs).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertFwaIngestJob = z.infer<typeof insertFwaIngestJobSchema>;
+export type FwaIngestJob = typeof fwaIngestJobs.$inferSelect;
+
+export const fwaIngestRows = pgTable("fwa_ingest_rows", {
+  id: text("id").primaryKey().default(sql`gen_random_uuid()`),
+  jobId: text("job_id").references(() => fwaIngestJobs.id, { onDelete: "cascade" }).notNull(),
+  rowIndex: integer("row_index").notNull(),
+  rawData: jsonb("raw_data").$type<Record<string, any>>(),
+  normalizedClaim: jsonb("normalized_claim").$type<Record<string, any>>(),
+  claimNumber: text("claim_number"),
+  claimId: text("claim_id"),
+  status: text("status").notNull().default("pending"),
+  missingFields: text("missing_fields").array(),
+  ineligibleEngines: jsonb("ineligible_engines").$type<Array<{ engine: string; reason: string }>>().default([]),
+  detection: jsonb("detection").$type<{
+    compositeScore?: number;
+    compositeRiskLevel?: string;
+    ruleEngineScore?: number;
+    statisticalScore?: number;
+    unsupervisedScore?: number;
+    ragLlmScore?: number;
+    semanticScore?: number;
+    semanticFindings?: {
+      diagnosisChapter: string;
+      serviceCategory: string;
+      alignmentScore: number;
+      mismatchReasons: string[];
+      flaggedTerms: string[];
+    } | null;
+    primaryDetectionMethod?: string;
+    detectionSummary?: string;
+    recommendedAction?: string;
+    enginesRun?: string[];
+    enginesSkipped?: Array<{ engine: string; reason: string }>;
+  }>(),
+  errorMessage: text("error_message"),
+  processingTimeMs: integer("processing_time_ms"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const insertFwaIngestRowSchema = createInsertSchema(fwaIngestRows).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertFwaIngestRow = z.infer<typeof insertFwaIngestRowSchema>;
+export type FwaIngestRow = typeof fwaIngestRows.$inferSelect;
+

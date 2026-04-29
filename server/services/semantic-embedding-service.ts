@@ -7,7 +7,14 @@ import * as fs from "fs";
 import * as path from "path";
 import { EMBEDDING_MODEL, EMBEDDING_DIMENSIONS } from "./embedding-config";
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+let _openai: OpenAI | null = null;
+function getOpenAI(): OpenAI {
+  if (!_openai) {
+    if (!process.env.OPENAI_API_KEY) throw new Error("OPENAI_API_KEY is not set");
+    _openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  }
+  return _openai;
+}
 
 const BATCH_SIZE = 100;
 
@@ -110,7 +117,7 @@ export function enrichIcd10Text(record: Icd10Record): string {
 }
 
 async function generateEmbedding(text: string): Promise<number[]> {
-  const response = await openai.embeddings.create({
+  const response = await getOpenAI().embeddings.create({
     model: EMBEDDING_MODEL,
     input: text.replace(/\n/g, ' ').substring(0, 8000),
   });
@@ -119,7 +126,7 @@ async function generateEmbedding(text: string): Promise<number[]> {
 
 async function generateEmbeddingsBatch(texts: string[]): Promise<number[][]> {
   const cleanedTexts = texts.map(t => t.replace(/\n/g, ' ').substring(0, 8000));
-  const response = await openai.embeddings.create({
+  const response = await getOpenAI().embeddings.create({
     model: EMBEDDING_MODEL,
     input: cleanedTexts,
   });

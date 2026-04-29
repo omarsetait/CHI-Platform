@@ -36,14 +36,24 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "npm run dev"
+args = "NODE_ENV=development tsx server/index.ts"
 waitForPort = 5000
+
+[workflows.workflow.metadata]
+outputType = "webview"
 
 [agent]
 integrations = ["javascript_mem_db:1.0.0", "javascript_openai_ai_integrations:1.0.0", "javascript_database:1.0.0", "javascript_xai:1.0.0", "javascript_openrouter_ai_integrations:2.0.0", "resend:1.0.0"]
+expertMode = true
 
 [userenv]
 
 [userenv.shared]
 Google_API_Key = "AIzaSyBf9BW7UbGzTFhNGi0-Tz4lrX1TUFIsBbg"
 DISABLE_SEEDER = "true"
+
+[userenv.development]
+
+[postMerge]
+path = "scripts/post-merge.sh"
+timeoutMs = 20000

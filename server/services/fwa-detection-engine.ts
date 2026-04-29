@@ -15,7 +15,14 @@ import { FeatureEngineeringService } from "./ml-unsupervised-engine";
 // Singleton feature engineering service for claim enrichment
 const featureEngineering = new FeatureEngineeringService();
 
-const openai = new OpenAI();
+let _openai: OpenAI | null = null;
+function getOpenAI(): OpenAI {
+  if (!_openai) {
+    if (!process.env.OPENAI_API_KEY) throw new Error("OPENAI_API_KEY is not set");
+    _openai = new OpenAI();
+  }
+  return _openai;
+}
 
 // 5. SEMANTIC VALIDATION
 // ICD-10/CPT procedure-diagnosis matching using vector embeddings
@@ -1507,7 +1514,7 @@ export async function runRagLlmDetection(claim: ClaimData): Promise<{
     if (knowledgeBaseMatches.length > 0) {
       const analysisPrompt = buildAnalysisPrompt(claim, ragResults);
       
-      const response = await openai.chat.completions.create({
+      const response = await getOpenAI().chat.completions.create({
         model: "gpt-4o",
         messages: [
           {

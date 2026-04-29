@@ -31,9 +31,37 @@ import {
 import { MetricCard } from "@/components/metric-card";
 import { formatCurrency } from "@/lib/format";
 import { METRIC_GRID } from "@/lib/grid";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import { motion } from "framer-motion";
 import { SaudiHeatmap, type RegionData } from "@/components/fwa/saudi-heatmap";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+
+// ---------------------------------------------------------------------------
+// Heatmap date-window options (carry-through to flagged-claims drill-down)
+// ---------------------------------------------------------------------------
+
+type HeatmapRange = "7d" | "30d" | "90d" | "all";
+
+const HEATMAP_RANGE_LABELS: Record<HeatmapRange, string> = {
+  "7d": "Last 7 days",
+  "30d": "Last 30 days",
+  "90d": "Last 90 days",
+  all: "All time",
+};
+
+function rangeToWindow(range: HeatmapRange): { from: string | null; to: string | null } {
+  if (range === "all") return { from: null, to: null };
+  const days = range === "7d" ? 7 : range === "30d" ? 30 : 90;
+  const to = new Date();
+  const from = new Date(to.getTime() - days * 24 * 60 * 60 * 1000);
+  return { from: from.toISOString(), to: to.toISOString() };
+}
 
 // ---------------------------------------------------------------------------
 // Alert type from API
@@ -265,13 +293,29 @@ function ActivitySkeleton() {
 // ---------------------------------------------------------------------------
 
 export default function OperationsCenter() {
+  const [, navigate] = useLocation();
+
   const { data: summary, isLoading, refetch } = useQuery<OperationsSummary>({
     queryKey: ["/api/fwa/operations-summary"],
     refetchInterval: 30000,
   });
 
+  const [heatmapRange, setHeatmapRange] = React.useState<HeatmapRange>("all");
+  const heatmapWindow = React.useMemo(() => rangeToWindow(heatmapRange), [heatmapRange]);
+
   const { data: heatmapData, isLoading: isHeatmapLoading } = useQuery<RegionData[]>({
-    queryKey: ["/api/fwa/heatmap"],
+    queryKey: ["/api/fwa/heatmap", heatmapWindow.from, heatmapWindow.to],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (heatmapWindow.from) params.set("from", heatmapWindow.from);
+      if (heatmapWindow.to) params.set("to", heatmapWindow.to);
+      const qs = params.toString();
+      const res = await fetch(`/api/fwa/heatmap${qs ? `?${qs}` : ""}`, {
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error(`Heatmap request failed: ${res.status}`);
+      return res.json();
+    },
     refetchInterval: 60000,
   });
 
@@ -344,16 +388,50 @@ export default function OperationsCenter() {
           {/* Heatmap — 2/3 width */}
           <Card className="lg:col-span-2">
             <CardHeader className="pb-2">
-              <CardTitle className="text-lg">
-                Saudi Arabia Regional Risk Map
-                <span className="block text-sm font-normal text-muted-foreground/60 mt-0.5">خريطة المخاطر الإقليمية</span>
-              </CardTitle>
+              <div className="flex items-start justify-between gap-3 flex-wrap">
+                <CardTitle className="text-lg">
+                  Saudi Arabia Regional Risk Map
+                  <span className="block text-sm font-normal text-muted-foreground/60 mt-0.5">خريطة المخاطر الإقليمية</span>
+                </CardTitle>
+                <Select
+                  value={heatmapRange}
+                  onValueChange={(v) => setHeatmapRange(v as HeatmapRange)}
+                >
+                  <SelectTrigger
+                    className="w-[160px] h-8 text-sm"
+                    data-testid="select-heatmap-range"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(Object.keys(HEATMAP_RANGE_LABELS) as HeatmapRange[]).map((value) => (
+                      <SelectItem
+                        key={value}
+                        value={value}
+                        data-testid={`option-heatmap-range-${value}`}
+                      >
+                        {HEATMAP_RANGE_LABELS[value]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             </CardHeader>
             <CardContent>
               {isHeatmapLoading ? (
                 <Skeleton className="w-full h-[420px] rounded-lg" />
               ) : (
-                <SaudiHeatmap data={heatmapData ?? []} className="max-h-[420px]" />
+                <SaudiHeatmap
+                  data={heatmapData ?? []}
+                  className="max-h-[420px]"
+                  onRegionClick={(regionCode) => {
+                    const params = new URLSearchParams();
+                    params.set("region", regionCode);
+                    if (heatmapWindow.from) params.set("from", heatmapWindow.from);
+                    if (heatmapWindow.to) params.set("to", heatmapWindow.to);
+                    navigate(`/fwa/flagged-claims?${params.toString()}`);
+                  }}
+                />
               )}
             </CardContent>
           </Card>

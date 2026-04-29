@@ -7,7 +7,14 @@ import { documentIngestionService, DocumentCategory } from "../services/document
 import { knowledgeUploadQueueService } from "../services/knowledge-upload-queue-service";
 import { z } from "zod";
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+let _openai: OpenAI | null = null;
+function getOpenAI(): OpenAI {
+  if (!_openai) {
+    if (!process.env.OPENAI_API_KEY) throw new Error("OPENAI_API_KEY is not set");
+    _openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  }
+  return _openai;
+}
 
 const storage = multer.memoryStorage();
 const uploadMiddleware = multer({
@@ -274,7 +281,7 @@ Analyze and return a JSON object with:
 
 Only return valid JSON, no other text.`;
 
-        const response = await openai.chat.completions.create({
+        const response = await getOpenAI().chat.completions.create({
           model: "gpt-4o",
           messages: [{ role: "user", content: prompt }],
           temperature: 0.3,
