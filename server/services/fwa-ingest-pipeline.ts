@@ -770,7 +770,15 @@ async function ensurePractitioner(practitionerId: string, specialty: string | nu
   }
 }
 
-async function persistClaim(n: NormalizedClaim): Promise<PersistResult> {
+// Discriminator written to claims_v2.source so downstream consumers can
+// filter generated claims (AI Test Case Generator) from real ingest output.
+// Only "generated" is special-cased; everything else (file uploads, inline
+// JSON, recovery) keeps the historical "fwa_ingest" tag.
+function deriveClaimSource(sourceType: string | null | undefined): string {
+  return sourceType === "generated" ? "generated" : "fwa_ingest";
+}
+
+async function persistClaim(n: NormalizedClaim, claimSource: string = "fwa_ingest"): Promise<PersistResult> {
   // Caller MUST have validated all required fields before invoking this. Throw
   // loudly rather than silently inventing placeholder values.
   if (!n.memberId || !n.providerId || !n.serviceDate || n.amount === null || !n.primaryDiagnosis) {
@@ -815,7 +823,7 @@ async function persistClaim(n: NormalizedClaim): Promise<PersistResult> {
       providerType: n.providerType,
       lengthOfStay: n.lengthOfStay,
       isPreAuthorized: n.isPreAuthorized ?? false,
-      source: "fwa_ingest",
+      source: claimSource,
     })
     .returning({ id: claims.id, claimNumber: claims.claimNumber });
   return { claimId: inserted.id, claimNumber: inserted.claimNumber };
@@ -1070,15 +1078,119 @@ export async function createIngestionJob(opts: CreateJobOptions): Promise<FwaIng
   // Fire-and-forget worker; do NOT await — endpoint returns immediately.
   // Default skipRagLlm = false: all five engines run by default for fully
   // eligible claims (per task contract). Callers may opt out for cost reasons.
+  const claimSource = deriveClaimSource(job.sourceType);
   setImmediate(() => {
     runJob(job.id, {
       skipRagLlm,
       mappingOverrides: opts.mappingOverrides,
       requireConfirmation: opts.requireConfirmation ?? false,
+      claimSource,
     }).catch((err) => {
       console.error(`[FwaIngest] job ${job.id} crashed:`, err);
     });
   });
+  return job;
+}
+
+/**
+ * Two-phase job creation for content the caller produces asynchronously
+ * (e.g. AI-generated test cases). Unlike createIngestionJob — which needs a
+ * file/buffer up front — this returns the job row immediately with
+ * status="queued" + currentStage="generating", then runs `generator()` in
+ * the background. When `generator()` resolves we stage the buffer, update
+ * the job row, and hand it off to the same runJob worker as uploads, so the
+ * status endpoint can report a unified progress timeline:
+ *   generating → queued → parsing → mapping → normalizing → persisting →
+ *   detecting → completed.
+ *
+ * If `generator()` rejects, the job is transitioned to "failed" with the
+ * error message, mirroring how runJob handles ingestion errors.
+ */
+export interface CreateGenerationJobOptions {
+  jobName: string;
+  createdBy?: string;
+  generator: () => Promise<{
+    buffer: Buffer;
+    fileName: string;
+    /** Optional metadata about the generation step (mode, requested count,
+     * produced count, scenario mix). Persisted into job.summary.generation
+     * so callers polling GET /api/fwa/test-cases/:jobId can see what was
+     * asked for vs. produced. */
+    generationSummary?: Record<string, unknown>;
+  }>;
+}
+
+export async function createGenerationJob(
+  opts: CreateGenerationJobOptions
+): Promise<FwaIngestJob> {
+  const [job] = await db
+    .insert(fwaIngestJobs)
+    .values({
+      jobName: opts.jobName,
+      sourceType: "generated",
+      // Placeholder values — the real file is staged after generation
+      // completes. sourceFormat is notNull so we set it now; we'll patch
+      // sourceFileName/sourceFilePath/sourceSizeBytes in the background
+      // task below.
+      sourceFileName: "pending-generation",
+      sourceFilePath: "pending-generation",
+      sourceFormat: "json",
+      sourceSizeBytes: 0,
+      skipRagLlm: false,
+      requireConfirmation: false,
+      status: "queued",
+      progressPct: 0,
+      currentStage: "generating",
+      createdBy: opts.createdBy || "system",
+    })
+    .returning();
+
+  setImmediate(async () => {
+    try {
+      const { buffer, fileName, generationSummary } = await opts.generator();
+      await ensureStageDir();
+      const ext = path.extname(fileName) || ".json";
+      const stagedPath = path.join(INGEST_STAGE_DIR, `${randomUUID()}${ext}`);
+      await fsp.writeFile(stagedPath, buffer);
+      const updatePatch: Record<string, unknown> = {
+        sourceFileName: fileName,
+        sourceFilePath: stagedPath,
+        sourceFormat: ext.replace(".", "") || "json",
+        sourceSizeBytes: buffer.length,
+        currentStage: "queued",
+        updatedAt: new Date(),
+      };
+      if (generationSummary) {
+        updatePatch.summary = { generation: generationSummary };
+      }
+      await db
+        .update(fwaIngestJobs)
+        .set(updatePatch as Partial<InsertFwaIngestJob>)
+        .where(eq(fwaIngestJobs.id, job.id));
+      pendingSources.set(job.id, { filePath: stagedPath, fileName });
+      const claimSource = deriveClaimSource("generated");
+      await runJob(job.id, {
+        skipRagLlm: false,
+        requireConfirmation: false,
+        claimSource,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[FwaIngest] generation job ${job.id} failed:`, msg);
+      await db
+        .update(fwaIngestJobs)
+        .set({
+          status: "failed",
+          currentStage: "failed",
+          errorMessage: msg,
+          completedAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(eq(fwaIngestJobs.id, job.id));
+      ingestionEvents.emit("ingest.failed", { jobId: job.id, error: msg });
+    }
+  });
+
   return job;
 }
 
@@ -1130,11 +1242,13 @@ export async function recoverInFlightJobs(): Promise<{ resumed: number; failed: 
       // otherwise a crash before the pause point would let the worker run
       // straight through detection on resume, violating the contract.
       const persistedOverrides = job.columnMapping?.overrides;
+      const claimSource = deriveClaimSource(job.sourceType);
       setImmediate(() => {
         runJob(job.id, {
           skipRagLlm: job.skipRagLlm ?? false,
           mappingOverrides: persistedOverrides,
           requireConfirmation: job.requireConfirmation ?? false,
+          claimSource,
         }).catch((err) => {
           console.error(`[FwaIngest] resumed job ${job.id} crashed:`, err);
         });
@@ -1194,7 +1308,7 @@ async function cleanupSource(jobId: string): Promise<void> {
   }
 }
 
-async function runJob(jobId: string, opts: { skipRagLlm: boolean; mappingOverrides?: Record<string, string>; requireConfirmation?: boolean }) {
+async function runJob(jobId: string, opts: { skipRagLlm: boolean; mappingOverrides?: Record<string, string>; requireConfirmation?: boolean; claimSource?: string }) {
   if (runningJobs.has(jobId)) return;
   runningJobs.add(jobId);
   const t0 = Date.now();
@@ -1294,7 +1408,7 @@ async function runJob(jobId: string, opts: { skipRagLlm: boolean; mappingOverrid
           await appendError(jobId, { rowIndex: i, stage: "normalize", message: `missing ${norm.missingFields.join(",")}` });
         } else {
           // Persist claim (required-field invariants already satisfied).
-          const persistedClaim = await persistClaim(norm.normalized);
+          const persistedClaim = await persistClaim(norm.normalized, opts.claimSource ?? "fwa_ingest");
           persisted++;
 
           const claimInput: AnalyzedClaimData = {
@@ -1413,6 +1527,19 @@ async function runJob(jobId: string, opts: { skipRagLlm: boolean; mappingOverrid
       topReasons,
     };
 
+    // Preserve any generation metadata that was attached during the
+    // background generation phase (createGenerationJob) so the final
+    // summary contains both: what the generator produced AND what the
+    // engines detected. Without this fetch-then-merge the detection
+    // summary would clobber the generation block.
+    const [existingForMerge] = await db
+      .select({ summary: fwaIngestJobs.summary })
+      .from(fwaIngestJobs)
+      .where(eq(fwaIngestJobs.id, jobId))
+      .limit(1);
+    const generationBlock = (existingForMerge?.summary as Record<string, unknown> | null)?.generation;
+    const mergedSummary = generationBlock ? { ...summary, generation: generationBlock } : summary;
+
     await updateJob(jobId, {
       status: "completed",
       currentStage: "completed",
@@ -1423,11 +1550,11 @@ async function runJob(jobId: string, opts: { skipRagLlm: boolean; mappingOverrid
       rowsDetected: detected,
       rowsSkipped: skipped,
       rowsFailed: failed,
-      summary,
+      summary: mergedSummary,
     });
 
     await cleanupSource(jobId);
-    ingestionEvents.emit("ingest.completed", { jobId, summary, totalRows, detected, skipped, failed });
+    ingestionEvents.emit("ingest.completed", { jobId, summary: mergedSummary, totalRows, detected, skipped, failed });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[FwaIngest] job ${jobId} failed:`, msg);
@@ -1486,11 +1613,13 @@ export async function resumeIngestionJob(
     requireConfirmation: false,
     skipRagLlm: confirmedSkipRagLlm,
   });
+  const claimSource = deriveClaimSource(job.sourceType);
   setImmediate(() => {
     runJob(jobId, {
       skipRagLlm: confirmedSkipRagLlm,
       mappingOverrides: merged,
       // requireConfirmation stays false here so the worker proceeds end to end
+      claimSource,
     }).catch((err) => {
       console.error(`[FwaIngest] resumed job ${jobId} crashed:`, err);
     });

@@ -9,6 +9,7 @@ import {
   Database,
   MessageCircle,
   Settings2,
+  Sparkles,
 } from "lucide-react";
 import type { PillarConfig } from "@/pillars/types";
 
@@ -33,6 +34,7 @@ export const fwaPillarConfig: PillarConfig = {
         { label: "5 Detection Methods", href: "/fwa/engine-config", icon: Settings2 },
         { label: "Coding Intelligence", href: "/fwa/coding-intelligence", icon: Stethoscope },
         { label: "Flagged Claims", href: "/fwa/flagged-claims", icon: FileSearch },
+        { label: "AI Test Case Generator", href: "/fwa/test-case-generator", icon: Sparkles },
       ],
     },
     {

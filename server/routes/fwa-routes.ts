@@ -445,6 +445,90 @@ export function registerFwaRoutes(
     }
   });
 
+  // ===========================================================================
+  // AI TEST CASE GENERATOR
+  // Produces realistic synthetic claims (single, batch, or wizard) and routes
+  // them through the same smart ingestion pipeline as uploaded data so they
+  // receive identical 5-engine scoring and show up in Flagged Claims. Generated
+  // claims are persisted with claims_v2.source="generated" for later filtering.
+  // ===========================================================================
+  const generateTestCaseSchema = z.discriminatedUnion("mode", [
+    z.object({
+      mode: z.literal("single"),
+      params: z
+        .object({
+          scenario: z.enum(["clean", "suspicious", "fraudulent"]).optional(),
+          scenarioType: z.string().max(100).optional(),
+        })
+        .optional(),
+    }),
+    z.object({
+      mode: z.literal("batch"),
+      params: z
+        .object({
+          // Task contract: batch is a "small batch (5–10 mixed)". Anything
+          // larger should go through the wizard mode, which exposes more
+          // controls. Default chosen by the generator when omitted.
+          count: z.number().int().min(5).max(10).optional(),
+        })
+        .optional(),
+    }),
+    z.object({
+      mode: z.literal("wizard"),
+      params: z.object({
+        count: z.number().int().min(1).max(100),
+        severity: z.enum(["low", "medium", "high", "mixed"]),
+        scenario: z.enum(["clean", "suspicious", "fraudulent"]).optional(),
+        targetEntity: z
+          .object({
+            type: z.enum(["provider", "member", "practitioner"]),
+            id: z.string().min(1).max(100),
+          })
+          .optional(),
+        codeMix: z
+          .object({
+            icdCodes: z.array(z.string().max(20)).max(50).optional(),
+            cptCodes: z.array(z.string().max(20)).max(50).optional(),
+          })
+          .optional(),
+      }),
+    }),
+  ]);
+
+  app.post("/api/fwa/test-cases/generate", async (req, res) => {
+    try {
+      const parsed = generateTestCaseSchema.safeParse(req.body || {});
+      if (!parsed.success) {
+        return res.status(400).json({ error: "invalid body", issues: parsed.error.flatten() });
+      }
+      const { generateTestCases } = await import("../services/test-case-generator");
+      const job = await generateTestCases(parsed.data, {
+        createdBy: ((req as any).user?.username as string | undefined) || "system",
+      });
+      return res.status(202).json({
+        jobId: job.id,
+        status: job.status,
+        statusUrl: `/api/fwa/test-cases/${job.id}`,
+      });
+    } catch (err) {
+      handleRouteError(res, err, "/api/fwa/test-cases/generate", "generate test cases");
+    }
+  });
+
+  app.get("/api/fwa/test-cases/:jobId", async (req, res) => {
+    try {
+      const { getJobStatus } = await import("../services/fwa-ingest-pipeline");
+      const job = await getJobStatus(req.params.jobId);
+      if (!job) return res.status(404).json({ error: "job not found" });
+      // Mirrors the ingestion job format, with the additional 'mode' surfaced
+      // from sourceType for clients that want to distinguish generated vs
+      // uploaded jobs without re-checking sourceType themselves.
+      res.json({ ...job, mode: job.sourceType === "generated" ? "generated" : "ingest" });
+    } catch (err) {
+      handleRouteError(res, err, "/api/fwa/test-cases/:jobId", "get test case job");
+    }
+  });
+
   app.post("/api/fwa/rules/seed-enhanced", async (req, res) => {
     try {
       // Admin authorization required for database seeding

@@ -81,6 +81,7 @@ import FWAClaimDetail from "@/pages/fwa/claim-detail";
 import CodingIntelligencePage from "@/pages/fwa/coding-intelligence";
 import KnowledgeHub from "@/pages/fwa/knowledge-hub";
 import FWAEntityProfile from "@/pages/fwa/entity-profile";
+import FWATestCaseGenerator from "@/pages/fwa/test-case-generator";
 
 import { PreAuthLayout } from "@/components/pre-auth/pre-auth-layout";
 import PreAuthDashboard from "@/pages/pre-auth/dashboard";
@@ -205,6 +206,7 @@ function FWARouter() {
         <Route path="/fwa/claims/:idOrNumber" component={FWAClaimDetail} />
         <Route path="/fwa/batch-upload">{() => <Redirect to="/fwa/detection-engine" />}</Route>
         <Route path="/fwa/claims-import" component={FWAClaimsImport} />
+        <Route path="/fwa/test-case-generator" component={FWATestCaseGenerator} />
         <Route path="/fwa/high-risk-entities" component={FWAHighRiskEntities} />
         <Route path="/fwa/high-risk-entities/provider/:entityId" component={FWAEntityProfile} />
         <Route path="/fwa/high-risk-entities/doctor/:entityId" component={FWAEntityProfile} />
