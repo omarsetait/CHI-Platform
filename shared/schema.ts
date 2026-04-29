@@ -3326,7 +3326,16 @@ export const fwaDetectionResults = pgTable("fwa_detection_results", {
     recommendation: string;
     confidence: number;
   }>().default({ contextualAnalysis: "", similarCases: [], knowledgeBaseMatches: [], recommendation: "", confidence: 0 }),
-  
+
+  semanticScore: decimal("semantic_score", { precision: 5, scale: 2 }),
+  semanticFindings: jsonb("semantic_findings").$type<{
+    diagnosisChapter: string;
+    serviceCategory: string;
+    alignmentScore: number;
+    mismatchReasons: string[];
+    flaggedTerms: string[];
+  }>().default({ diagnosisChapter: "", serviceCategory: "", alignmentScore: 0, mismatchReasons: [], flaggedTerms: [] }),
+
   // Overall assessment
   primaryDetectionMethod: fwaDetectionMethodEnum("primary_detection_method"), // Which method contributed most
   detectionSummary: text("detection_summary"),
@@ -5536,3 +5545,139 @@ export const fwaEntityInvestigationNotes = pgTable("fwa_entity_investigation_not
 export type FwaEntityInvestigationNote = typeof fwaEntityInvestigationNotes.$inferSelect;
 export type InsertFwaEntityInvestigationNote = typeof fwaEntityInvestigationNotes.$inferInsert;
 export const insertFwaEntityInvestigationNoteSchema = createInsertSchema(fwaEntityInvestigationNotes);
+
+// ============================================================================
+// FWA Smart Batch Ingestion Pipeline (Task #41)
+// ============================================================================
+
+export const fwaIngestJobStatusEnum = pgEnum("fwa_ingest_job_status", [
+  "queued",
+  "parsing",
+  "mapping",
+  "awaiting_confirmation",
+  "normalizing",
+  "persisting",
+  "detecting",
+  "completed",
+  "failed",
+  "cancelled",
+]);
+
+export const fwaIngestJobs = pgTable("fwa_ingest_jobs", {
+  id: text("id").primaryKey().default(sql`gen_random_uuid()`),
+  jobName: text("job_name"),
+  sourceType: text("source_type").notNull(),
+  sourceFileName: text("source_file_name"),
+  sourceFilePath: text("source_file_path"),
+  sourceFormat: text("source_format").notNull(),
+  sourceSizeBytes: integer("source_size_bytes"),
+  skipRagLlm: boolean("skip_rag_llm").notNull().default(false),
+  // When true, the worker pauses at status="awaiting_confirmation" after
+  // auto-mapping until POST /api/fwa/ingest/:jobId/confirm is called. This
+  // intent must be persisted so that crash/restart recovery
+  // (recoverInFlightJobs) honors the two-phase contract instead of
+  // continuing straight through to detection on resume.
+  requireConfirmation: boolean("require_confirmation").notNull().default(false),
+  status: fwaIngestJobStatusEnum("status").notNull().default("queued"),
+  progressPct: integer("progress_pct").notNull().default(0),
+  currentStage: text("current_stage").notNull().default("queued"),
+  detectedHeaders: text("detected_headers").array(),
+  columnMapping: jsonb("column_mapping").$type<{
+    confidence: number;
+    overallConfidence?: number;
+    mappings: Array<{
+      schemaField: string;
+      sourceColumn: string | null;
+      confidence: number;
+      reason?: string;
+      required: boolean;
+      needsConfirmation?: boolean;
+    }>;
+    unmappedColumns?: string[];
+    warnings?: string[];
+    autoMapped: boolean;
+    overrides?: Record<string, string>;
+  }>(),
+  totalRows: integer("total_rows").notNull().default(0),
+  rowsParsed: integer("rows_parsed").notNull().default(0),
+  rowsNormalized: integer("rows_normalized").notNull().default(0),
+  rowsPersisted: integer("rows_persisted").notNull().default(0),
+  rowsDetected: integer("rows_detected").notNull().default(0),
+  rowsSkipped: integer("rows_skipped").notNull().default(0),
+  rowsFailed: integer("rows_failed").notNull().default(0),
+  summary: jsonb("summary").$type<{
+    durationMs?: number;
+    riskBuckets?: { critical: number; high: number; medium: number; low: number };
+    enginesRun?: { rule: number; statistical: number; unsupervised: number; ragLlm: number; semantic: number };
+    enginesSkipped?: { rule: number; statistical: number; unsupervised: number; ragLlm: number; semantic: number };
+    avgCompositeScore?: number;
+    topReasons?: string[];
+  }>(),
+  errorLog: jsonb("error_log").$type<Array<{
+    rowIndex?: number;
+    stage: string;
+    message: string;
+    at: string;
+  }>>().default([]),
+  errorMessage: text("error_message"),
+  createdBy: text("created_by"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  startedAt: timestamp("started_at"),
+  completedAt: timestamp("completed_at"),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const insertFwaIngestJobSchema = createInsertSchema(fwaIngestJobs).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertFwaIngestJob = z.infer<typeof insertFwaIngestJobSchema>;
+export type FwaIngestJob = typeof fwaIngestJobs.$inferSelect;
+
+export const fwaIngestRows = pgTable("fwa_ingest_rows", {
+  id: text("id").primaryKey().default(sql`gen_random_uuid()`),
+  jobId: text("job_id").references(() => fwaIngestJobs.id, { onDelete: "cascade" }).notNull(),
+  rowIndex: integer("row_index").notNull(),
+  rawData: jsonb("raw_data").$type<Record<string, any>>(),
+  normalizedClaim: jsonb("normalized_claim").$type<Record<string, any>>(),
+  claimNumber: text("claim_number"),
+  claimId: text("claim_id"),
+  status: text("status").notNull().default("pending"),
+  missingFields: text("missing_fields").array(),
+  ineligibleEngines: jsonb("ineligible_engines").$type<Array<{ engine: string; reason: string }>>().default([]),
+  detection: jsonb("detection").$type<{
+    compositeScore?: number;
+    compositeRiskLevel?: string;
+    ruleEngineScore?: number;
+    statisticalScore?: number;
+    unsupervisedScore?: number;
+    ragLlmScore?: number;
+    semanticScore?: number;
+    semanticFindings?: {
+      diagnosisChapter: string;
+      serviceCategory: string;
+      alignmentScore: number;
+      mismatchReasons: string[];
+      flaggedTerms: string[];
+    } | null;
+    primaryDetectionMethod?: string;
+    detectionSummary?: string;
+    recommendedAction?: string;
+    enginesRun?: string[];
+    enginesSkipped?: Array<{ engine: string; reason: string }>;
+  }>(),
+  errorMessage: text("error_message"),
+  processingTimeMs: integer("processing_time_ms"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const insertFwaIngestRowSchema = createInsertSchema(fwaIngestRows).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertFwaIngestRow = z.infer<typeof insertFwaIngestRowSchema>;
+export type FwaIngestRow = typeof fwaIngestRows.$inferSelect;
+

@@ -8,6 +8,7 @@ import createMemoryStore from "memorystore";
 
 import { registerPreAuthRoutes } from "./routes/preauth-routes";
 import { registerFwaRoutes } from "./routes/fwa-routes";
+import { registerFwaIngestRoutes } from "./routes/fwa-ingest-routes";
 import { registerClaimsRoutes, registerClaimsPipelineRoutes } from "./routes/claims-routes";
 import { registerDocumentRoutes } from "./routes/document-routes";
 import { registerProviderRoutes } from "./routes/provider-routes";
@@ -218,6 +219,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   
   registerPreAuthRoutes(app, storage, handleRouteError);
   registerFwaRoutes(app, storage, handleRouteError);
+  registerFwaIngestRoutes(app, handleRouteError);
   registerClaimsRoutes(app, storage, handleRouteError);
   await registerClaimsPipelineRoutes(app, handleRouteError);
   registerPipelineRoutes(app);

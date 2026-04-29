@@ -185,6 +185,16 @@ app.use((req, res, next) => {
   const server = await registerRoutes(app);
   knowledgeUploadQueueService.start();
 
+  // Recover any FWA ingest jobs that were left in a non-terminal state
+  // by a previous process. Resumes those whose staged source file is still
+  // available; marks the rest as failed with a clear audit reason.
+  try {
+    const { recoverInFlightJobs } = await import("./services/fwa-ingest-pipeline");
+    await recoverInFlightJobs();
+  } catch (err) {
+    console.error("[FwaIngest] startup recovery failed:", err);
+  }
+
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";
