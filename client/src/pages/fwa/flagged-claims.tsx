@@ -48,8 +48,16 @@ import {
   Activity,
   Building2,
   Layers,
+  Download,
+  FileSpreadsheet,
 } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 // DB-backed claim shape (matches Drizzle claims table)
 interface FlaggedClaim {
@@ -245,7 +253,8 @@ function formatDate(dateStr: string | null): string {
 }
 
 export default function FlaggedClaimsPage() {
-  const [, navigate] = useLocation();
+  const [, setLocation] = useLocation();
+  const navigate = setLocation;
   const searchString = useSearch();
   const regionFilter = useMemo(() => {
     const params = new URLSearchParams(searchString);
@@ -286,7 +295,6 @@ export default function FlaggedClaimsPage() {
   const [sheetOpen, setSheetOpen] = useState(false);
 
   // Read entity-filter URL params via wouter (e.g. ?provider=PRV-CS1-001)
-  const [, setLocation] = useLocation();
   const entityParams = useMemo(() => new URLSearchParams(searchString), [searchString]);
   const providerFilter = entityParams.get("provider") || "";
   const patientFilter = entityParams.get("patient") || "";
@@ -453,6 +461,19 @@ export default function FlaggedClaimsPage() {
   const handleClaimClick = (claim: FlaggedClaim) => {
     setSelectedClaim(claim);
     setSheetOpen(true);
+  };
+
+  const handleExport = (format: "csv" | "xlsx") => {
+    const sp = new URLSearchParams();
+    sp.set("format", format);
+    if (providerFilter) sp.set("provider", providerFilter);
+    if (patientFilter) sp.set("patient", patientFilter);
+    if (doctorFilter) sp.set("doctor", doctorFilter);
+    if (regionFilter) sp.set("region", regionFilter);
+    if (search) sp.set("search", search);
+    if (categoryFilter !== "all") sp.set("category", categoryFilter);
+    if (statusFilter !== "all") sp.set("status", statusFilter);
+    window.location.assign(`/api/fwa/flagged-claims/export?${sp.toString()}`);
   };
 
   // Fetch full detail (services, encounter, policy) when sidebar opens
@@ -821,10 +842,11 @@ export default function FlaggedClaimsPage() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-9"
+            data-testid="input-search"
           />
         </div>
         <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-          <SelectTrigger className="w-[220px]">
+          <SelectTrigger className="w-[220px]" data-testid="select-category">
             <SelectValue placeholder="All Categories" />
           </SelectTrigger>
           <SelectContent>
@@ -837,7 +859,7 @@ export default function FlaggedClaimsPage() {
           </SelectContent>
         </Select>
         <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="w-[220px]">
+          <SelectTrigger className="w-[220px]" data-testid="select-status">
             <SelectValue placeholder="All Statuses" />
           </SelectTrigger>
           <SelectContent>
@@ -849,6 +871,42 @@ export default function FlaggedClaimsPage() {
             ))}
           </SelectContent>
         </Select>
+
+        <div className="sm:ml-auto">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="outline"
+                disabled={filtered.length === 0}
+                data-testid="button-export"
+              >
+                <Download className="h-4 w-4 mr-2" />
+                Export
+                {filtered.length > 0 && (
+                  <Badge variant="secondary" className="ml-2 px-1.5 py-0 text-[10px]">
+                    {filtered.length}
+                  </Badge>
+                )}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem
+                onClick={() => handleExport("csv")}
+                data-testid="button-export-csv"
+              >
+                <FileText className="h-4 w-4 mr-2" />
+                Download CSV
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => handleExport("xlsx")}
+                data-testid="button-export-xlsx"
+              >
+                <FileSpreadsheet className="h-4 w-4 mr-2" />
+                Download Excel
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       </div>
 
       {/* Claims Table */}

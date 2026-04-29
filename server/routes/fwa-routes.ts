@@ -9923,6 +9923,152 @@ Respond with JSON:
     }
   });
 
+  // ── Flagged Claims Export (CSV / Excel) ──
+  // Mirrors the filters supported by /api/fwa/flagged-claims plus the in-page
+  // text/category/status/region filters so the downloaded file matches what
+  // the investigator currently sees on /fwa/flagged-claims.
+  // Query params: format=csv|xlsx, provider, patient, doctor, region,
+  //               search, category, status
+  app.get("/api/fwa/flagged-claims/export", async (req, res) => {
+    try {
+      const { and } = await import("drizzle-orm");
+      const { fwaHighRiskPatients } = await import("@shared/schema");
+      const XLSX = await import("xlsx");
+
+      const provider = typeof req.query.provider === "string" ? req.query.provider.trim() : "";
+      const patientRaw = typeof req.query.patient === "string" ? req.query.patient.trim() : "";
+      const doctor = typeof req.query.doctor === "string" ? req.query.doctor.trim() : "";
+      const region = typeof req.query.region === "string" ? req.query.region.trim().toUpperCase() : "";
+      const search = typeof req.query.search === "string" ? req.query.search.trim().toLowerCase() : "";
+      const category = typeof req.query.category === "string" ? req.query.category.trim() : "";
+      const status = typeof req.query.status === "string" ? req.query.status.trim() : "";
+      const format = (typeof req.query.format === "string" ? req.query.format : "csv").toLowerCase() === "xlsx"
+        ? "xlsx"
+        : "csv";
+
+      // Resolve PAT-* → MBR-* via the high-risk patients table.
+      let patientMemberId = "";
+      let patientUnresolved = false;
+      if (patientRaw) {
+        if (patientRaw.startsWith("PAT-")) {
+          const lookup = await db
+            .select({ memberId: fwaHighRiskPatients.memberId })
+            .from(fwaHighRiskPatients)
+            .where(eq(fwaHighRiskPatients.patientId, patientRaw))
+            .limit(1);
+          if (lookup[0]?.memberId) {
+            patientMemberId = lookup[0].memberId;
+          } else {
+            patientUnresolved = true;
+          }
+        } else {
+          patientMemberId = patientRaw;
+        }
+      }
+
+      let flaggedRows: Array<{ claim: typeof claims.$inferSelect; providerRegion: string | null }> = [];
+      if (!patientUnresolved) {
+        const conditions = [eq(claims.flagged, true)];
+        if (provider) conditions.push(eq(claims.providerId, provider));
+        if (patientMemberId) conditions.push(eq(claims.memberId, patientMemberId));
+        if (doctor) conditions.push(eq(claims.practitionerId, doctor));
+
+        flaggedRows = await db
+          .select({
+            claim: claims,
+            providerRegion: providers.region,
+          })
+          .from(claims)
+          .leftJoin(providers, eq(claims.providerId, providers.id))
+          .where(conditions.length === 1 ? conditions[0] : and(...conditions))
+          .orderBy(desc(claims.registrationDate))
+          .limit(500);
+      }
+
+      // Apply the same in-page filters the UI uses, so the file matches the
+      // table on screen exactly. The page's text search inspects fields that
+      // aren't on the claims_v2 row (providerName/patientName/icd are merged
+      // in client-side from joined sources), so for parity we only match the
+      // fields actually present on the claim record here.
+      const filtered = flaggedRows
+        .map((r) => ({ ...r.claim, providerRegion: r.providerRegion ?? null }))
+        .filter((c) => {
+          if (region && (c.providerRegion || "").toUpperCase() !== region) return false;
+          if (category && c.category !== category) return false;
+          if (status && c.status !== status) return false;
+          if (search) {
+            // Mirror the page's effective search behavior. The UI also lists
+            // providerName/patientName/icd in its haystack but those fields
+            // are not present on claims_v2 rows (always undefined), so they
+            // never contribute. Matching only claimNumber + flagReason keeps
+            // the export and the on-screen table in lockstep.
+            const hay = [c.claimNumber, c.flagReason]
+              .filter((v): v is string => typeof v === "string" && v.length > 0)
+              .join(" ")
+              .toLowerCase();
+            if (!hay.includes(search)) return false;
+          }
+          return true;
+        });
+
+      const formatDate = (d: Date | string | null | undefined): string => {
+        if (!d) return "";
+        const dt = typeof d === "string" ? new Date(d) : d;
+        if (isNaN(dt.getTime())) return "";
+        return dt.toISOString().slice(0, 10);
+      };
+
+      const sheetRows = filtered.map((c) => ({
+        "Claim Number": c.claimNumber,
+        "Registration Date": formatDate(c.registrationDate),
+        "Service Date": formatDate(c.serviceDate),
+        "Amount (SAR)": Number(c.amount || 0),
+        "Primary Diagnosis": c.primaryDiagnosis ?? "",
+        "ICD Codes": Array.isArray(c.icdCodes) ? c.icdCodes.join("; ") : "",
+        "CPT Codes": Array.isArray(c.cptCodes) ? c.cptCodes.join("; ") : "",
+        "Status": c.status ?? "",
+        "Category": c.category ?? "",
+        "Flag Reason": c.flagReason ?? "",
+        "Risk Score": Math.round(Number(c.outlierScore || 0) * 100),
+        "Provider ID": c.providerId,
+        "Provider Region": c.providerRegion ?? "",
+        "Specialty": c.specialty ?? "",
+        "City": c.city ?? "",
+        "Member ID": c.memberId,
+        "Practitioner ID": c.practitionerId ?? "",
+        "Policy ID": c.policyId ?? "",
+        "Hospital": c.hospital ?? "",
+        "Claim Type": c.claimType,
+      }));
+
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.json_to_sheet(sheetRows);
+      XLSX.utils.book_append_sheet(wb, ws, "Flagged Claims");
+
+      const stamp = new Date().toISOString().slice(0, 10);
+      const baseName = `flagged-claims-${stamp}`;
+
+      if (format === "xlsx") {
+        const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+        res.setHeader(
+          "Content-Type",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        );
+        res.setHeader("Content-Disposition", `attachment; filename="${baseName}.xlsx"`);
+        res.send(Buffer.from(buf));
+      } else {
+        const csv = XLSX.utils.sheet_to_csv(ws);
+        res.setHeader("Content-Type", "text/csv; charset=utf-8");
+        res.setHeader("Content-Disposition", `attachment; filename="${baseName}.csv"`);
+        // BOM so Excel opens UTF-8 (Arabic names) correctly.
+        res.send("\uFEFF" + csv);
+      }
+    } catch (error) {
+      console.error("[FWA] Error exporting flagged claims:", error);
+      res.status(500).json({ error: "Failed to export flagged claims" });
+    }
+  });
+
   // ── Single Claim Detail (claim header + service lines) ──
   // Looks up by either the synthetic id (CLM-...) or the claim_number — both
   // are unique. Returns claim, services, and lookup names for provider/patient/doctor.
