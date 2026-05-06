@@ -191,8 +191,8 @@ Return JSON:
     let droppedNotInCitations = 0;
 
     for (const m of rawMentions) {
-      const normalized = normalizeXUrl(m.sourceUrl);
       if (!m.sourceUrl) { droppedNoUrl++; continue; }
+      const normalized = normalizeXUrl(m.sourceUrl);
       if (!normalized) { droppedBadShape++; continue; }
       if (!citationSet.has(normalized)) { droppedNotInCitations++; continue; }
 
