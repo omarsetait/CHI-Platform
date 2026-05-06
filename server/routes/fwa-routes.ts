@@ -68,8 +68,8 @@ import {
 import { EnforcementWorkflowOrchestrator } from "../services/enforcement/workflow-orchestrator";
 import { getDefaultProvider } from "../services/llm";
 import type { AnalyzedClaimData } from "../services/production-detection-engine";
-import { ListeningProvenance } from "@shared/online-listening-provenance";
-import { headProbeMany } from "../utils/url-head-probe";
+import { ListeningProvenance, type ListeningProvenanceValue } from "@shared/online-listening-provenance";
+import { headProbeMany, type HeadResult } from "../utils/url-head-probe";
 import { isValidHttpUrl } from "../utils/url-validation";
 
 const letterGenerationSchema = z.object({
@@ -5289,7 +5289,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
         .slice(0, 30);
 
       // HEAD-probe URLs to set isVerified honestly (don't block on failures)
-      let verifiedMap = new Map<string, { ok: boolean; status?: number }>();
+      let verifiedMap = new Map<string, HeadResult>();
       try {
         const probeUrls = toConsider.map(a => a.url).filter(Boolean) as string[];
         if (probeUrls.length > 0) {
@@ -5341,7 +5341,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           const isReachable = probe?.ok === true;
 
           // Map upstream sourceType → provenance
-          let provenance: string = ListeningProvenance.UNKNOWN;
+          let provenance: ListeningProvenanceValue = ListeningProvenance.UNKNOWN;
           if (article.sourceType === "newsapi_everything") provenance = ListeningProvenance.NEWSAPI_EVERYTHING;
           else if (article.sourceType === "google_news_rss") provenance = ListeningProvenance.GOOGLE_NEWS_RSS;
           else if (article.sourceType === "newsapi_top_headlines_sa") provenance = ListeningProvenance.NEWSAPI_TOP_HEADLINES_SA;
