@@ -69,6 +69,8 @@ import { EnforcementWorkflowOrchestrator } from "../services/enforcement/workflo
 import { getDefaultProvider } from "../services/llm";
 import type { AnalyzedClaimData } from "../services/production-detection-engine";
 import { ListeningProvenance } from "@shared/online-listening-provenance";
+import { headProbeMany } from "../utils/url-head-probe";
+import { isValidHttpUrl } from "../utils/url-validation";
 
 const letterGenerationSchema = z.object({
   providers: z.array(z.object({
@@ -5282,7 +5284,22 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       };
 
       // Cap at 30 articles to save
-      const toConsider = articles.slice(0, 30);
+      const toConsider = articles
+        .filter(a => isValidHttpUrl(a.url))
+        .slice(0, 30);
+
+      // HEAD-probe URLs to set isVerified honestly (don't block on failures)
+      let verifiedMap = new Map<string, { ok: boolean; status?: number }>();
+      try {
+        const probeUrls = toConsider.map(a => a.url).filter(Boolean) as string[];
+        if (probeUrls.length > 0) {
+          verifiedMap = await headProbeMany(probeUrls, { concurrency: 5, timeoutMs: 3000 });
+          const okCount = Array.from(verifiedMap.values()).filter(r => r.ok).length;
+          console.log(`[Online Listening] HEAD-probe: ${okCount}/${probeUrls.length} URLs reachable`);
+        }
+      } catch (e: any) {
+        console.log("[Online Listening] HEAD-probe error (continuing without verification):", e.message);
+      }
 
       // Pre-check duplicates by URL against the DB so we can return honest counts
       let existingUrls = new Set<string>();
@@ -5320,20 +5337,29 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           // Extract healthcare provider from content (not news source)
           const extractedProvider = extractHealthcareProvider(content);
 
+          const probe = verifiedMap.get(article.url);
+          const isReachable = probe?.ok === true;
+
+          // Map upstream sourceType → provenance
+          let provenance: string = ListeningProvenance.UNKNOWN;
+          if (article.sourceType === "newsapi_everything") provenance = ListeningProvenance.NEWSAPI_EVERYTHING;
+          else if (article.sourceType === "google_news_rss") provenance = ListeningProvenance.GOOGLE_NEWS_RSS;
+          else if (article.sourceType === "newsapi_top_headlines_sa") provenance = ListeningProvenance.NEWSAPI_TOP_HEADLINES_SA;
+
           // Create mention record immediately without AI (fast)
           const mention = {
             providerId: null,
-            providerName: extractedProvider?.name || null, // Only set if healthcare provider detected
+            providerName: extractedProvider?.name || null,
             source: "news_article" as const,
             sourceUrl: article.url,
             authorHandle: article.author,
             content: content,
-            sentiment: "neutral" as const, // Will be analyzed later if needed
+            sentiment: "neutral" as const,
             sentimentScore: "0",
             topics: article.searchKeyword ? [article.searchKeyword] : [],
             engagementCount: 0,
-            reachEstimate: 10000,
-            isVerified: true,
+            reachEstimate: null, // honest: we don't know reach for news articles
+            isVerified: isReachable,
             requiresAction: false,
             publishedAt: article.publishedAt ? new Date(article.publishedAt) : new Date(),
             capturedAt: new Date(),
@@ -5344,9 +5370,14 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
               searchKeyword: article.searchKeyword,
               providerNameEn: extractedProvider?.nameEn || null,
               upstreamSourceType: article.sourceType,
-              needsAnalysis: true
+              provenance,
+              verifiedAt: isReachable ? new Date().toISOString() : null,
+              probeStatus: probe?.status ?? null,
+              sentimentAnalyzed: false, // hardcoded "neutral" — flag honestly
+              metricsAreReal: false,
+              needsAnalysis: true,
             },
-            createdAt: new Date()
+            createdAt: new Date(),
           };
 
           // Save to database
