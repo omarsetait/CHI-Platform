@@ -1064,20 +1064,6 @@ function buildOnlineListeningRows() {
   // Case study-related mentions
   const csRelated = [
     {
-      providerId: "PRV-CS1-001",
-      providerName: "Al Noor Dental Center",
-      source: "twitter" as const,
-      authorHandle: "@SaudiHealthWatch",
-      content: "Thread: Multiple patients reporting being billed for dental procedures they never received at clinics in Riyadh's Al Olaya district. Anyone else experienced this? #CHI #DentalFraud #SaudiHealthcare",
-      sentiment: "very_negative" as const,
-      sentimentScore: "-0.9200",
-      topics: ["phantom_billing", "dental_fraud", "patient_complaints"],
-      engagementCount: 2340,
-      reachEstimate: 45000,
-      requiresAction: true,
-      publishedAt: new Date("2025-12-15"),
-    },
-    {
       providerId: "PRV-CS1-002",
       providerName: "Smile Plus Clinic",
       source: "sabq" as const,
@@ -1094,20 +1080,6 @@ function buildOnlineListeningRows() {
     {
       providerId: "PRV-CS2-001",
       providerName: "Al Hayat Women's Hospital",
-      source: "twitter" as const,
-      authorHandle: "@JeddahMoms",
-      content: "Warning to expecting mothers in Jeddah: I had a normal delivery at Al Hayat but my insurance was billed for a C-section! Check your claim statements carefully. #Jeddah #Maternity #HealthInsurance",
-      sentiment: "negative" as const,
-      sentimentScore: "-0.7500",
-      topics: ["upcoding", "maternity_billing", "patient_awareness"],
-      engagementCount: 1890,
-      reachEstimate: 35000,
-      requiresAction: true,
-      publishedAt: new Date("2025-11-20"),
-    },
-    {
-      providerId: "PRV-CS2-001",
-      providerName: "Al Hayat Women's Hospital",
       source: "alriyadh" as const,
       authorHandle: "جريدة الرياض",
       content: "مجلس الضمان الصحي يتخذ إجراءات تصحيحية ضد مستشفى خاص في جدة بعد اكتشاف ترميز مبالغ فيه لخدمات النساء والتوليد. المستشفى يلتزم بتصحيح إجراءات الفوترة.",
@@ -1119,38 +1091,10 @@ function buildOnlineListeningRows() {
       requiresAction: false,
       publishedAt: new Date("2026-01-18"),
     },
-    {
-      providerId: "PRV-CS3-001",
-      providerName: "Eastern Province Medical Center",
-      source: "twitter" as const,
-      authorHandle: "@InsuranceWatch_SA",
-      content: "Hearing reports of a major medical center in Dammam billing both Bupa Arabia and Gulf Union for the same procedures. Cross-insurer fraud detection finally working! #HealthInsurance #FraudDetection",
-      sentiment: "negative" as const,
-      sentimentScore: "-0.7000",
-      topics: ["duplicate_billing", "cross_insurer_fraud", "eastern_province"],
-      engagementCount: 890,
-      reachEstimate: 18000,
-      requiresAction: true,
-      publishedAt: new Date("2026-01-22"),
-    },
   ];
 
   // General healthcare sentiment mentions
   const general = [
-    {
-      providerId: "PRV-T1-002",
-      providerName: "King Faisal Specialist Hospital",
-      source: "twitter" as const,
-      authorHandle: "@RiyadhResident",
-      content: "Exceptional care at King Faisal Specialist Hospital. The oncology team is world-class. Grateful for the quality healthcare in the Kingdom. #SaudiHealthcare #Vision2030",
-      sentiment: "very_positive" as const,
-      sentimentScore: "0.9100",
-      topics: ["quality_care", "oncology", "positive_experience"],
-      engagementCount: 450,
-      reachEstimate: 8000,
-      requiresAction: false,
-      publishedAt: new Date("2026-01-05"),
-    },
     {
       providerId: null,
       providerName: null,
@@ -1180,20 +1124,6 @@ function buildOnlineListeningRows() {
       publishedAt: new Date("2026-01-12"),
     },
     {
-      providerId: "PRV-T1-005",
-      providerName: "Dallah Hospital",
-      source: "twitter" as const,
-      authorHandle: "@HealthcareQuality_SA",
-      content: "Long wait times at Dallah Hospital ER again. 3 hour wait for a child with fever. Private hospitals need better resource management. #DallahHospital #WaitTimes",
-      sentiment: "negative" as const,
-      sentimentScore: "-0.5500",
-      topics: ["wait_times", "emergency_department", "service_quality"],
-      engagementCount: 320,
-      reachEstimate: 6500,
-      requiresAction: false,
-      publishedAt: new Date("2026-01-08"),
-    },
-    {
       providerId: null,
       providerName: null,
       source: "almadina" as const,
@@ -1207,39 +1137,12 @@ function buildOnlineListeningRows() {
       requiresAction: false,
       publishedAt: new Date("2026-02-10"),
     },
-    {
-      providerId: "PRV-T1-004",
-      providerName: "Saudi German Hospital",
-      source: "forum" as const,
-      authorHandle: "MedicalForumSA_User42",
-      content: "Saudi German Hospital Jeddah has really improved their cardiac care unit. New equipment and well-trained staff. Recommend for anyone needing cardiac consultation in Jeddah.",
-      sentiment: "positive" as const,
-      sentimentScore: "0.6800",
-      topics: ["cardiac_care", "facility_improvement", "recommendation"],
-      engagementCount: 95,
-      reachEstimate: 2500,
-      requiresAction: false,
-      publishedAt: new Date("2025-12-28"),
-    },
-    {
-      providerId: null,
-      providerName: null,
-      source: "twitter" as const,
-      authorHandle: "@CHI_Saudi",
-      content: "مجلس الضمان الصحي يحذر من مقدمي خدمات صحية غير مرخصين يروجون لخدماتهم عبر وسائل التواصل الاجتماعي. يرجى التأكد من ترخيص المنشأة قبل العلاج.",
-      sentiment: "neutral" as const,
-      sentimentScore: "0.0500",
-      topics: ["unlicensed_providers", "consumer_protection", "chi_warning"],
-      engagementCount: 4200,
-      reachEstimate: 95000,
-      requiresAction: false,
-      publishedAt: new Date("2026-02-05"),
-    },
   ];
 
   for (const m of [...csRelated, ...general]) {
-    // Skip twitter/forum rows entirely — we have no way to seed real X URLs.
-    if (m.source === "twitter" || m.source === "forum") continue;
+    // Defensive: arrays no longer contain twitter/forum rows, but guard is kept in case
+    // future edits reintroduce them — we have no way to seed real X URLs.
+    if ((m.source as string) === "twitter" || (m.source as string) === "forum") continue;
 
     mentions.push({
       providerId: m.providerId,

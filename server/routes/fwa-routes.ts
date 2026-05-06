@@ -5477,7 +5477,7 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           },
         });
         savedMentions.push(saved);
-        existingUrls.add(mention.sourceUrl || "");
+        if (mention.sourceUrl) existingUrls.add(mention.sourceUrl);
         existingContents.add(contentKey || "");
       }
 
