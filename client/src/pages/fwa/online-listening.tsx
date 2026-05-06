@@ -126,6 +126,10 @@ export default function OnlineListening() {
     queryKey: ["/api/fwa/chi/online-listening/configs"],
   });
 
+  const { data: grokStatus } = useQuery<{ liveSearchEnabled: boolean; message: string }>({
+    queryKey: ["/api/fwa/chi/online-listening/grok-status"],
+  });
+
   useEffect(() => {
     if (sourceConfigs) {
       setEditedSources(sourceConfigs);
@@ -361,11 +365,12 @@ export default function OnlineListening() {
             <RefreshCw className={`w-4 h-4 mr-2 ${fetchMentionsMutation.isPending ? "animate-spin" : ""}`} />
             {fetchMentionsMutation.isPending ? "جاري الجلب..." : "تحديث الأخبار"}
           </Button>
-          <Button 
-            variant="outline" 
-            onClick={handleTwitterRefresh} 
-            disabled={fetchTwitterMutation.isPending}
-            className="bg-sky-50 hover:bg-sky-100 dark:bg-sky-950 dark:hover:bg-sky-900 border-sky-200 dark:border-sky-800"
+          <Button
+            variant="outline"
+            onClick={handleTwitterRefresh}
+            disabled={fetchTwitterMutation.isPending || !grokStatus?.liveSearchEnabled}
+            title={grokStatus && !grokStatus.liveSearchEnabled ? grokStatus.message : undefined}
+            className="bg-sky-50 hover:bg-sky-100 dark:bg-sky-950 dark:hover:bg-sky-900 border-sky-200 dark:border-sky-800 disabled:opacity-50"
             data-testid="button-twitter-refresh"
           >
             <Twitter className={`w-4 h-4 mr-2 text-sky-500 ${fetchTwitterMutation.isPending ? "animate-pulse" : ""}`} />
