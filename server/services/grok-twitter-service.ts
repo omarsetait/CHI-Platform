@@ -3,6 +3,7 @@
 // Falls back to OpenRouter if no XAI_API_KEY is set
 
 import OpenAI from "openai";
+import { normalizeXUrl } from "../utils/url-validation";
 
 interface GrokClientConfig {
   client: OpenAI;
@@ -138,55 +139,65 @@ Return JSON:
   "totalFound": 10
 }`;
 
+  if (!hasLiveSearch) {
+    console.warn("[Grok Twitter] Live Search not configured (no XAI_API_KEY) — refusing to return mentions to avoid hallucinated URLs.");
+    return {
+      mentions: [],
+      summary: "Live Search غير مفعّل. أضف XAI_API_KEY لتفعيل البحث الحي على منصة إكس. (Live Search disabled — set XAI_API_KEY to enable real-time X search.)",
+      totalFound: 0,
+      analysisTimestamp: new Date(),
+    };
+  }
+
   try {
-    // Build request with Live Search enabled for xAI
     const requestBody: any = {
       model,
       messages: [
         {
           role: "system",
-          content: "You are a healthcare social media analyst with real-time access to X/Twitter. Search for and analyze actual posts about Saudi healthcare. Return real post URLs. IMPORTANT: sentiment must be exactly one of: very_negative, negative, neutral, positive, very_positive"
+          content: "You are a healthcare social media analyst with real-time access to X/Twitter. Search for and analyze actual posts about Saudi healthcare. Return real post URLs from the search results. IMPORTANT: sentiment must be exactly one of: very_negative, negative, neutral, positive, very_positive. Never invent URLs — only use URLs that appear in your search citations.",
         },
-        {
-          role: "user",
-          content: prompt
-        }
+        { role: "user", content: prompt },
       ],
       max_tokens: 4000,
-    };
-
-    // Enable Live Search for xAI direct API
-    if (hasLiveSearch) {
-      requestBody.search_parameters = {
+      search_parameters: {
         mode: "auto",
         sources: [{ type: "x" }],
         return_citations: true,
-        max_search_results: 20
-      };
-    }
+        max_search_results: 20,
+      },
+    };
 
     const response = await (client.chat.completions.create as any)(requestBody);
-
     const content = response.choices[0].message.content || "{}";
-    
-    // Log citations if available (real URLs from Live Search)
-    if (response.citations) {
-      console.log("[Grok Twitter] Live Search citations:", response.citations);
-    }
-    
-    // Parse JSON from response
+    const citations: string[] = Array.isArray(response.citations) ? response.citations : [];
+    const citationSet = new Set(
+      citations.map(normalizeXUrl).filter((u): u is string => !!u)
+    );
+
     let jsonStr = content;
     if (content.includes("```json")) {
       jsonStr = content.split("```json")[1].split("```")[0].trim();
     } else if (content.includes("```")) {
       jsonStr = content.split("```")[1].split("```")[0].trim();
     }
-    
+
     const result = JSON.parse(jsonStr);
-    
-    const mentions: TwitterMention[] = (result.mentions || []).map((m: any) => {
+    const rawMentions: any[] = Array.isArray(result.mentions) ? result.mentions : [];
+
+    const mentions: TwitterMention[] = [];
+    let droppedNoUrl = 0;
+    let droppedBadShape = 0;
+    let droppedNotInCitations = 0;
+
+    for (const m of rawMentions) {
+      const normalized = normalizeXUrl(m.sourceUrl);
+      if (!m.sourceUrl) { droppedNoUrl++; continue; }
+      if (!normalized) { droppedBadShape++; continue; }
+      if (!citationSet.has(normalized)) { droppedNotInCitations++; continue; }
+
       const sentimentScore = typeof m.sentimentScore === "number" ? m.sentimentScore : 0;
-      return {
+      mentions.push({
         content: m.content || "",
         sentiment: normalizeSentiment(m.sentiment),
         sentimentScore,
@@ -198,15 +209,19 @@ Return JSON:
         reachEstimate: m.reachEstimate || 0,
         requiresAction: m.requiresAction || sentimentScore < -0.5,
         alertLevel: sentimentScore < -0.6 ? "critical" : sentimentScore < -0.3 ? "warning" : "normal",
-        publishedAt: m.publishedAt ? new Date(m.publishedAt) : new Date(Date.now() - Math.random() * 7 * 24 * 60 * 60 * 1000),
-        sourceUrl: m.sourceUrl,
-      };
-    });
+        publishedAt: m.publishedAt ? new Date(m.publishedAt) : new Date(),
+        sourceUrl: normalized,
+      });
+    }
+
+    console.log(
+      `[Grok Twitter] kept=${mentions.length} dropped(noUrl=${droppedNoUrl}, badShape=${droppedBadShape}, notInCitations=${droppedNotInCitations}) citations=${citationSet.size}`
+    );
 
     return {
       mentions,
       summary: result.summary || "تم تحليل منصة إكس بنجاح",
-      totalFound: result.totalFound || mentions.length,
+      totalFound: mentions.length,
       analysisTimestamp: new Date(),
     };
   } catch (error: any) {
