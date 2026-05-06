@@ -24,6 +24,12 @@ describe("isValidXStatusUrl", () => {
     expect(isValidXStatusUrl("")).toBe(false);
     expect(isValidXStatusUrl(undefined as any)).toBe(false);
   });
+  it("accepts max-length 15-char username", () => {
+    expect(isValidXStatusUrl("https://x.com/abcdefghijklmno/status/1234567890123456789")).toBe(true);
+  });
+  it("rejects 16-char username (over Twitter limit)", () => {
+    expect(isValidXStatusUrl("https://x.com/abcdefghijklmnop/status/1234567890123456789")).toBe(false);
+  });
 });
 
 describe("isValidHttpUrl", () => {
@@ -38,6 +44,10 @@ describe("isValidHttpUrl", () => {
   });
   it("rejects empty", () => {
     expect(isValidHttpUrl("")).toBe(false);
+  });
+  it("rejects null and undefined", () => {
+    expect(isValidHttpUrl(null as any)).toBe(false);
+    expect(isValidHttpUrl(undefined as any)).toBe(false);
   });
 });
 
@@ -54,5 +64,14 @@ describe("normalizeXUrl", () => {
   });
   it("returns null for invalid URL", () => {
     expect(normalizeXUrl("not a url")).toBeNull();
+  });
+  it("strips fragment", () => {
+    expect(normalizeXUrl("https://x.com/h/status/1234567890123456789#media")).toBe(
+      "https://x.com/h/status/1234567890123456789"
+    );
+  });
+  it("returns null for null and undefined input", () => {
+    expect(normalizeXUrl(null as any)).toBeNull();
+    expect(normalizeXUrl(undefined as any)).toBeNull();
   });
 });
