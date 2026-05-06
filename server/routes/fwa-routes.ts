@@ -5464,6 +5464,22 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
     }
   });
 
+  app.get("/api/fwa/chi/online-listening/grok-status", async (_req, res) => {
+    try {
+      const { isGrokConfigured } = await import("../services/grok-twitter-service");
+      const liveSearchEnabled = !!process.env.XAI_API_KEY;
+      res.json({
+        configured: isGrokConfigured(),
+        liveSearchEnabled,
+        message: liveSearchEnabled
+          ? "Live Search enabled (xAI direct API)"
+          : "Live Search disabled — set XAI_API_KEY to enable real-time X search",
+      });
+    } catch (error) {
+      handleRouteError(res, error, "/api/fwa/chi/online-listening/grok-status", "get grok status");
+    }
+  });
+
   // Provider reputation analysis via Grok
   app.get("/api/fwa/chi/online-listening/reputation/:providerName", async (req, res) => {
     try {
