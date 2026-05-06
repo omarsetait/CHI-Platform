@@ -609,6 +609,7 @@ export default function OnlineListening() {
               <div className="space-y-4">
                 {filteredMentions.map((mention) => {
                   const SourceIcon = sourceIcons[mention.source] || MessageCircle;
+                  const meta = (mention.metadata ?? {}) as Record<string, any>;
                   return (
                     <Card key={mention.id} className={mention.requiresAction ? "border-amber-300 dark:border-amber-700" : ""} data-testid={`mention-${mention.id}`}>
                       <CardContent className="p-4">
@@ -624,7 +625,6 @@ export default function OnlineListening() {
                                   <span className="text-sm text-muted-foreground">{mention.authorHandle}</span>
                                 )}
                                 {(() => {
-                                  const meta = (mention.metadata ?? {}) as Record<string, any>;
                                   const prov = provenanceLabel[meta.provenance] ?? provenanceLabel.unknown;
                                   return (
                                     <Badge className={prov.cls} data-testid={`badge-provenance-${mention.id}`}>
@@ -633,8 +633,7 @@ export default function OnlineListening() {
                                   );
                                 })()}
                                 {(() => {
-                                  const meta = (mention.metadata ?? {}) as Record<string, any>;
-                                  if (meta.demo) return null; // demo badge already covers it
+                                  if (meta.demo || meta.provenance === "demo_seed") return null; // demo badge already covers it
                                   if (mention.isVerified) {
                                     return <Badge className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200" data-testid={`badge-verified-${mention.id}`}>Verified</Badge>;
                                   }
@@ -659,7 +658,6 @@ export default function OnlineListening() {
                               <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
                                 <span>{mention.publishedAt ? new Date(mention.publishedAt).toLocaleDateString() : ""}</span>
                                 {(() => {
-                                  const meta = (mention.metadata ?? {}) as Record<string, any>;
                                   const showMetrics = meta.metricsAreReal === true;
                                   if (!showMetrics) return null;
                                   return (
@@ -678,7 +676,6 @@ export default function OnlineListening() {
                           </div>
                           <div className="flex items-center gap-2">
                             {(() => {
-                              const meta = (mention.metadata ?? {}) as Record<string, any>;
                               if (meta.sentimentAnalyzed !== true) {
                                 return (
                                   <div className="text-center">
