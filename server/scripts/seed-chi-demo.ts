@@ -1238,13 +1238,14 @@ function buildOnlineListeningRows() {
   ];
 
   for (const m of [...csRelated, ...general]) {
+    // Skip twitter/forum rows entirely — we have no way to seed real X URLs.
+    if (m.source === "twitter" || m.source === "forum") continue;
+
     mentions.push({
       providerId: m.providerId,
       providerName: m.providerName,
       source: m.source,
-      sourceUrl: m.source === "twitter"
-        ? `https://twitter.com/${(m.authorHandle ?? "").replace("@", "")}/status/${hashAbs(m.content.slice(0, 30))}`
-        : `https://${m.source}.com/article/${hashAbs(m.content.slice(0, 30))}`,
+      sourceUrl: null, // demo rows do not point to real articles
       authorHandle: m.authorHandle,
       content: m.content,
       sentiment: m.sentiment,
@@ -1252,9 +1253,15 @@ function buildOnlineListeningRows() {
       topics: m.topics,
       engagementCount: m.engagementCount,
       reachEstimate: m.reachEstimate,
-      isVerified: m.source !== "twitter" && m.source !== "forum",
+      isVerified: false, // never claim verification for demo rows
       requiresAction: m.requiresAction,
       publishedAt: m.publishedAt,
+      metadata: {
+        demo: true,
+        provenance: "demo_seed",
+        sentimentAnalyzed: true, // sentiment was hand-curated for demo
+        metricsAreReal: false,
+      },
     });
   }
 
