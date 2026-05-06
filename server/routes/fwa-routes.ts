@@ -68,6 +68,7 @@ import {
 import { EnforcementWorkflowOrchestrator } from "../services/enforcement/workflow-orchestrator";
 import { getDefaultProvider } from "../services/llm";
 import type { AnalyzedClaimData } from "../services/production-detection-engine";
+import { ListeningProvenance } from "@shared/online-listening-provenance";
 
 const letterGenerationSchema = z.object({
   providers: z.array(z.object({
@@ -5434,8 +5435,15 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           topics: mention.topics,
           engagementCount: mention.engagementEstimate,
           reachEstimate: mention.reachEstimate,
+          isVerified: true, // citation-validated by grok-twitter-service
           requiresAction: mention.requiresAction,
-          metadata: { alertLevel: mention.alertLevel },
+          metadata: {
+            alertLevel: mention.alertLevel,
+            provenance: ListeningProvenance.GROK_LIVE_SEARCH,
+            verifiedAt: new Date().toISOString(),
+            sentimentAnalyzed: true,
+            metricsAreReal: false, // engagement/reach are LLM estimates
+          },
         });
         savedMentions.push(saved);
         existingUrls.add(mention.sourceUrl || "");
