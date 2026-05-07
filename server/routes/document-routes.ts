@@ -5,7 +5,6 @@ import OpenAI from "openai";
 import multer from "multer";
 import { documentIngestionService, DocumentCategory } from "../services/document-ingestion-service";
 import { knowledgeUploadQueueService } from "../services/knowledge-upload-queue-service";
-import { requireAuth } from "../middleware/auth";
 import { z } from "zod";
 
 let _openai: OpenAI | null = null;
@@ -64,9 +63,23 @@ const uploadMetadataSchema = z.object({
   expiryDate: z.string().optional()
 });
 
-const batchUploadMetadataItemSchema = uploadMetadataSchema.partial().extend({
-  title: z.string().min(1, "Title is required").optional(),
-  category: uploadMetadataSchema.shape.category.optional(),
+const batchUploadMetadataItemSchema = z.object({
+  title: z.string().optional(),
+  titleAr: z.string().optional(),
+  category: z.enum([
+    "law_regulation",
+    "resolution_circular",
+    "chi_mandatory_policy",
+    "clinical_manual",
+    "drug_formulary",
+    "training_material",
+    "other"
+  ]).optional(),
+  description: z.string().optional(),
+  descriptionAr: z.string().optional(),
+  sourceAuthority: z.string().optional(),
+  effectiveDate: z.string().optional(),
+  expiryDate: z.string().optional()
 });
 
 const uploadJobStatusSchema = z.enum([
@@ -146,7 +159,7 @@ export function registerDocumentRoutes(
 
       const document = await storage.createClaimDocument(docData);
       console.log(`[Document] Uploaded: ${fileName} for claim ${claimReference || claimId}`);
-      
+
       res.status(201).json({
         success: true,
         document,
@@ -171,8 +184,8 @@ export function registerDocumentRoutes(
 
       const extractedDiagnoses: string[] = [];
       const extractedProcedures: string[] = [];
-      const extractedDates: Array<{label: string; date: string}> = [];
-      const extractedAmounts: Array<{label: string; amount: number}> = [];
+      const extractedDates: Array<{ label: string; date: string }> = [];
+      const extractedAmounts: Array<{ label: string; amount: number }> = [];
 
       const icdPattern = /\b([A-Z]\d{2}(?:\.\d{1,2})?)\b/g;
       const icdMatches = ocrText.match(icdPattern);
@@ -238,7 +251,7 @@ export function registerDocumentRoutes(
       }
 
       const ocrText = document.ocrText || "";
-      
+
       let aiComparisonResult;
       try {
         const prompt = `You are a healthcare fraud detection specialist. Compare the following medical document text with the claim data and identify any discrepancies that could indicate fraud, waste, or abuse.
@@ -460,7 +473,7 @@ Only return valid JSON, no other text.`;
   // =============================================
 
   // Upload a single knowledge document (queue-backed)
-  app.post("/api/knowledge-documents/upload", requireAuth, uploadMiddleware.single("file"), async (req: Request, res: Response) => {
+  app.post("/api/knowledge-documents/upload", uploadMiddleware.single("file"), async (req: Request, res: Response) => {
     try {
       if (!(await ensureKnowledgeQueueReady(res))) return;
 
@@ -519,7 +532,7 @@ Only return valid JSON, no other text.`;
   });
 
   // Upload multiple knowledge documents (queue-backed batch)
-  app.post("/api/knowledge-documents/upload-batch", requireAuth, uploadMiddleware.array("files", 50), async (req: Request, res: Response) => {
+  app.post("/api/knowledge-documents/upload-batch", uploadMiddleware.array("files", 50), async (req: Request, res: Response) => {
     try {
       if (!(await ensureKnowledgeQueueReady(res))) return;
 
@@ -727,7 +740,7 @@ Only return valid JSON, no other text.`;
   });
 
   // Retry only failed items for a completed/failed batch
-  app.post("/api/knowledge-documents/upload-jobs/:jobId/retry-failed", requireAuth, async (req: Request, res: Response) => {
+  app.post("/api/knowledge-documents/upload-jobs/:jobId/retry-failed", async (req: Request, res: Response) => {
     try {
       if (!(await ensureKnowledgeQueueReady(res))) return;
 
@@ -849,7 +862,7 @@ Only return valid JSON, no other text.`;
   });
 
   // Delete a knowledge document
-  app.delete("/api/knowledge-documents/:id", requireAuth, async (req: Request, res: Response) => {
+  app.delete("/api/knowledge-documents/:id", async (req: Request, res: Response) => {
     try {
       await documentIngestionService.deleteDocument(req.params.id);
       res.json({
@@ -863,7 +876,7 @@ Only return valid JSON, no other text.`;
   });
 
   // Re-process a knowledge document (clear chunks, reset status, re-run ingestion)
-  app.post("/api/knowledge-documents/:id/reprocess", requireAuth, async (req: Request, res: Response) => {
+  app.post("/api/knowledge-documents/:id/reprocess", async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
 

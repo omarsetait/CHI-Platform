@@ -68,6 +68,9 @@ import {
 import { EnforcementWorkflowOrchestrator } from "../services/enforcement/workflow-orchestrator";
 import { getDefaultProvider } from "../services/llm";
 import type { AnalyzedClaimData } from "../services/production-detection-engine";
+import { ListeningProvenance, type ListeningProvenanceValue } from "@shared/online-listening-provenance";
+import { headProbeMany, type HeadResult } from "../utils/url-head-probe";
+import { isValidHttpUrl } from "../utils/url-validation";
 
 const letterGenerationSchema = z.object({
   providers: z.array(z.object({
@@ -5281,7 +5284,22 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       };
 
       // Cap at 30 articles to save
-      const toConsider = articles.slice(0, 30);
+      const toConsider = articles
+        .filter(a => isValidHttpUrl(a.url))
+        .slice(0, 30);
+
+      // HEAD-probe URLs to set isVerified honestly (don't block on failures)
+      let verifiedMap = new Map<string, HeadResult>();
+      try {
+        const probeUrls = toConsider.map(a => a.url).filter(Boolean) as string[];
+        if (probeUrls.length > 0) {
+          verifiedMap = await headProbeMany(probeUrls, { concurrency: 5, timeoutMs: 3000 });
+          const okCount = Array.from(verifiedMap.values()).filter(r => r.ok).length;
+          console.log(`[Online Listening] HEAD-probe: ${okCount}/${probeUrls.length} URLs reachable`);
+        }
+      } catch (e: any) {
+        console.log("[Online Listening] HEAD-probe error (continuing without verification):", e.message);
+      }
 
       // Pre-check duplicates by URL against the DB so we can return honest counts
       let existingUrls = new Set<string>();
@@ -5319,20 +5337,29 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           // Extract healthcare provider from content (not news source)
           const extractedProvider = extractHealthcareProvider(content);
 
+          const probe = verifiedMap.get(article.url);
+          const isReachable = probe?.ok === true;
+
+          // Map upstream sourceType → provenance
+          let provenance: ListeningProvenanceValue = ListeningProvenance.UNKNOWN;
+          if (article.sourceType === "newsapi_everything") provenance = ListeningProvenance.NEWSAPI_EVERYTHING;
+          else if (article.sourceType === "google_news_rss") provenance = ListeningProvenance.GOOGLE_NEWS_RSS;
+          else if (article.sourceType === "newsapi_top_headlines_sa") provenance = ListeningProvenance.NEWSAPI_TOP_HEADLINES_SA;
+
           // Create mention record immediately without AI (fast)
           const mention = {
             providerId: null,
-            providerName: extractedProvider?.name || null, // Only set if healthcare provider detected
+            providerName: extractedProvider?.name || null,
             source: "news_article" as const,
             sourceUrl: article.url,
             authorHandle: article.author,
             content: content,
-            sentiment: "neutral" as const, // Will be analyzed later if needed
+            sentiment: "neutral" as const,
             sentimentScore: "0",
             topics: article.searchKeyword ? [article.searchKeyword] : [],
             engagementCount: 0,
-            reachEstimate: 10000,
-            isVerified: true,
+            reachEstimate: null, // honest: we don't know reach for news articles
+            isVerified: isReachable,
             requiresAction: false,
             publishedAt: article.publishedAt ? new Date(article.publishedAt) : new Date(),
             capturedAt: new Date(),
@@ -5343,9 +5370,14 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
               searchKeyword: article.searchKeyword,
               providerNameEn: extractedProvider?.nameEn || null,
               upstreamSourceType: article.sourceType,
-              needsAnalysis: true
+              provenance,
+              verifiedAt: isReachable ? new Date().toISOString() : null,
+              probeStatus: probe?.status ?? null,
+              sentimentAnalyzed: false, // hardcoded "neutral" — flag honestly
+              metricsAreReal: false,
+              needsAnalysis: true,
             },
-            createdAt: new Date()
+            createdAt: new Date(),
           };
 
           // Save to database
@@ -5434,11 +5466,18 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
           topics: mention.topics,
           engagementCount: mention.engagementEstimate,
           reachEstimate: mention.reachEstimate,
+          isVerified: true, // citation-validated by grok-twitter-service
           requiresAction: mention.requiresAction,
-          metadata: { alertLevel: mention.alertLevel },
+          metadata: {
+            alertLevel: mention.alertLevel,
+            provenance: ListeningProvenance.GROK_LIVE_SEARCH,
+            verifiedAt: new Date().toISOString(),
+            sentimentAnalyzed: true,
+            metricsAreReal: false, // engagement/reach are LLM estimates
+          },
         });
         savedMentions.push(saved);
-        existingUrls.add(mention.sourceUrl || "");
+        if (mention.sourceUrl) existingUrls.add(mention.sourceUrl);
         existingContents.add(contentKey || "");
       }
 
@@ -5453,6 +5492,22 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       });
     } catch (error) {
       handleRouteError(res, error, "/api/fwa/chi/online-listening/twitter", "analyze Twitter mentions");
+    }
+  });
+
+  app.get("/api/fwa/chi/online-listening/grok-status", async (_req, res) => {
+    try {
+      const { isGrokConfigured } = await import("../services/grok-twitter-service");
+      const liveSearchEnabled = !!process.env.XAI_API_KEY;
+      res.json({
+        configured: isGrokConfigured(),
+        liveSearchEnabled,
+        message: liveSearchEnabled
+          ? "Live Search enabled (xAI direct API)"
+          : "Live Search disabled — set XAI_API_KEY to enable real-time X search",
+      });
+    } catch (error) {
+      handleRouteError(res, error, "/api/fwa/chi/online-listening/grok-status", "get grok status");
     }
   });
 
@@ -5778,186 +5833,8 @@ The tone should be firm, authoritative, and leave no ambiguity about the serious
       }
     }
 
-    // Online Listening: Seed Saudi-specific social media mentions for fraud case studies
-    if (!seededTables.has('online_listening')) {
-      seededTables.add('online_listening');
-      const existingMentions = await storage.getOnlineListeningMentions();
-      if (existingMentions.length === 0) {
-        const saudiMentionsData = [
-          // === Case Study 1: Dental Ring ===
-          {
-            providerId: "PRV-CS1-001",
-            providerName: "Al Noor Dental Center",
-            source: "twitter" as const,
-            authorHandle: "@SaudiPatient_22",
-            content: "My dental clinic charged Bupa for 3 root canals I never had — anyone else experiencing this? مركز النور لطب الأسنان #تأمين_صحي #احتيال",
-            sentiment: "very_negative" as const,
-            sentimentScore: "-0.9200",
-            topics: ["billing_fraud", "dental", "phantom_billing"],
-            engagementCount: 342,
-            reachEstimate: 15200,
-            requiresAction: true,
-            publishedAt: new Date("2026-02-15T14:30:00Z"),
-          },
-          {
-            providerId: "PRV-CS1-004",
-            providerName: "Pearl Dental Center",
-            source: "twitter" as const,
-            authorHandle: "@ConsumerRights_SA",
-            content: "@CHI_Saudi I was billed SAR 4,500 for procedures I didn't receive at Pearl Dental Center. This is fraud! When will CHI take action? مركز اللؤلؤة لطب الأسنان",
-            sentiment: "very_negative" as const,
-            sentimentScore: "-0.8800",
-            topics: ["billing_fraud", "dental", "regulatory_complaint"],
-            engagementCount: 567,
-            reachEstimate: 28400,
-            requiresAction: true,
-            publishedAt: new Date("2026-02-18T09:15:00Z"),
-          },
-          {
-            providerId: "PRV-CS1-002",
-            providerName: "Smile Plus Clinic",
-            source: "forum" as const,
-            authorHandle: "RiyadhResident_88",
-            content: "Warning: Smile Plus Clinic in Olaya district charged my insurance for dental work that was never done. They billed for 2 crowns and a root canal on a single visit. تحذير من عيادة سمايل بلس",
-            sentiment: "negative" as const,
-            sentimentScore: "-0.7500",
-            topics: ["dental", "billing_fraud", "consumer_warning"],
-            engagementCount: 89,
-            reachEstimate: 4200,
-            requiresAction: true,
-            publishedAt: new Date("2026-02-10T16:45:00Z"),
-          },
-
-          // === Case Study 2: OB/GYN Upcoding ===
-          {
-            providerId: "PRV-CS2-001",
-            providerName: "Al Hayat Women's Hospital",
-            source: "twitter" as const,
-            authorHandle: "@UmmAhmed_JED",
-            content: "My wife was pressured into a C-section at Al Hayat Hospital even though the doctor said natural delivery was fine. SAR 12,000 bill! Who benefits from these unnecessary surgeries? #مستشفى_الحياة #ولادة_قيصرية",
-            sentiment: "very_negative" as const,
-            sentimentScore: "-0.8500",
-            topics: ["upcoding", "obstetrics", "unnecessary_procedures"],
-            engagementCount: 891,
-            reachEstimate: 42000,
-            requiresAction: true,
-            publishedAt: new Date("2026-02-20T11:20:00Z"),
-          },
-          {
-            source: "news_article" as const,
-            providerName: "Multiple providers",
-            content: "Rising C-section rates in Saudi private hospitals spark regulatory concern — CHI data shows a 68% C-section rate at some Jeddah facilities vs 23% national average. Health economists warn this may indicate systematic upcoding.",
-            sentiment: "negative" as const,
-            sentimentScore: "-0.6000",
-            topics: ["upcoding", "obstetrics", "regulatory", "c_section_rates"],
-            engagementCount: 2340,
-            reachEstimate: 156000,
-            requiresAction: false,
-            publishedAt: new Date("2026-02-22T08:00:00Z"),
-            sourceUrl: "https://www.arabnews.com/health/article/2026/02/22/rising-csection-rates",
-          },
-
-          // === General Healthcare Mentions (Background) ===
-          // Negative: Insurance coverage complaint
-          {
-            source: "twitter" as const,
-            authorHandle: "@FrustratedExpat_KSA",
-            content: "Submitted a claim to my insurer 3 weeks ago for a specialist visit and still no response. The new NPHIES portal keeps timing out. How is this acceptable? #NPHIES #تأمين_طبي",
-            sentiment: "negative" as const,
-            sentimentScore: "-0.6500",
-            topics: ["insurance_coverage", "nphies", "claims_delay"],
-            engagementCount: 213,
-            reachEstimate: 9800,
-            requiresAction: false,
-            publishedAt: new Date("2026-02-12T10:00:00Z"),
-          },
-          // Negative: NPHIES system issues
-          {
-            source: "sabq" as const,
-            providerName: "Multiple providers",
-            content: "مقدمو خدمات صحية يشتكون من أعطال متكررة في نظام نفيس خلال ساعات الذروة، مما يؤخر معالجة المطالبات ويؤثر على التدفق النقدي للمستشفيات الصغيرة. NPHIES downtime complaints rise among providers.",
-            sentiment: "negative" as const,
-            sentimentScore: "-0.5500",
-            topics: ["nphies", "system_outage", "provider_complaints"],
-            engagementCount: 456,
-            reachEstimate: 34000,
-            requiresAction: false,
-            publishedAt: new Date("2026-02-14T07:30:00Z"),
-            sourceUrl: "https://sabq.org/saudia/nphies-downtime-2026",
-          },
-          // Negative: Medication pricing concerns
-          {
-            source: "okaz" as const,
-            content: "ارتفاع أسعار الأدوية المزمنة في الصيدليات الخاصة يثير قلق المرضى — بعض الأدوية زادت بنسبة 40% خلال 6 أشهر. مجلس الضمان الصحي يدرس وضع سقف سعري. Medication prices surge concerns patients.",
-            sentiment: "negative" as const,
-            sentimentScore: "-0.5000",
-            topics: ["medication_pricing", "pharmacy", "cost_of_care"],
-            engagementCount: 1120,
-            reachEstimate: 78000,
-            requiresAction: false,
-            publishedAt: new Date("2026-02-08T12:00:00Z"),
-            sourceUrl: "https://www.okaz.com.sa/news/local/medication-prices-2026",
-          },
-          // Positive: CHI regulations
-          {
-            source: "alriyadh" as const,
-            content: "مجلس الضمان الصحي يطلق مبادرة جديدة لتعزيز الشفافية في الفوترة الطبية وحماية حقوق المؤمن لهم. المبادرة تشمل خط ساخن للإبلاغ عن المخالفات. CHI launches billing transparency initiative with fraud hotline.",
-            sentiment: "positive" as const,
-            sentimentScore: "0.7200",
-            topics: ["chi_regulation", "transparency", "patient_rights"],
-            engagementCount: 876,
-            reachEstimate: 92000,
-            requiresAction: false,
-            publishedAt: new Date("2026-02-05T09:00:00Z"),
-            sourceUrl: "https://www.alriyadh.com/health/chi-transparency-2026",
-          },
-          // Positive: CHI enforcement actions
-          {
-            source: "twitter" as const,
-            authorHandle: "@HealthPolicy_SA",
-            content: "Good to see CHI cracking down on fraudulent billing practices. 12 clinics fined in January alone. This is how you protect patients and the insurance system. أحسنت يا مجلس الضمان الصحي #CHI #مكافحة_الاحتيال",
-            sentiment: "positive" as const,
-            sentimentScore: "0.8000",
-            topics: ["chi_enforcement", "fraud_prevention", "positive_sentiment"],
-            engagementCount: 1543,
-            reachEstimate: 67000,
-            requiresAction: false,
-            publishedAt: new Date("2026-02-25T15:45:00Z"),
-          },
-          // Neutral: Wait time complaints
-          {
-            source: "almadina" as const,
-            providerName: "King Fahd Medical City",
-            content: "مدينة الملك فهد الطبية تعلن عن خطة لتقليل أوقات الانتظار في العيادات الخارجية بنسبة 30% خلال الربع القادم. الخطة تشمل توسيع ساعات العمل وإضافة عيادات مسائية. Wait time reduction plan announced.",
-            sentiment: "neutral" as const,
-            sentimentScore: "0.1500",
-            topics: ["wait_times", "service_improvement", "outpatient"],
-            engagementCount: 312,
-            reachEstimate: 45000,
-            requiresAction: false,
-            publishedAt: new Date("2026-02-17T06:00:00Z"),
-            sourceUrl: "https://www.al-madina.com/article/wait-time-plan-2026",
-          },
-          // Neutral: SBS V3.0 compliance challenges
-          {
-            source: "sabq" as const,
-            providerName: "Multiple providers",
-            content: "مقدمو الخدمات الصحية يستعدون لتطبيق معايير SBS V3.0 الجديدة — التحديات تشمل تحديث أنظمة الفوترة وتدريب الكوادر. مجلس الضمان يمدد فترة الامتثال 3 أشهر إضافية. SBS V3.0 compliance deadline extended.",
-            sentiment: "neutral" as const,
-            sentimentScore: "0.0500",
-            topics: ["sbs_v3", "compliance", "provider_readiness"],
-            engagementCount: 198,
-            reachEstimate: 21000,
-            requiresAction: false,
-            publishedAt: new Date("2026-02-03T14:00:00Z"),
-            sourceUrl: "https://sabq.org/saudia/sbs-v3-compliance-2026",
-          },
-        ];
-        for (const mention of saudiMentionsData) {
-          await storage.createOnlineListeningMention(mention);
-        }
-      }
-    }
+    // Online Listening: do not seed here. Real mentions come from /api/fwa/chi/online-listening/fetch
+    // (NewsAPI + Google News) and /twitter (Grok Live Search). Demo rows live in seed-chi-demo.ts.
   }
 
   // Provider lookup endpoint for enforcement case creation (from Provider Directory)

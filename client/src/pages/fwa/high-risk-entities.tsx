@@ -1139,13 +1139,19 @@ function ProvidersTab() {
     });
   }, [providers, regionFilter, specialtyFilter]);
 
+  const totalExposure = providers.reduce((sum, p) => sum + parseFloat(p.totalExposure || "0"), 0);
+  const totalClaimsCount = providers.reduce((sum, p) => sum + (p.totalClaims || 0), 0);
+  const totalFlagged = providers.reduce((sum, p) => sum + (p.flaggedClaims || 0), 0);
+  const totalUniquePatients = providers.reduce((sum, p) => sum + ((p as any).uniquePatients || 0), 0);
   const stats = {
     total: total,
     critical: providers.filter(p => p.riskLevel === "critical").length,
     high: providers.filter(p => p.riskLevel === "high").length,
-    totalExposure: providers.reduce((sum, p) => sum + parseFloat(p.totalExposure || "0"), 0),
-    totalClaims: providers.reduce((sum, p) => sum + (p.totalClaims || 0), 0),
+    totalExposure,
+    totalClaims: totalClaimsCount,
     avgCPM: providers.length > 0 ? providers.reduce((sum, p) => sum + parseFloat(p.claimsPerMonth || "0"), 0) / providers.length : 0,
+    flaggedExposure: totalClaimsCount > 0 ? totalExposure * (totalFlagged / totalClaimsCount) : 0,
+    costPerMember: totalUniquePatients > 0 ? totalExposure / totalUniquePatients : 0,
   };
 
   const handleSort = useCallback((field: string) => {
@@ -1169,14 +1175,16 @@ function ProvidersTab() {
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {[
           { title: "Total Providers", value: stats.total, icon: Building2, color: "text-muted-foreground", delay: 0 },
-          { title: "Critical Risk", value: stats.critical, icon: AlertTriangle, color: "text-red-600", delay: 0.1 },
-          { title: "High Risk", value: stats.high, icon: TrendingUp, color: "text-orange-600", delay: 0.2 },
-          { title: "Total Exposure", value: formatCurrency(stats.totalExposure), icon: DollarSign, color: "text-muted-foreground", delay: 0.3 },
-          { title: "Total Claims", value: stats.totalClaims.toLocaleString(), icon: FileText, color: "text-muted-foreground", delay: 0.4 },
-          { title: "Avg CPM", value: stats.avgCPM.toFixed(1), icon: Activity, color: "text-purple-600", delay: 0.5 },
+          { title: "Critical Risk", value: stats.critical, icon: AlertTriangle, color: "text-red-600", delay: 0.05 },
+          { title: "High Risk", value: stats.high, icon: TrendingUp, color: "text-orange-600", delay: 0.1 },
+          { title: "Total Claim Amount", value: formatCurrency(stats.totalExposure), icon: DollarSign, color: "text-muted-foreground", delay: 0.15 },
+          { title: "Flagged Exposure", value: formatCurrency(stats.flaggedExposure), icon: AlertTriangle, color: "text-red-600", delay: 0.2 },
+          { title: "Total Claims", value: stats.totalClaims.toLocaleString(), icon: FileText, color: "text-muted-foreground", delay: 0.25 },
+          { title: "Cost/Member", value: formatCurrency(stats.costPerMember), icon: Users, color: "text-purple-600", delay: 0.3 },
+          { title: "Avg CPM", value: stats.avgCPM.toFixed(1), icon: Activity, color: "text-purple-600", delay: 0.35 },
         ].map((stat) => (
           <motion.div
             key={stat.title}
@@ -1359,13 +1367,18 @@ function PatientsTab() {
     });
   }, [patients, specialtyFilter]);
 
+  const patientTotalAmount = patients.reduce((sum, p) => sum + parseFloat(p.totalAmount || "0"), 0);
+  const patientTotalClaims = patients.reduce((sum, p) => sum + (p.totalClaims || 0), 0);
+  const patientTotalFlagged = patients.reduce((sum, p) => sum + (p.flaggedClaims || 0), 0);
   const stats = {
     total: total,
     critical: patients.filter(p => p.riskLevel === "critical").length,
     high: patients.filter(p => p.riskLevel === "high").length,
-    totalAmount: patients.reduce((sum, p) => sum + parseFloat(p.totalAmount || "0"), 0),
-    totalClaims: patients.reduce((sum, p) => sum + (p.totalClaims || 0), 0),
+    totalAmount: patientTotalAmount,
+    totalClaims: patientTotalClaims,
     avgProviders: patients.length > 0 ? patients.reduce((sum, p) => sum + ((p as any).uniqueProviders || 0), 0) / patients.length : 0,
+    flaggedExposure: patientTotalClaims > 0 ? patientTotalAmount * (patientTotalFlagged / patientTotalClaims) : 0,
+    costPerMember: patients.length > 0 ? patientTotalAmount / patients.length : 0,
   };
 
   const handleSort = useCallback((field: string) => {
@@ -1384,14 +1397,16 @@ function PatientsTab() {
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {[
           { title: "Total Patients", value: stats.total, icon: User, color: "text-muted-foreground", delay: 0 },
-          { title: "Critical Risk", value: stats.critical, icon: AlertTriangle, color: "text-red-600", delay: 0.1 },
-          { title: "High Risk", value: stats.high, icon: TrendingUp, color: "text-orange-600", delay: 0.2 },
-          { title: "Total Claims", value: formatCurrency(stats.totalAmount), icon: DollarSign, color: "text-muted-foreground", delay: 0.3 },
-          { title: "Claims Count", value: stats.totalClaims.toLocaleString(), icon: FileText, color: "text-muted-foreground", delay: 0.4 },
-          { title: "Avg Providers", value: stats.avgProviders.toFixed(1), icon: Users, color: "text-purple-600", delay: 0.5 },
+          { title: "Critical Risk", value: stats.critical, icon: AlertTriangle, color: "text-red-600", delay: 0.05 },
+          { title: "High Risk", value: stats.high, icon: TrendingUp, color: "text-orange-600", delay: 0.1 },
+          { title: "Total Claim Amount", value: formatCurrency(stats.totalAmount), icon: DollarSign, color: "text-muted-foreground", delay: 0.15 },
+          { title: "Flagged Exposure", value: formatCurrency(stats.flaggedExposure), icon: AlertTriangle, color: "text-red-600", delay: 0.2 },
+          { title: "Claims Count", value: stats.totalClaims.toLocaleString(), icon: FileText, color: "text-muted-foreground", delay: 0.25 },
+          { title: "Cost/Member", value: formatCurrency(stats.costPerMember), icon: Users, color: "text-purple-600", delay: 0.3 },
+          { title: "Avg Providers", value: stats.avgProviders.toFixed(1), icon: Users, color: "text-purple-600", delay: 0.35 },
         ].map((stat) => (
           <motion.div
             key={stat.title}
@@ -1566,16 +1581,22 @@ function DoctorsTab() {
     });
   }, [doctors, regionFilter]);
 
+  const doctorTotalExposure = doctors.reduce((sum, d) => sum + parseFloat(d.totalExposure || "0"), 0);
+  const doctorTotalClaims = doctors.reduce((sum, d) => sum + (d.totalClaims || 0), 0);
+  const doctorTotalFlagged = doctors.reduce((sum, d) => sum + (d.flaggedClaims || 0), 0);
+  const doctorTotalPatients = doctors.reduce((sum, d) => sum + ((d as any).uniquePatients || 0), 0);
   const stats = {
     total: total,
     critical: doctors.filter(d => d.riskLevel === "critical").length,
     high: doctors.filter(d => d.riskLevel === "high").length,
-    totalExposure: doctors.reduce((sum, d) => sum + parseFloat(d.totalExposure || "0"), 0),
-    totalClaims: doctors.reduce((sum, d) => sum + (d.totalClaims || 0), 0),
+    totalExposure: doctorTotalExposure,
+    totalClaims: doctorTotalClaims,
     avgClaimPerPatient: doctors.length > 0 ? doctors.reduce((sum, d) => {
       const patients = (d as any).uniquePatients || 1;
       return sum + (d.totalClaims || 0) / patients;
     }, 0) / doctors.length : 0,
+    flaggedExposure: doctorTotalClaims > 0 ? doctorTotalExposure * (doctorTotalFlagged / doctorTotalClaims) : 0,
+    costPerMember: doctorTotalPatients > 0 ? doctorTotalExposure / doctorTotalPatients : 0,
   };
 
   const handleSort = useCallback((field: string) => {
@@ -1594,14 +1615,16 @@ function DoctorsTab() {
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {[
           { title: "Total Doctors", value: stats.total, icon: UserCog, color: "text-muted-foreground", delay: 0 },
-          { title: "Critical Risk", value: stats.critical, icon: AlertTriangle, color: "text-red-600", delay: 0.1 },
-          { title: "High Risk", value: stats.high, icon: TrendingUp, color: "text-orange-600", delay: 0.2 },
-          { title: "Total Exposure", value: formatCurrency(stats.totalExposure), icon: DollarSign, color: "text-muted-foreground", delay: 0.3 },
-          { title: "Total Claims", value: stats.totalClaims.toLocaleString(), icon: FileText, color: "text-muted-foreground", delay: 0.4 },
-          { title: "Claims/Patient", value: stats.avgClaimPerPatient.toFixed(1), icon: Stethoscope, color: "text-purple-600", delay: 0.5 },
+          { title: "Critical Risk", value: stats.critical, icon: AlertTriangle, color: "text-red-600", delay: 0.05 },
+          { title: "High Risk", value: stats.high, icon: TrendingUp, color: "text-orange-600", delay: 0.1 },
+          { title: "Total Claim Amount", value: formatCurrency(stats.totalExposure), icon: DollarSign, color: "text-muted-foreground", delay: 0.15 },
+          { title: "Flagged Exposure", value: formatCurrency(stats.flaggedExposure), icon: AlertTriangle, color: "text-red-600", delay: 0.2 },
+          { title: "Total Claims", value: stats.totalClaims.toLocaleString(), icon: FileText, color: "text-muted-foreground", delay: 0.25 },
+          { title: "Cost/Member", value: formatCurrency(stats.costPerMember), icon: Users, color: "text-purple-600", delay: 0.3 },
+          { title: "Claims/Patient", value: stats.avgClaimPerPatient.toFixed(1), icon: Stethoscope, color: "text-purple-600", delay: 0.35 },
         ].map((stat) => (
           <motion.div
             key={stat.title}

@@ -99,6 +99,16 @@ const getSourceIcon = (sourceId: string) => {
   return sourceIcons[sourceId] || Newspaper;
 };
 
+const provenanceLabel: Record<string, { label: string; cls: string }> = {
+  newsapi_everything: { label: "NewsAPI", cls: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200" },
+  newsapi_top_headlines_sa: { label: "NewsAPI SA", cls: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200" },
+  google_news_rss: { label: "Google News", cls: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200" },
+  grok_live_search: { label: "Live X Search", cls: "bg-sky-100 text-sky-800 dark:bg-sky-900 dark:text-sky-200" },
+  demo_seed: { label: "Demo", cls: "bg-gray-200 text-gray-700 dark:bg-gray-800 dark:text-gray-300" },
+  manual: { label: "Manual", cls: "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200" },
+  unknown: { label: "Unknown source", cls: "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200" },
+};
+
 const saudiNewspapers = [
   { id: "alriyadh", name: "Al Riyadh", nameAr: "صحيفة الرياض", url: "https://www.alriyadh.com", color: "text-green-600" },
   { id: "almadina", name: "Al Madina", nameAr: "صحيفة المدينة", url: "https://www.al-madina.com", color: "text-blue-600" },
@@ -124,6 +134,10 @@ export default function OnlineListening() {
 
   const { data: sourceConfigs, isLoading: configsLoading } = useQuery<ListeningSourceConfig[]>({
     queryKey: ["/api/fwa/chi/online-listening/configs"],
+  });
+
+  const { data: grokStatus } = useQuery<{ liveSearchEnabled: boolean; message: string }>({
+    queryKey: ["/api/fwa/chi/online-listening/grok-status"],
   });
 
   useEffect(() => {
@@ -361,11 +375,12 @@ export default function OnlineListening() {
             <RefreshCw className={`w-4 h-4 mr-2 ${fetchMentionsMutation.isPending ? "animate-spin" : ""}`} />
             {fetchMentionsMutation.isPending ? "جاري الجلب..." : "تحديث الأخبار"}
           </Button>
-          <Button 
-            variant="outline" 
-            onClick={handleTwitterRefresh} 
-            disabled={fetchTwitterMutation.isPending}
-            className="bg-sky-50 hover:bg-sky-100 dark:bg-sky-950 dark:hover:bg-sky-900 border-sky-200 dark:border-sky-800"
+          <Button
+            variant="outline"
+            onClick={handleTwitterRefresh}
+            disabled={fetchTwitterMutation.isPending || !grokStatus?.liveSearchEnabled}
+            title={grokStatus && !grokStatus.liveSearchEnabled ? grokStatus.message : undefined}
+            className="bg-sky-50 hover:bg-sky-100 dark:bg-sky-950 dark:hover:bg-sky-900 border-sky-200 dark:border-sky-800 disabled:opacity-50"
             data-testid="button-twitter-refresh"
           >
             <Twitter className={`w-4 h-4 mr-2 text-sky-500 ${fetchTwitterMutation.isPending ? "animate-pulse" : ""}`} />
@@ -514,10 +529,10 @@ export default function OnlineListening() {
         <CardHeader>
           <CardTitle className="text-lg flex items-center gap-2">
             <Rss className="w-5 h-5 text-primary" />
-            تحليل المشاعر بالذكاء الاصطناعي / NLP-Powered Sentiment Analysis
+            Online Mentions / الإشارات على الإنترنت
           </CardTitle>
           <CardDescription>
-            يحلل الذكاء الاصطناعي المقالات الإخبارية والصحف السعودية لتحديد مخاطر السمعة والقضايا الناشئة مع مقدمي الخدمات الصحية
+            يجمع هذا اللوحة المقالات الإخبارية ومنشورات إكس المرتبطة بمقدمي الرعاية في السعودية. الصفوف التي تحمل شارة "no NLP" لم تُحلَّل عاطفياً بعد.
           </CardDescription>
         </CardHeader>
       </Card>
@@ -594,6 +609,7 @@ export default function OnlineListening() {
               <div className="space-y-4">
                 {filteredMentions.map((mention) => {
                   const SourceIcon = sourceIcons[mention.source] || MessageCircle;
+                  const meta = (mention.metadata ?? {}) as Record<string, any>;
                   return (
                     <Card key={mention.id} className={mention.requiresAction ? "border-amber-300 dark:border-amber-700" : ""} data-testid={`mention-${mention.id}`}>
                       <CardContent className="p-4">
@@ -603,11 +619,26 @@ export default function OnlineListening() {
                               <SourceIcon className="w-5 h-5 text-muted-foreground" />
                             </div>
                             <div className="flex-1">
-                              <div className="flex items-center gap-2 mb-1">
-                                <span className="font-medium">{mention.providerName}</span>
+                              <div className="flex items-center gap-2 mb-1 flex-wrap">
+                                <span className="font-medium">{mention.providerName ?? "—"}</span>
                                 {mention.authorHandle && (
                                   <span className="text-sm text-muted-foreground">{mention.authorHandle}</span>
                                 )}
+                                {(() => {
+                                  const prov = provenanceLabel[meta.provenance] ?? provenanceLabel.unknown;
+                                  return (
+                                    <Badge className={prov.cls} data-testid={`badge-provenance-${mention.id}`}>
+                                      {prov.label}
+                                    </Badge>
+                                  );
+                                })()}
+                                {(() => {
+                                  if (meta.demo || meta.provenance === "demo_seed") return null; // demo badge already covers it
+                                  if (mention.isVerified) {
+                                    return <Badge className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200" data-testid={`badge-verified-${mention.id}`}>Verified</Badge>;
+                                  }
+                                  return <Badge variant="outline" className="text-xs" data-testid={`badge-unverified-${mention.id}`}>Unverified</Badge>;
+                                })()}
                                 {mention.requiresAction && (
                                   <Badge className="bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200">
                                     <Flag className="w-3 h-3 mr-1" />
@@ -626,18 +657,42 @@ export default function OnlineListening() {
                               </div>
                               <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
                                 <span>{mention.publishedAt ? new Date(mention.publishedAt).toLocaleDateString() : ""}</span>
-                                <span>{mention.engagementCount} engagements</span>
-                                <span>~{((mention.reachEstimate || 0) / 1000).toFixed(1)}K reach</span>
+                                {(() => {
+                                  const showMetrics = meta.metricsAreReal === true;
+                                  if (!showMetrics) return null;
+                                  return (
+                                    <>
+                                      {(mention.engagementCount ?? 0) > 0 && (
+                                        <span>{mention.engagementCount} engagements</span>
+                                      )}
+                                      {(mention.reachEstimate ?? 0) > 0 && (
+                                        <span>~{((mention.reachEstimate || 0) / 1000).toFixed(1)}K reach</span>
+                                      )}
+                                    </>
+                                  );
+                                })()}
                               </div>
                             </div>
                           </div>
                           <div className="flex items-center gap-2">
-                            <div className="text-center">
-                              {getSentimentIcon(Number(mention.sentimentScore))}
-                              <p className="text-xs text-muted-foreground mt-1">
-                                {(Number(mention.sentimentScore) * 100).toFixed(0)}%
-                              </p>
-                            </div>
+                            {(() => {
+                              if (meta.sentimentAnalyzed !== true) {
+                                return (
+                                  <div className="text-center">
+                                    <Minus className="w-4 h-4 text-gray-400 mx-auto" />
+                                    <p className="text-xs text-muted-foreground mt-1">no NLP</p>
+                                  </div>
+                                );
+                              }
+                              return (
+                                <div className="text-center">
+                                  {getSentimentIcon(Number(mention.sentimentScore))}
+                                  <p className="text-xs text-muted-foreground mt-1">
+                                    {(Number(mention.sentimentScore) * 100).toFixed(0)}%
+                                  </p>
+                                </div>
+                              );
+                            })()}
                             {mention.sourceUrl && (
                               <Button variant="ghost" size="icon" asChild>
                                 <a href={mention.sourceUrl} target="_blank" rel="noopener noreferrer">

@@ -22,6 +22,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { DocumentUploadDialog } from "@/components/document-upload-dialog";
+import { KnowledgeBatchUploadDialog } from "@/components/knowledge-batch-upload-dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -30,6 +31,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import {
   Upload,
+  Files,
   FileText,
   Search,
   Database,
@@ -195,6 +197,7 @@ const categoryLabels: Record<string, string> = {
 
 export default function KnowledgeHub() {
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [batchUploadOpen, setBatchUploadOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
@@ -551,13 +554,23 @@ export default function KnowledgeHub() {
         <CardHeader>
           <div className="flex items-center justify-between">
             <CardTitle className="text-lg">Document Library</CardTitle>
-            <Button
-              onClick={() => setUploadOpen(true)}
-              data-testid="button-upload-document"
-            >
-              <Upload className="h-4 w-4 mr-2" />
-              Upload Documents
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                onClick={() => setBatchUploadOpen(true)}
+                data-testid="button-batch-upload-advanced"
+              >
+                <Files className="h-4 w-4 mr-2" />
+                Advanced Batch Upload
+              </Button>
+              <Button
+                onClick={() => setUploadOpen(true)}
+                data-testid="button-upload-document"
+              >
+                <Upload className="h-4 w-4 mr-2" />
+                Upload Documents
+              </Button>
+            </div>
           </div>
           <div className="flex items-center gap-2 mt-3">
             <Search className="h-4 w-4 text-muted-foreground" />
@@ -683,6 +696,22 @@ export default function KnowledgeHub() {
         }}
         onOpenChange={(open) => {
           setUploadOpen(open);
+          if (!open) {
+            void refetchDocuments();
+            void refetchJobs();
+          }
+        }}
+      />
+
+      <KnowledgeBatchUploadDialog
+        open={batchUploadOpen}
+        onUploadQueued={(jobId) => {
+          setActiveJobId(jobId);
+          void queryClient.invalidateQueries({ queryKey: ["/api/knowledge-documents/upload-jobs"] });
+          void queryClient.invalidateQueries({ queryKey: [`/api/knowledge-documents/upload-jobs/${jobId}`] });
+        }}
+        onOpenChange={(open) => {
+          setBatchUploadOpen(open);
           if (!open) {
             void refetchDocuments();
             void refetchJobs();
