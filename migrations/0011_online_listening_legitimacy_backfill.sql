@@ -1,5 +1,11 @@
 -- Online Listening — legitimacy backfill for pre-fix rows.
 --
+-- Auto-applied at app start by server/db-online-listening-backfill.ts.
+-- This file remains the auditable record of the migration and can be
+-- applied manually with:
+--   psql "$DATABASE_URL" -f migrations/0011_online_listening_legitimacy_backfill.sql
+-- If you edit either copy, update the other to match.
+--
 -- The Online Listening feature previously persisted mentions with fabricated
 -- X/Twitter handles, hash-derived status IDs that 404, and a hardcoded
 -- `is_verified = true` regardless of whether the URL ever resolved. The

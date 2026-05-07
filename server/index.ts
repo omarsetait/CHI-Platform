@@ -7,6 +7,7 @@ import { setupVite, serveStatic, log } from "./vite";
 import { seedDatabaseWithDemoData } from "./services/demo-data-seeder";
 import { createDatabaseIndexes, ensureSessionTable } from "./db-indexes";
 import { createDatabaseConstraints } from "./db-constraints";
+import { runOnlineListeningBackfill } from "./db-online-listening-backfill";
 import { closePool } from "./db";
 import { knowledgeUploadQueueService } from "./services/knowledge-upload-queue-service";
 
@@ -133,6 +134,11 @@ app.use((req, res, next) => {
   });
   createDatabaseConstraints().catch(err => {
     console.error("[DB] Error creating constraints:", err);
+  });
+
+  // Online Listening legitimacy backfill (idempotent — safe to run every start).
+  runOnlineListeningBackfill().catch(err => {
+    console.error("[OnlineListeningBackfill] error applying backfill:", err);
   });
 
   // Don't block server start with seeding - can be disabled with DISABLE_SEEDER=true
